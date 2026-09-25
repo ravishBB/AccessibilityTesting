@@ -54,17 +54,7 @@ final class ScannerViewModel: ObservableObject {
     private let snapshotRetryDelayNanoseconds: UInt64 =
         350_000_000
 
-    // MARK: - Stable Scan Snapshot
-
-    private struct StableScanSnapshot {
-        let rootNode: AccessibilityNode
-        let screenshotData: Data
-        let screenshotWidth: Double
-        let screenshotHeight: Double
-    }
-
     // MARK: - Device Discovery
-
     func loadDevices() {
 
         isLoadingDevices = true
@@ -263,260 +253,202 @@ final class ScannerViewModel: ObservableObject {
     }
 
     // MARK: - Perform Scan
-
     private func performScan(
         device: Device,
         application: InstalledApp
     ) async {
+        
+        self.isScanning = true
 
-        let configuration =
-            ScannerConfiguration(
+            defer {
+                self.isScanning = false
+            }
+        let startedAt = Date()
+
+        do {
+            status = "Connecting to Appium..."
+
+            let configuration = ScannerConfiguration(
                 appiumURL: appiumURL,
                 bundleID: application.bundleID,
                 deviceName: device.name,
                 udid: device.udid
             )
 
-        let appium =
-            AppiumClient(
-                baseURL:
-                    configuration.appiumURL
+            let appium = AppiumClient(baseURL: configuration.appiumURL)
+
+            // --------------------------------------------------
+            // 1. CREATE APPIUM SESSION
+            // --------------------------------------------------
+
+            status = "Creating Appium session..."
+
+            try await appium.createSession(configuration: configuration)
+
+            print("==========================================")
+            print("APPIUM SESSION CREATED")
+            print("==========================================")
+
+            // Give the application time to settle.
+            try await Task.sleep(for: .milliseconds(500))
+
+            // --------------------------------------------------
+            // 2. CAPTURE INITIAL SCREEN
+            // --------------------------------------------------
+
+            status = "Reading initial accessibility hierarchy..."
+
+            let initialSnapshot = try await captureStableSnapshot(
+                appium: appium
             )
 
-        let scanStartedAt = Date()
+            print("==========================================")
+            print("INITIAL SCREEN CAPTURED")
+            print("==========================================")
 
-        do {
+            // --------------------------------------------------
+            // 3. CREATE RULE ENGINE
+            // --------------------------------------------------
 
-            // -------------------------------------------------
-            // 1. Create Appium session
-            // -------------------------------------------------
+            let scanner = AccessibilityScanner()
 
-            status =
-                "Creating Appium session..."
+            // --------------------------------------------------
+            // 4. START COMPLETE-APP CRAWLER
+            // --------------------------------------------------
 
-            _ = try await appium.createSession(
-                configuration: configuration
+            print("==========================================")
+            print("STARTING APP CRAWLER")
+            print("==========================================")
+
+            status = "Crawling application..."
+
+            let crawler = AppCrawler(
+                appium: appium,
+                scanner: scanner
             )
 
-            // -------------------------------------------------
-            // 2. Allow target UI to settle
-            // -------------------------------------------------
+            let crawledScreens = try await crawler.crawl(
+                initialSnapshot: initialSnapshot
+            ) { message in
 
-            status =
-                "Waiting for application UI to settle..."
+                Task { @MainActor in
+                    self.status = message
+                }
 
-            try await Task.sleep(
-                nanoseconds:
-                    initialUISettleDelayNanoseconds
-            )
+            }
 
-            // -------------------------------------------------
-            // 3. Capture a stable hierarchy + screenshot
-            // -------------------------------------------------
+            print("==========================================")
+            print("APP CRAWLER FINISHED")
+            print("Screens discovered: \(crawledScreens.count)")
+            print("==========================================")
 
-            status =
-                "Synchronizing screenshot and UI hierarchy..."
+            // --------------------------------------------------
+            // 5. CONVERT CRAWLED SCREENS TO REPORT SCREENS
+            // --------------------------------------------------
 
-            let stableSnapshot =
-                try await captureStableSnapshot(
-                    appium: appium
+            status = "Building accessibility report..."
+
+            var screenResults: [ScreenScanResult] = []
+
+            for crawledScreen in crawledScreens {
+
+                let elementCount = countNodes(
+                    crawledScreen.rootNode
                 )
 
-            let rootNode =
-                stableSnapshot.rootNode
-
-            let screenshotData =
-                stableSnapshot.screenshotData
-
-            let screenshotWidth =
-                stableSnapshot.screenshotWidth
-
-            let screenshotHeight =
-                stableSnapshot.screenshotHeight
-
-            // -------------------------------------------------
-            // 4. Evaluate accessibility rules
-            // -------------------------------------------------
-
-            status =
-                "Running accessibility checks..."
-
-            let scanner =
-                AccessibilityScanner()
-
-            let evaluations =
-                scanner.evaluateForReport(
-                    rootNode: rootNode
+                let evaluations = scanner.evaluateForReport(
+                    rootNode: crawledScreen.rootNode
                 )
 
-            // -------------------------------------------------
-            // 5. Create screenshot annotations
-            // -------------------------------------------------
+                let screenResult = ScreenScanResult(
+                    name: "Screen \(screenResults.count + 1)",
+                    elementCount: elementCount,
+                    evaluations: evaluations,
+                    screenshot: ScanScreenshot(
+                        imageData: crawledScreen.screenshotData,
+                        annotatedImageData: nil,
+                        width: crawledScreen.screenshotWidth,
+                        height: crawledScreen.screenshotHeight
+                    )
+                )
 
-            status =
-                "Annotating accessibility issues..."
+                screenResults.append(screenResult)
+            }
 
-            let issueEvaluations =
-                evaluations.filter {
+            // --------------------------------------------------
+            // 6. CREATE COMPLETE SCAN RESULT
+            // --------------------------------------------------
 
+            let finishedAt = Date()
+
+            let result = AccessibilityScanResult(
+                applicationName: application.name,
+                bundleID: application.bundleID,
+                deviceName: device.name,
+                deviceUDID: device.udid,
+                startedAt: startedAt,
+                finishedAt: finishedAt,
+                screens: screenResults,
+                rulesExecuted: 2
+            )
+
+            // --------------------------------------------------
+            // 7. UPDATE UI
+            // --------------------------------------------------
+
+            self.scanResult = result
+
+            self.findings = result.allEvaluations
+                .filter {
                     $0.status == .fail ||
-                    $0.status == .warning ||
-                    $0.status == .validate
+                    $0.status == .warning
                 }
-
-            let annotations =
-                issueEvaluations.enumerated().map {
-                    index,
-                    evaluation in
-
-                    ScreenshotAnnotation(
-                        number: index + 1,
-                        evaluation: evaluation
+                .map {
+                    AccessibilityFinding(
+                        ruleID: $0.ruleID,
+                        severity: $0.severity,
+                        message: $0.message,
+                        elementType: $0.elementType,
+                        elementLabel: $0.elementLabel,
+                        identifier: $0.identifier,
+                        value: $0.value,
+                        frame: $0.frame,
+                        remediation: $0.remediation
                     )
                 }
 
-            // -------------------------------------------------
-            // 6. Annotate screenshot
-            // -------------------------------------------------
+            status = """
+            Scan complete — \(screenResults.count) screens discovered
+            """
 
-            status =
-                "Drawing accessibility annotations..."
+            print("==========================================")
+            print("COMPLETE APP SCAN FINISHED")
+            print("==========================================")
+            print("Screens: \(screenResults.count)")
+            print("Elements: \(result.totalElementsTested)")
+            print("Failures: \(result.totalFailures)")
+            print("Warnings: \(result.totalWarnings)")
+            print("Validations: \(result.totalValidations)")
+            print("Passes: \(result.totalPasses)")
+            print("==========================================")
 
-            let annotator =
-                ScreenshotAnnotator()
-
-            let annotatedImageData =
-                annotator.annotate(
-                    imageData: screenshotData,
-                    screenshotWidth: screenshotWidth,
-                    screenshotHeight: screenshotHeight,
-                    hierarchyWidth: rootNode.frame.width,
-                    hierarchyHeight: rootNode.frame.height,
-                    evaluations: evaluations
-                )
-
-            let screenshot =
-                ScanScreenshot(
-                    imageData: screenshotData,
-                    annotatedImageData:
-                        annotatedImageData,
-                    width: screenshotWidth,
-                    height: screenshotHeight
-                )
-
-            // -------------------------------------------------
-            // 7. Create findings
-            // -------------------------------------------------
-
-            let scanFindings =
-                evaluations.compactMap {
-                    evaluation
-                    -> AccessibilityFinding? in
-
-                    guard
-                        evaluation.status == .fail ||
-                        evaluation.status == .warning
-                    else {
-                        return nil
-                    }
-
-                    return AccessibilityFinding(
-                        ruleID:
-                            evaluation.ruleID,
-
-                        severity:
-                            evaluation.severity,
-
-                        message:
-                            evaluation.message,
-
-                        elementType:
-                            evaluation.elementType,
-
-                        elementLabel:
-                            evaluation.elementLabel,
-
-                        identifier:
-                            evaluation.identifier,
-
-                        value:
-                            evaluation.value,
-
-                        frame:
-                            evaluation.frame,
-
-                        remediation:
-                            evaluation.remediation
-                    )
-                }
-
-            findings = scanFindings
-
-            // -------------------------------------------------
-            // 8. Build accessibility report
-            // -------------------------------------------------
-
-            status =
-                "Building accessibility report..."
-
-            let report =
-                scanner.scanReport(
-                    rootNode: rootNode,
-
-                    applicationName:
-                        application.name,
-
-                    bundleID:
-                        application.bundleID,
-
-                    deviceName:
-                        device.name,
-
-                    deviceUDID:
-                        device.udid,
-
-                    screenshot:
-                        screenshot,
-
-                    annotations:
-                        annotations
-                )
-
-            scanResult = report
-
-            // -------------------------------------------------
-            // 9. Finish
-            // -------------------------------------------------
-
-            let elapsed =
-                Date().timeIntervalSince(
-                    scanStartedAt
-                )
-
-            status =
-                String(
-                    format:
-                        "Scan complete — %.1f seconds",
-                    elapsed
-                )
-
-            isScanning = false
+            // --------------------------------------------------
+            // 8. DELETE APPIUM SESSION
+            // --------------------------------------------------
 
             try? await appium.deleteSession()
 
         } catch {
 
-            // Always try to close Appium session.
+            print("==========================================")
+            print("SCAN FAILED")
+            print("==========================================")
+            print(error)
+            print("==========================================")
 
-            try? await appium.deleteSession()
+            status = "Scan failed"
 
-            errorMessage =
-                error.localizedDescription
-
-            status =
-                "Scan failed"
-
-            isScanning = false
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -775,10 +707,31 @@ final class ScannerViewModel: ObservableObject {
 
         return result
     }
+    
+    private func countNodes(
+        _ node: AccessibilityNode
+    ) -> Int {
+
+        if node.identifier == "A11YScannerIgnore" {
+            return 0
+        }
+
+        return 1 + node.children.reduce(0) {
+            $0 + countNodes($1)
+        }
+    }
+}
+
+// MARK: - Stable Scan Snapshot
+
+struct StableScanSnapshot {
+    let rootNode: AccessibilityNode
+    let screenshotData: Data
+    let screenshotWidth: Double
+    let screenshotHeight: Double
 }
 
 // MARK: - Errors
-
 private enum ScannerViewModelError:
     Error,
     LocalizedError {

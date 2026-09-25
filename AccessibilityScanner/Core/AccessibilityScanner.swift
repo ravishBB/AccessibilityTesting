@@ -9,6 +9,7 @@ import Foundation
 
 final class AccessibilityScanner {
     private let rules: [AccessibilityRule]
+    
 
     init(
         rules: [AccessibilityRule] = [

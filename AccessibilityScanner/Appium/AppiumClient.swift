@@ -1,38 +1,22 @@
 //
 //  AppiumClient.swift
 //  AccessibilityScannerDemo
-//
 //  Created by Ravish Kumar on 22/09/26.
-//
 
 import Foundation
 
 final class AppiumClient {
 
     private let baseURL: URL
-
     private(set) var sessionID: String?
-
-    // ============================================================
-    // WDA / Apple Signing Configuration
-    // ============================================================
-    
     private let xcodeOrgId = "EJ5R49N3EY"
-    
     private let xcodeSigningId = "Apple Development"
-
-    /*
-     This is extremely useful while diagnosing
-     xcodebuild failures such as exit code 65.
-     */
     private let showXcodeLog = true
 
     init(baseURL: URL) {
         self.baseURL = baseURL
     }
-
-    // MARK: - Create Session
-
+    
     func createSession(
         configuration: ScannerConfiguration
     ) async throws -> String {
@@ -40,24 +24,6 @@ final class AppiumClient {
         let url =
             baseURL
                 .appendingPathComponent("session")
-
-        print("")
-        print("======================================")
-        print("CONNECTING TO APPIUM")
-        print("======================================")
-        print("URL: \(url)")
-        print("Bundle ID: \(configuration.bundleID)")
-        print("Device: \(configuration.deviceName)")
-        print("UDID: \(configuration.udid)")
-        print("")
-        print("WDA Configuration")
-        print("--------------------------------------")
-        print("Xcode Team ID: \(xcodeOrgId)")
-        print("Xcode Signing ID: \(xcodeSigningId)")
-        print("Show Xcode Log: \(showXcodeLog)")
-        print("--------------------------------------")
-        print("")
-        print("Sending POST /session...")
 
         var request =
             URLRequest(
@@ -76,66 +42,30 @@ final class AppiumClient {
         request.timeoutInterval =
             120
 
-        // ========================================================
-        // Appium / XCUITest Capabilities
-        // ========================================================
-
         let body: [String: Any] = [
 
             "capabilities": [
 
                 "alwaysMatch": [
-
-                    // ------------------------------------------------
-                    // Platform
-                    // ------------------------------------------------
-
                     "platformName": "iOS",
-
                     "appium:automationName":
                         "XCUITest",
-
-                    // ------------------------------------------------
-                    // Target Device
-                    // ------------------------------------------------
-
                     "appium:deviceName":
                         configuration.deviceName,
-
                     "appium:udid":
                         configuration.udid,
-
-                    // ------------------------------------------------
-                    // Target Application
-                    // ------------------------------------------------
-
                     "appium:bundleId":
                         configuration.bundleID,
-
-                    // ------------------------------------------------
-                    // Session Behaviour
-                    // ------------------------------------------------
-
                     "appium:noReset":
                         true,
 
                     "appium:newCommandTimeout":
                         300,
-
-                    // ------------------------------------------------
-                    // WebDriverAgent Signing
-                    // ------------------------------------------------
-
                     "appium:xcodeOrgId":
                         xcodeOrgId,
 
                     "appium:xcodeSigningId":
                         xcodeSigningId,
-
-                    // ------------------------------------------------
-                    // Debugging
-                    // ------------------------------------------------
-
                     "appium:showXcodeLog":
                         showXcodeLog
                 ]
@@ -172,10 +102,6 @@ final class AppiumClient {
                 "HTTP Status: \(statusCode)"
             )
 
-            // ====================================================
-            // Successful response
-            // ====================================================
-
             if (200...299).contains(
                 statusCode
             ) {
@@ -194,10 +120,6 @@ final class AppiumClient {
                     "Appium JSON response received."
                 )
 
-                // ------------------------------------------------
-                // Appium 2 / W3C response
-                // ------------------------------------------------
-
                 if let value =
                     json["value"]
                     as? [String: Any],
@@ -209,29 +131,8 @@ final class AppiumClient {
                     self.sessionID =
                         sessionID
 
-                    print("")
-                    print(
-                        "======================================"
-                    )
-                    print(
-                        "APPIUM SESSION CREATED"
-                    )
-                    print(
-                        "======================================"
-                    )
-                    print(
-                        "Session ID: \(sessionID)"
-                    )
-                    print(
-                        "======================================"
-                    )
-
                     return sessionID
                 }
-
-                // ------------------------------------------------
-                // Older Appium response format
-                // ------------------------------------------------
 
                 if let sessionID =
                     json["sessionId"]
@@ -240,30 +141,8 @@ final class AppiumClient {
                     self.sessionID =
                         sessionID
 
-                    print("")
-                    print(
-                        "======================================"
-                    )
-                    print(
-                        "APPIUM SESSION CREATED"
-                    )
-                    print(
-                        "======================================"
-                    )
-                    print(
-                        "Session ID: \(sessionID)"
-                    )
-                    print(
-                        "======================================"
-                    )
-
                     return sessionID
                 }
-
-                print(
-                    "Unexpected Appium response:"
-                )
-
                 print(
                     String(
                         data: data,
@@ -274,35 +153,11 @@ final class AppiumClient {
                 throw AppiumError.invalidResponse
             }
 
-            // ====================================================
-            // Appium error response
-            // ====================================================
-
             let errorText =
                 String(
                     data: data,
                     encoding: .utf8
                 ) ?? ""
-
-            print("")
-            print(
-                "======================================"
-            )
-            print(
-                "APPIUM ERROR RESPONSE"
-            )
-            print(
-                "======================================"
-            )
-            print(
-                "HTTP Status: \(statusCode)"
-            )
-            print(
-                errorText
-            )
-            print(
-                "======================================"
-            )
 
             throw AppiumError.appiumError(
                 statusCode:
@@ -429,20 +284,6 @@ final class AppiumClient {
                     "source"
                 )
 
-        print("")
-        print(
-            "======================================"
-        )
-        print(
-            "GETTING UI SOURCE"
-        )
-        print(
-            "======================================"
-        )
-        print(
-            "URL: \(url)"
-        )
-
         var request =
             URLRequest(
                 url: url
@@ -537,11 +378,7 @@ final class AppiumClient {
             response,
             data: data
         )
-
-        // IMPORTANT:
-        // Use self.sessionID because the
-        // local sessionID above is a let constant.
-
+        
         self.sessionID =
             nil
 
@@ -551,7 +388,6 @@ final class AppiumClient {
     }
 
     // MARK: - Validate Response
-
     private func validateResponse(
         _ response: URLResponse,
         data: Data
@@ -578,26 +414,6 @@ final class AppiumClient {
                     encoding: .utf8
                 ) ?? ""
 
-            print("")
-            print(
-                "======================================"
-            )
-            print(
-                "APPIUM HTTP ERROR"
-            )
-            print(
-                "======================================"
-            )
-            print(
-                "HTTP Status: \(statusCode)"
-            )
-            print(
-                responseText
-            )
-            print(
-                "======================================"
-            )
-
             throw AppiumError.appiumError(
                 statusCode:
                     statusCode,
@@ -608,9 +424,295 @@ final class AppiumClient {
             )
         }
     }
+    
+    func tap(at point: CGPoint) async throws {
+
+        guard let sessionID = sessionID else {
+            throw AppiumError.noActiveSession
+        }
+
+        let url = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("actions")
+
+        var request = URLRequest(url: url)
+
+        request.httpMethod = "POST"
+
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "Content-Type"
+        )
+
+        let payload: [String: Any] = [
+            "actions": [
+                [
+                    "type": "pointer",
+                    "id": "a11yCrawlerPointer",
+                    "parameters": [
+                        "pointerType": "touch"
+                    ],
+                    "actions": [
+                        [
+                            "type": "pointerMove",
+                            "duration": 0,
+                            "x": Int(point.x),
+                            "y": Int(point.y)
+                        ],
+                        [
+                            "type": "pointerDown",
+                            "button": 0
+                        ],
+                        [
+                            "type": "pause",
+                            "duration": 100
+                        ],
+                        [
+                            "type": "pointerUp",
+                            "button": 0
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+        request.httpBody =
+            try JSONSerialization.data(
+                withJSONObject: payload
+            )
+
+        let (data, response) =
+            try await URLSession.shared.data(
+                for: request
+            )
+
+        try validateResponse(
+            response,
+            data: data
+        )
+    }
+
+    func goBack() async throws {
+
+        guard let sessionID = sessionID else {
+            throw AppiumError.noActiveSession
+        }
+
+        let url = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("back")
+
+        var request = URLRequest(url: url)
+
+        request.httpMethod = "POST"
+
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "Content-Type"
+        )
+
+        request.httpBody = Data("{}".utf8)
+
+        let (data, response) =
+            try await URLSession.shared.data(
+                for: request
+            )
+
+        try validateResponse(
+            response,
+            data: data
+        )
+    }
+    
+    func scrollUp() async throws {
+        guard let sessionID = sessionID else {
+            throw AppiumError.noActiveSession
+        }
+
+        let url = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("execute")
+            .appendingPathComponent("sync")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "Content-Type"
+        )
+
+        let payload: [String: Any] = [
+            "script": "mobile: scroll",
+            "args": [
+                [
+                    "direction": "up"
+                ]
+            ]
+        ]
+
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: payload
+        )
+
+        let (data, response) =
+            try await URLSession.shared.data(
+                for: request
+            )
+
+        try validateResponse(
+            response,
+            data: data
+        )
+    }
+    
+    // MARK: - Scroll Down
+
+    func scrollDown() async throws {
+
+        guard let sessionID = sessionID else {
+            throw AppiumError.noActiveSession
+        }
+
+        let url = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("execute")
+            .appendingPathComponent("sync")
+
+        var request = URLRequest(url: url)
+
+        request.httpMethod = "POST"
+
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "Content-Type"
+        )
+
+        let payload: [String: Any] = [
+            "script": "mobile: scroll",
+            "args": [
+                [
+                    "direction": "down"
+                ]
+            ]
+        ]
+
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: payload
+        )
+
+        let (data, response) =
+            try await URLSession.shared.data(
+                for: request
+            )
+
+        try validateResponse(
+            response,
+            data: data
+        )
+    }
+    
+    
+    func tapElement(
+        usingXPath xpath: String
+    ) async throws {
+
+        guard let sessionID = sessionID else {
+            throw AppiumError.noActiveSession
+        }
+
+        // Find element
+        let findURL = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("element")
+
+        var findRequest = URLRequest(url: findURL)
+
+        findRequest.httpMethod = "POST"
+
+        findRequest.setValue(
+            "application/json",
+            forHTTPHeaderField: "Content-Type"
+        )
+
+        let findPayload: [String: Any] = [
+            "using": "xpath",
+            "value": xpath
+        ]
+
+        findRequest.httpBody =
+            try JSONSerialization.data(
+                withJSONObject: findPayload
+            )
+
+        let (findData, findResponse) =
+            try await URLSession.shared.data(
+                for: findRequest
+            )
+
+        try validateResponse(
+            findResponse,
+            data: findData
+        )
+
+        guard
+            let findJSON =
+                try JSONSerialization.jsonObject(
+                    with: findData
+                ) as? [String: Any],
+            let value =
+                findJSON["value"] as? [String: Any]
+        else {
+            throw AppiumError.invalidResponse
+        }
+
+        let elementID =
+            value["element-6066-11e4-a52e-4f735466cecf"]
+            as? String
+            ??
+            value["ELEMENT"] as? String
+
+        guard let elementID else {
+            throw AppiumError.invalidResponse
+        }
+
+        // Click element
+        let clickURL = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("element")
+            .appendingPathComponent(elementID)
+            .appendingPathComponent("click")
+
+        var clickRequest =
+            URLRequest(url: clickURL)
+
+        clickRequest.httpMethod = "POST"
+
+        clickRequest.setValue(
+            "application/json",
+            forHTTPHeaderField: "Content-Type"
+        )
+
+        clickRequest.httpBody =
+            Data("{}".utf8)
+
+        let (clickData, clickResponse) =
+            try await URLSession.shared.data(
+                for: clickRequest
+            )
+
+        try validateResponse(
+            clickResponse,
+            data: clickData
+        )
+    }
 
     // MARK: - Extract Error Message
-
     private func extractErrorMessage(
         from data: Data
     ) -> String {
@@ -629,15 +731,6 @@ final class AppiumClient {
             )
             ?? "Unknown Appium error."
         }
-
-        // Appium/W3C format:
-        //
-        // {
-        //   "value": {
-        //     "error": "...",
-        //     "message": "..."
-        //   }
-        // }
 
         if let value =
             json["value"]
