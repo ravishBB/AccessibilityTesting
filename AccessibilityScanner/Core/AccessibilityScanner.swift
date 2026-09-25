@@ -8,7 +8,6 @@
 import Foundation
 
 final class AccessibilityScanner {
-
     private let rules: [AccessibilityRule]
 
     init(
@@ -20,21 +19,17 @@ final class AccessibilityScanner {
         self.rules = rules
     }
 
-    // MARK: - Legacy API
+    // MARK: - Public Scan
 
     func scan(
         rootNode: AccessibilityNode
     ) -> [AccessibilityFinding] {
 
-        let evaluations =
-            evaluateForReport(
-                rootNode:
-                    rootNode
-            )
+        let evaluations = evaluateForReport(
+            rootNode: rootNode
+        )
 
-        return evaluations.compactMap {
-            evaluation in
-
+        return evaluations.compactMap { evaluation in
             guard
                 evaluation.status == .fail ||
                 evaluation.status == .warning
@@ -43,37 +38,63 @@ final class AccessibilityScanner {
             }
 
             return AccessibilityFinding(
-                ruleID:
-                    evaluation.ruleID,
-
-                severity:
-                    evaluation.severity,
-
-                message:
-                    evaluation.message,
-
-                elementType:
-                    evaluation.elementType,
-
-                elementLabel:
-                    evaluation.elementLabel,
-
-                identifier:
-                    evaluation.identifier,
-
-                value:
-                    evaluation.value,
-
-                frame:
-                    evaluation.frame,
-
-                remediation:
-                    evaluation.remediation
+                ruleID: evaluation.ruleID,
+                severity: evaluation.severity,
+                message: evaluation.message,
+                elementType: evaluation.elementType,
+                elementLabel: evaluation.elementLabel,
+                identifier: evaluation.identifier,
+                value: evaluation.value,
+                frame: evaluation.frame,
+                remediation: evaluation.remediation
             )
         }
     }
 
-    // MARK: - Production Report API
+    // MARK: - Evaluation
+
+    func evaluateForReport(
+        rootNode: AccessibilityNode
+    ) -> [AccessibilityRuleEvaluation] {
+
+        var evaluations: [AccessibilityRuleEvaluation] = []
+
+        evaluateNode(
+            rootNode,
+            evaluations: &evaluations
+        )
+
+        return evaluations
+    }
+
+    private func evaluateNode(
+        _ node: AccessibilityNode,
+        evaluations: inout [AccessibilityRuleEvaluation]
+    ) {
+        guard node.exists else {
+            return
+        }
+
+        // Run every rule against this element.
+        for rule in rules {
+            if let evaluation = rule.evaluate(
+                node: node
+            ) {
+                evaluations.append(evaluation)
+            }
+        }
+
+        // Recursively evaluate children.
+        for child in node.children {
+            evaluateNode(
+                child,
+                evaluations: &evaluations
+            )
+        }
+    }
+
+    // MARK: - Report
+
     func scanReport(
         rootNode: AccessibilityNode,
         applicationName: String,
@@ -87,119 +108,45 @@ final class AccessibilityScanner {
 
         let startedAt = Date()
 
-        let evaluations =
-            evaluateForReport(
-                rootNode:
-                    rootNode
-            )
+        // Evaluate the hierarchy once.
+        let evaluations = evaluateForReport(
+            rootNode: rootNode
+        )
 
-        let elementCount =
-            countRelevantElements(
-                rootNode
-            )
+        let elementCount = countRelevantElements(
+            rootNode
+        )
 
         let resolvedScreenName =
             screenName ??
             inferScreenName(
-                rootNode:
-                    rootNode,
-                applicationName:
-                    applicationName
+                rootNode: rootNode,
+                applicationName: applicationName
             )
 
-        let screen =
-            ScreenScanResult(
-                name:
-                    resolvedScreenName,
+        let screen = ScreenScanResult(
+            name: resolvedScreenName,
+            elementCount: elementCount,
+            evaluations: evaluations,
+            screenshot: screenshot,
+            annotations: annotations
+        )
 
-                elementCount:
-                    elementCount,
-
-                evaluations:
-                    evaluations,
-
-                screenshot:
-                    screenshot,
-
-                annotations:
-                    annotations
-            )
-
-        let finishedAt =
-            Date()
+        let finishedAt = Date()
 
         return AccessibilityScanResult(
-            applicationName:
-                applicationName,
-
-            bundleID:
-                bundleID,
-
-            deviceName:
-                deviceName,
-
-            deviceUDID:
-                deviceUDID,
-
-            startedAt:
-                startedAt,
-
-            finishedAt:
-                finishedAt,
-
-            screens:
-                [screen],
-
-            rulesExecuted:
-                rules.count
+            applicationName: applicationName,
+            bundleID: bundleID,
+            deviceName: deviceName,
+            deviceUDID: deviceUDID,
+            startedAt: startedAt,
+            finishedAt: finishedAt,
+            screens: [screen],
+            rulesExecuted: rules.count
         )
     }
 
-    // MARK: - Rule Evaluation
-    func evaluateForReport(
-        rootNode: AccessibilityNode
-    ) -> [AccessibilityRuleEvaluation] {
-
-        var evaluations:
-            [AccessibilityRuleEvaluation] = []
-
-        evaluateNode(
-            rootNode,
-            evaluations:
-                &evaluations
-        )
-
-        return evaluations
-    }
-
-    private func evaluateNode(
-        _ node: AccessibilityNode,
-        evaluations: inout [AccessibilityRuleEvaluation]
-    ) {
-
-        guard node.exists else {
-            return
-        }
-
-        for rule in rules {
-
-            if let evaluation = rule.evaluate(
-                node: node
-            ) {
-                evaluations.append(evaluation)
-            }
-        }
-
-        for child in node.children {
-
-            evaluateNode(
-                child,
-                evaluations: &evaluations
-            )
-        }
-    }
-
-    // MARK: - Element Counting
+    // MARK: - Element Count
 
     private func countRelevantElements(
         _ node: AccessibilityNode
@@ -209,12 +156,10 @@ final class AccessibilityScanner {
 
         if node.exists,
            node.visible {
-
             count += 1
         }
 
         for child in node.children {
-
             count += countRelevantElements(
                 child
             )
@@ -230,21 +175,19 @@ final class AccessibilityScanner {
         applicationName: String
     ) -> String {
 
-        let candidates = findVisibleTextElements(
-            rootNode
-        )
-
-        for candidate in candidates {
-
-            let text = candidate.trimmingCharacters(
-                in: .whitespacesAndNewlines
+        let candidates =
+            findVisibleTextElements(
+                rootNode
             )
 
-            guard !text.isEmpty else {
-                continue
-            }
+        for candidate in candidates {
+            let text =
+                candidate.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
 
-            if text.count <= 60 {
+            if !text.isEmpty,
+               text.count <= 60 {
                 return text
             }
         }
@@ -265,11 +208,14 @@ final class AccessibilityScanner {
                 "XCUIElementTypeNavigationBar"
             ]
 
-            if textTypes.contains(node.type) {
+            if textTypes.contains(
+                node.type
+            ) {
 
-                let label = node.label.trimmingCharacters(
-                    in: .whitespacesAndNewlines
-                )
+                let label =
+                    node.label.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    )
 
                 if !label.isEmpty {
                     result.append(label)
@@ -278,11 +224,11 @@ final class AccessibilityScanner {
         }
 
         for child in node.children {
-
             result.append(
-                contentsOf: findVisibleTextElements(
-                    child
-                )
+                contentsOf:
+                    findVisibleTextElements(
+                        child
+                    )
             )
         }
 

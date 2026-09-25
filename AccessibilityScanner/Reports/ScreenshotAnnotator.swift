@@ -10,26 +10,78 @@ import AppKit
 
 final class ScreenshotAnnotator {
 
-    struct Result {
-
-        let image: NSImage
-
-        let annotations:
-            [ScreenshotAnnotation]
-    }
+    // MARK: - Main Annotation Method
 
     func annotate(
         imageData: Data,
-        screenshotWidth: CGFloat,
-        screenshotHeight: CGFloat,
+        screenshotWidth: Double,
+        screenshotHeight: Double,
+        hierarchyWidth: Double,
+        hierarchyHeight: Double,
         evaluations: [AccessibilityRuleEvaluation]
-    ) throws -> Result {
+    ) -> Data? {
 
-        guard let originalImage =
-                NSImage(data: imageData) else {
+        // ---------------------------------------------------------
+        // 1. Decode screenshot
+        // ---------------------------------------------------------
 
-            throw ScreenshotAnnotatorError.invalidImage
+        guard let sourceImage = NSImage(data: imageData) else {
+            print("ANNOTATOR: Could not decode source image.")
+            return nil
         }
+
+        guard
+            screenshotWidth > 0,
+            screenshotHeight > 0,
+            hierarchyWidth > 0,
+            hierarchyHeight > 0
+        else {
+            print("ANNOTATOR: Invalid dimensions.")
+            return nil
+        }
+
+        // ---------------------------------------------------------
+        // 2. Get actual screenshot pixel dimensions
+        // ---------------------------------------------------------
+
+        guard let sourceCGImage = sourceImage.cgImage(
+            forProposedRect: nil,
+            context: nil,
+            hints: nil
+        ) else {
+            print("ANNOTATOR: Could not obtain CGImage.")
+            return nil
+        }
+
+        let pixelWidth = sourceCGImage.width
+        let pixelHeight = sourceCGImage.height
+
+        guard pixelWidth > 0, pixelHeight > 0 else {
+            print("ANNOTATOR: Invalid screenshot pixel dimensions.")
+            return nil
+        }
+
+        print("""
+        ==========================================
+        SCREENSHOT ANNOTATOR
+        ==========================================
+
+        NSImage size:
+            \(sourceImage.size.width) × \(sourceImage.size.height)
+
+        Screenshot supplied dimensions:
+            \(screenshotWidth) × \(screenshotHeight)
+
+        Actual screenshot pixels:
+            \(pixelWidth) × \(pixelHeight)
+
+        Accessibility hierarchy:
+            \(hierarchyWidth) × \(hierarchyHeight)
+        """)
+
+        // ---------------------------------------------------------
+        // 3. Create issue annotations
+        // ---------------------------------------------------------
 
         let annotations = evaluations
             .filter {
@@ -39,306 +91,493 @@ final class ScreenshotAnnotator {
             }
             .enumerated()
             .map { index, evaluation in
-
                 ScreenshotAnnotation(
                     number: index + 1,
                     evaluation: evaluation
                 )
             }
 
-        let annotatedImage =
-            drawAnnotations(
-                image: originalImage,
-                screenshotWidth:
-                    screenshotWidth,
-                screenshotHeight:
-                    screenshotHeight,
-                annotations:
-                    annotations
-            )
+        print("""
+        Issues:
+            \(annotations.count)
 
-        return Result(
-            image: annotatedImage,
-            annotations: annotations
-        )
-    }
+        ==========================================
+        """)
 
-    private func drawAnnotations(
-        image: NSImage,
-        screenshotWidth: CGFloat,
-        screenshotHeight: CGFloat,
-        annotations: [ScreenshotAnnotation]
-    ) -> NSImage {
+        // ---------------------------------------------------------
+        // 4. Create bitmap
+        // ---------------------------------------------------------
 
-        let imageSize =
-            NSSize(
-                width: screenshotWidth,
-                height: screenshotHeight
-            )
-
-        let result =
-            NSImage(
-                size: imageSize
-            )
-
-        result.lockFocus()
-
-        defer {
-            result.unlockFocus()
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixelWidth,
+            pixelsHigh: pixelHeight,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bitmapFormat: [],
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            print("ANNOTATOR: Could not create bitmap.")
+            return nil
         }
 
-        // Draw original screenshot.
-        image.draw(
-            in: NSRect(
+        bitmap.size = NSSize(
+            width: CGFloat(pixelWidth),
+            height: CGFloat(pixelHeight)
+        )
+
+        guard let graphicsContext =
+                NSGraphicsContext(bitmapImageRep: bitmap)
+        else {
+            print("ANNOTATOR: Could not create graphics context.")
+            return nil
+        }
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = graphicsContext
+
+        // ---------------------------------------------------------
+        // 5. Draw original screenshot
+        // ---------------------------------------------------------
+
+        let destinationRect = NSRect(
+            x: 0,
+            y: 0,
+            width: CGFloat(pixelWidth),
+            height: CGFloat(pixelHeight)
+        )
+
+        sourceImage.draw(
+            in: destinationRect,
+            from: NSRect(
                 x: 0,
                 y: 0,
-                width: screenshotWidth,
-                height: screenshotHeight
+                width: sourceImage.size.width,
+                height: sourceImage.size.height
             ),
-            from: .zero,
             operation: .copy,
             fraction: 1.0
         )
 
-        guard !annotations.isEmpty else {
-            return result
-        }
+        // ---------------------------------------------------------
+        // 6. Coordinate conversion
+        // ---------------------------------------------------------
 
-        let context =
-            NSGraphicsContext.current?
-                .cgContext
+        let screenshotPixelWidth = CGFloat(pixelWidth)
+        let screenshotPixelHeight = CGFloat(pixelHeight)
 
-        guard let context else {
-            return result
-        }
+        let hierarchyW = CGFloat(hierarchyWidth)
+        let hierarchyH = CGFloat(hierarchyHeight)
+
+        /*
+         WDA normally reports coordinates in the same aspect ratio
+         as the iOS screen.
+
+         We calculate both scales first.
+         */
+
+        let scaleX =
+            screenshotPixelWidth / hierarchyW
+
+        let scaleY =
+            screenshotPixelHeight / hierarchyH
+
+        /*
+         For a normal iOS screenshot these should be almost equal.
+
+         Use separate X/Y scales because some devices/screenshots
+         can have different pixel scaling.
+         */
+
+        let screenshotBounds = NSRect(
+            x: 0,
+            y: 0,
+            width: screenshotPixelWidth,
+            height: screenshotPixelHeight
+        )
+
+        print("""
+        ==========================================
+        COORDINATE SYSTEM
+        ==========================================
+
+        Hierarchy:
+            \(hierarchyW) × \(hierarchyH)
+
+        Screenshot:
+            \(screenshotPixelWidth) × \(screenshotPixelHeight)
+
+        Scale X:
+            \(scaleX)
+
+        Scale Y:
+            \(scaleY)
+
+        ==========================================
+        """)
+
+        // ---------------------------------------------------------
+        // 7. Draw every issue
+        // ---------------------------------------------------------
 
         for annotation in annotations {
 
-            let scaledFrame =
-                scaleFrame(
-                    annotation.frame,
-                    screenshotWidth:
-                        screenshotWidth,
-                    screenshotHeight:
-                        screenshotHeight
+            let frame = annotation.frame
+
+            print("""
+            ==========================================
+            ISSUE #\(annotation.number)
+            ==========================================
+
+            Type:
+                \(annotation.elementType)
+
+            Label:
+                \(annotation.elementLabel)
+
+            WDA frame:
+                x = \(frame.origin.x)
+                y = \(frame.origin.y)
+                width = \(frame.width)
+                height = \(frame.height)
+            """)
+
+            // -----------------------------------------------------
+            // Convert WDA X/Y/width/height to screenshot pixels
+            // -----------------------------------------------------
+
+            let convertedX =
+                frame.origin.x * scaleX
+
+            let convertedWidth =
+                frame.width * scaleX
+
+            let convertedHeight =
+                frame.height * scaleY
+
+            /*
+             WDA/XCUITest uses a top-left coordinate origin.
+
+             AppKit uses a bottom-left coordinate origin.
+
+             Convert Y after scaling.
+             */
+
+            let convertedTopY =
+                frame.origin.y * scaleY
+
+            let convertedY =
+                screenshotPixelHeight -
+                convertedTopY -
+                convertedHeight
+
+            let convertedRect = NSRect(
+                x: convertedX,
+                y: convertedY,
+                width: convertedWidth,
+                height: convertedHeight
+            )
+
+            print("""
+            Converted frame:
+                x = \(convertedRect.origin.x)
+                y = \(convertedRect.origin.y)
+                width = \(convertedRect.width)
+                height = \(convertedRect.height)
+            """)
+
+            // -----------------------------------------------------
+            // Clip to screenshot
+            // -----------------------------------------------------
+
+            let clippedRect =
+                clipRect(
+                    convertedRect,
+                    to: screenshotBounds
                 )
 
-            drawAnnotation(
-                context:
-                    context,
-                frame:
-                    scaledFrame,
-                number:
-                    annotation.number,
-                severity:
-                    annotation.severity
+            guard
+                clippedRect.width > 1,
+                clippedRect.height > 1
+            else {
+                print(
+                    "ANNOTATOR: Issue #\(annotation.number) " +
+                    "is outside screenshot."
+                )
+
+                continue
+            }
+
+            print("""
+            Clipped frame:
+                x = \(clippedRect.origin.x)
+                y = \(clippedRect.origin.y)
+                width = \(clippedRect.width)
+                height = \(clippedRect.height)
+            """)
+
+            // -----------------------------------------------------
+            // Draw rectangle
+            // -----------------------------------------------------
+
+            drawRectangle(
+                rect: clippedRect,
+                severity: annotation.severity
+            )
+
+            // -----------------------------------------------------
+            // Draw marker
+            // -----------------------------------------------------
+
+            drawMarker(
+                number: annotation.number,
+                rect: clippedRect,
+                screenshotBounds: screenshotBounds,
+                severity: annotation.severity
+            )
+
+            print(
+                "ANNOTATOR: Issue #\(annotation.number) drawn."
             )
         }
 
-        return result
+        graphicsContext.flushGraphics()
+
+        NSGraphicsContext.restoreGraphicsState()
+
+        guard let pngData =
+                bitmap.representation(
+                    using: .png,
+                    properties: [:]
+                )
+        else {
+            print(
+                "ANNOTATOR: Could not create PNG representation."
+            )
+
+            return nil
+        }
+
+        print("""
+
+        PNG bytes:
+            \(pngData.count)
+
+        Pixel dimensions:
+            \(pixelWidth) × \(pixelHeight)
+        """)
+
+        return pngData
     }
 
-    private func scaleFrame(
-        _ frame: CGRect,
-        screenshotWidth: CGFloat,
-        screenshotHeight: CGFloat
-    ) -> CGRect {
+    // MARK: - Clip Rectangle
 
-        // Appium/WDA coordinates are based on the
-        // application's logical screen dimensions.
-        //
-        // The screenshot can have a different pixel
-        // resolution, so scale the hierarchy coordinates.
+    private func clipRect(
+        _ rect: NSRect,
+        to bounds: NSRect
+    ) -> NSRect {
 
-        let sourceWidth =
-            CGFloat(
-                402
+        let minX =
+            max(
+                rect.minX,
+                bounds.minX
             )
 
-        let sourceHeight =
-            CGFloat(
-                874
+        let minY =
+            max(
+                rect.minY,
+                bounds.minY
             )
 
-        let scaleX =
-            screenshotWidth /
-            sourceWidth
+        let maxX =
+            min(
+                rect.maxX,
+                bounds.maxX
+            )
 
-        let scaleY =
-            screenshotHeight /
-            sourceHeight
+        let maxY =
+            min(
+                rect.maxY,
+                bounds.maxY
+            )
 
-        let x =
-            frame.origin.x *
-            scaleX
+        guard
+            maxX > minX,
+            maxY > minY
+        else {
+            return .zero
+        }
 
-        let y =
-            frame.origin.y *
-            scaleY
-
-        let width =
-            frame.width *
-            scaleX
-
-        let height =
-            frame.height *
-            scaleY
-
-        // Convert from top-left Appium coordinates
-        // to bottom-left Core Graphics coordinates.
-        let flippedY =
-            screenshotHeight -
-            y -
-            height
-
-        return CGRect(
-            x: x,
-            y: flippedY,
-            width: width,
-            height: height
+        return NSRect(
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY
         )
     }
 
-    private func drawAnnotation(
-        context: CGContext,
-        frame: CGRect,
-        number: Int,
-        severity:
-            AccessibilityFinding.Severity
+    // MARK: - Draw Rectangle
+
+    private func drawRectangle(
+        rect: NSRect,
+        severity: AccessibilityFinding.Severity
     ) {
 
-        let strokeColor:
-            NSColor
+        let color =
+            colorForSeverity(severity)
 
-        switch severity {
+        color.setStroke()
 
-        case .error:
-            strokeColor =
-                .systemRed
-
-        case .warning:
-            strokeColor =
-                .systemOrange
-
-        case .info:
-            strokeColor =
-                .systemBlue
-        }
-
-        // =========================================
-        // Bounding Box
-        // =========================================
-
-        context.setStrokeColor(
-            strokeColor.cgColor
-        )
-
-        context.setLineWidth(4)
-
-        context.stroke(
-            frame
-        )
-
-        // =========================================
-        // Marker Circle
-        // =========================================
-
-        let markerSize:
-            CGFloat = 28
-
-        let markerX =
-            max(
-                2,
-                frame.minX -
-                    markerSize / 2
+        let path =
+            NSBezierPath(
+                rect: rect
             )
 
-        let markerY =
+        path.lineWidth = 4
+
+        path.stroke()
+    }
+
+    // MARK: - Draw Number Marker
+
+    private func drawMarker(
+        number: Int,
+        rect: NSRect,
+        screenshotBounds: NSRect,
+        severity: AccessibilityFinding.Severity
+    ) {
+
+        let markerSize: CGFloat = 30
+
+        // ---------------------------------------------------------
+        // Try to put marker at top-left INSIDE the rectangle.
+        // ---------------------------------------------------------
+
+        var markerX =
+            rect.minX
+
+        var markerY =
+            rect.maxY - markerSize
+
+        // ---------------------------------------------------------
+        // Horizontal safety
+        // ---------------------------------------------------------
+
+        markerX =
+            max(
+                screenshotBounds.minX,
+                markerX
+            )
+
+        markerX =
             min(
-                frame.maxY -
-                    markerSize / 2,
-                frame.maxY
+                markerX,
+                screenshotBounds.maxX - markerSize
+            )
+
+        // ---------------------------------------------------------
+        // Vertical safety
+        // ---------------------------------------------------------
+
+        markerY =
+            max(
+                screenshotBounds.minY,
+                markerY
+            )
+
+        markerY =
+            min(
+                markerY,
+                screenshotBounds.maxY - markerSize
             )
 
         let markerRect =
-            CGRect(
+            NSRect(
                 x: markerX,
                 y: markerY,
                 width: markerSize,
                 height: markerSize
             )
 
-        context.setFillColor(
-            strokeColor.cgColor
-        )
+        let color =
+            colorForSeverity(severity)
 
-        context.fillEllipse(
-            in: markerRect
-        )
+        // ---------------------------------------------------------
+        // Circle
+        // ---------------------------------------------------------
 
-        // =========================================
+        color.setFill()
+
+        let circle =
+            NSBezierPath(
+                ovalIn: markerRect
+            )
+
+        circle.fill()
+
+        // ---------------------------------------------------------
         // Number
-        // =========================================
+        // ---------------------------------------------------------
 
-        let numberText =
-            "\(number)" as NSString
+        let text = "\(number)"
 
         let attributes:
             [NSAttributedString.Key: Any] = [
 
+                .foregroundColor:
+                    NSColor.white,
+
                 .font:
                     NSFont.boldSystemFont(
-                        ofSize: 14
-                    ),
-
-                .foregroundColor:
-                    NSColor.white
+                        ofSize: 15
+                    )
             ]
 
+        let attributedText =
+            NSAttributedString(
+                string: text,
+                attributes: attributes
+            )
+
         let textSize =
-            numberText.size(
-                withAttributes:
-                    attributes
+            attributedText.size()
+
+        let textX =
+            markerRect.midX -
+            (textSize.width / 2)
+
+        let textY =
+            markerRect.midY -
+            (textSize.height / 2)
+
+        attributedText.draw(
+            at: NSPoint(
+                x: textX,
+                y: textY
             )
-
-        let textRect =
-            CGRect(
-                x:
-                    markerRect.midX -
-                    textSize.width / 2,
-
-                y:
-                    markerRect.midY -
-                    textSize.height / 2,
-
-                width:
-                    textSize.width,
-
-                height:
-                    textSize.height
-            )
-
-        numberText.draw(
-            in: textRect,
-            withAttributes:
-                attributes
         )
     }
-}
 
-enum ScreenshotAnnotatorError:
-    Error,
-    LocalizedError {
+    // MARK: - Severity Color
 
-    case invalidImage
+    private func colorForSeverity(
+        _ severity: AccessibilityFinding.Severity
+    ) -> NSColor {
 
-    var errorDescription: String? {
+        switch severity {
 
-        switch self {
+        case .error:
+            return NSColor.systemRed
 
-        case .invalidImage:
-            return
-                "The Appium screenshot could not be decoded."
+        case .warning:
+            return NSColor.systemOrange
+
+        case .info:
+            return NSColor.systemBlue
         }
     }
 }

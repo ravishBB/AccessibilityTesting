@@ -6,23 +6,35 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct ScanReportView: View {
 
     let report: AccessibilityScanResult
 
     var body: some View {
+
         ScrollView {
+
             VStack(
                 alignment: .leading,
                 spacing: 24
             ) {
+
                 header
+
                 summarySection
+
+                screenshotSection
+
                 screenResultsSection
+
                 ruleResultsSection
+
                 issuesSection
+
                 passesSection
+
                 ruleSummarySection
             }
             .padding(24)
@@ -36,6 +48,7 @@ struct ScanReportView: View {
     // MARK: - Header
 
     private var header: some View {
+
         VStack(
             alignment: .leading,
             spacing: 8
@@ -97,6 +110,7 @@ struct ScanReportView: View {
     // MARK: - Summary
 
     private var summarySection: some View {
+
         VStack(
             alignment: .leading,
             spacing: 16
@@ -157,9 +171,273 @@ struct ScanReportView: View {
         }
     }
 
+    // MARK: - Screenshot
+
+    private var screenshotSection: some View {
+
+        VStack(
+            alignment: .leading,
+            spacing: 16
+        ) {
+
+            sectionTitle("Accessibility Screenshot")
+
+            ForEach(report.screens) { screen in
+
+                screenshotCard(
+                    screen: screen
+                )
+            }
+        }
+    }
+
+    // MARK: - Screenshot Card
+
+    private func screenshotCard(
+        screen: ScreenScanResult
+    ) -> some View {
+
+        VStack(
+            alignment: .leading,
+            spacing: 16
+        ) {
+
+            HStack {
+
+                VStack(
+                    alignment: .leading,
+                    spacing: 4
+                ) {
+
+                    Text(screen.name)
+                        .font(.headline)
+
+                    Text(
+                        "\(screen.annotations.count) annotated issue(s)"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+
+            if let screenshot = screen.screenshot {
+
+                if let annotatedData =
+                    screenshot.annotatedImageData,
+                   let annotatedImage =
+                    NSImage(data: annotatedData) {
+
+                    Image(
+                        nsImage: annotatedImage
+                    )
+                    .resizable()
+                    .aspectRatio(
+                        contentMode: .fit
+                    )
+                    .frame(
+                        maxWidth: 500
+                    )
+                    .clipShape(
+                        RoundedRectangle(
+                            cornerRadius: 12
+                        )
+                    )
+                    .shadow(
+                        radius: 6
+                    )
+
+                } else if let rawImage =
+                            NSImage(
+                                data: screenshot.imageData
+                            ) {
+
+                    VStack(
+                        alignment: .leading,
+                        spacing: 8
+                    ) {
+
+                        Text(
+                            "Annotated image unavailable — showing captured screenshot."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                        Image(
+                            nsImage: rawImage
+                        )
+                        .resizable()
+                        .aspectRatio(
+                            contentMode: .fit
+                        )
+                        .frame(
+                            maxWidth: 500
+                        )
+                        .clipShape(
+                            RoundedRectangle(
+                                cornerRadius: 12
+                            )
+                        )
+                    }
+
+                } else {
+
+                    Text(
+                        "Screenshot data could not be displayed."
+                    )
+                    .foregroundStyle(.secondary)
+                }
+
+            } else {
+
+                VStack(
+                    alignment: .leading,
+                    spacing: 8
+                ) {
+
+                    Image(
+                        systemName: "camera.slash"
+                    )
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+
+                    Text(
+                        "No screenshot was captured for this screen."
+                    )
+                    .foregroundStyle(.secondary)
+                }
+                .frame(
+                    maxWidth: .infinity,
+                    alignment: .center
+                )
+                .padding(40)
+            }
+
+            if !screen.annotations.isEmpty {
+
+                Divider()
+
+                Text("Annotated Issues")
+                    .font(.headline)
+
+                VStack(
+                    alignment: .leading,
+                    spacing: 10
+                ) {
+
+                    ForEach(
+                        screen.annotations
+                    ) { annotation in
+
+                        annotationRow(
+                            annotation
+                        )
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(
+                cornerRadius: 12
+            )
+            .fill(
+                Color.secondary.opacity(0.06)
+            )
+        )
+    }
+
+    // MARK: - Annotation Row
+
+    private func annotationRow(
+        _ annotation: ScreenshotAnnotation
+    ) -> some View {
+
+        HStack(
+            alignment: .top,
+            spacing: 12
+        ) {
+
+            Text(
+                "\(annotation.number)"
+            )
+            .font(.caption)
+            .fontWeight(.bold)
+            .foregroundStyle(.white)
+            .frame(
+                width: 24,
+                height: 24
+            )
+            .background(
+                annotationColor(
+                    annotation.severity
+                )
+            )
+            .clipShape(
+                Circle()
+            )
+
+            VStack(
+                alignment: .leading,
+                spacing: 3
+            ) {
+
+                HStack {
+
+                    Text(annotation.ruleName)
+                        .font(.callout)
+                        .fontWeight(.semibold)
+
+                    severityBadge(
+                        annotation.severity
+                    )
+                }
+
+                if !annotation.elementLabel.isEmpty {
+
+                    Text(
+                        "\(annotation.elementType) — \(annotation.elementLabel)"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                } else {
+
+                    Text(
+                        annotation.elementType
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                Text(
+                    annotation.message
+                )
+                .font(.caption)
+
+                Text(
+                    String(
+                        format:
+                            "Frame: %.0f, %.0f — %.0f × %.0f",
+                        annotation.frameX,
+                        annotation.frameY,
+                        annotation.frameWidth,
+                        annotation.frameHeight
+                    )
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+    }
+
     // MARK: - Screens
 
     private var screenResultsSection: some View {
+
         VStack(
             alignment: .leading,
             spacing: 16
@@ -167,7 +445,9 @@ struct ScanReportView: View {
 
             sectionTitle("Per-Screen Results")
 
-            ForEach(report.screens) { screen in
+            ForEach(
+                report.screens
+            ) { screen in
 
                 VStack(
                     alignment: .leading,
@@ -181,8 +461,10 @@ struct ScanReportView: View {
 
                         Spacer()
 
-                        Text("\(screen.elementCount) elements")
-                            .foregroundStyle(.secondary)
+                        Text(
+                            "\(screen.elementCount) elements"
+                        )
+                        .foregroundStyle(.secondary)
                     }
 
                     HStack(spacing: 12) {
@@ -224,6 +506,7 @@ struct ScanReportView: View {
     // MARK: - Rule Results
 
     private var ruleResultsSection: some View {
+
         VStack(
             alignment: .leading,
             spacing: 16
@@ -231,7 +514,9 @@ struct ScanReportView: View {
 
             sectionTitle("Rule-wise Results")
 
-            ForEach(report.ruleSummaries) { rule in
+            ForEach(
+                report.ruleSummaries
+            ) { rule in
 
                 VStack(
                     alignment: .leading,
@@ -299,6 +584,7 @@ struct ScanReportView: View {
     // MARK: - Issues
 
     private var issuesSection: some View {
+
         VStack(
             alignment: .leading,
             spacing: 16
@@ -329,6 +615,7 @@ struct ScanReportView: View {
     // MARK: - Passes
 
     private var passesSection: some View {
+
         VStack(
             alignment: .leading,
             spacing: 16
@@ -359,6 +646,7 @@ struct ScanReportView: View {
     // MARK: - Rule Summary
 
     private var ruleSummarySection: some View {
+
         VStack(
             alignment: .leading,
             spacing: 16
@@ -396,29 +684,37 @@ struct ScanReportView: View {
                                 alignment: .leading
                             )
 
-                        Text("\(rule.failures)")
-                            .frame(
-                                width: 70,
-                                alignment: .center
-                            )
+                        Text(
+                            "\(rule.failures)"
+                        )
+                        .frame(
+                            width: 70,
+                            alignment: .center
+                        )
 
-                        Text("\(rule.warnings)")
-                            .frame(
-                                width: 70,
-                                alignment: .center
-                            )
+                        Text(
+                            "\(rule.warnings)"
+                        )
+                        .frame(
+                            width: 70,
+                            alignment: .center
+                        )
 
-                        Text("\(rule.validations)")
-                            .frame(
-                                width: 70,
-                                alignment: .center
-                            )
+                        Text(
+                            "\(rule.validations)"
+                        )
+                        .frame(
+                            width: 70,
+                            alignment: .center
+                        )
 
-                        Text("\(rule.passes)")
-                            .frame(
-                                width: 70,
-                                alignment: .center
-                            )
+                        Text(
+                            "\(rule.passes)"
+                        )
+                        .frame(
+                            width: 70,
+                            alignment: .center
+                        )
                     }
                     .padding(12)
 
@@ -447,15 +743,16 @@ struct ScanReportView: View {
             spacing: 10
         ) {
 
-            // Rule name + status
             HStack {
 
                 statusBadge(
                     evaluation.status
                 )
 
-                Text(evaluation.ruleName)
-                    .font(.headline)
+                Text(
+                    evaluation.ruleName
+                )
+                .font(.headline)
 
                 Spacer()
 
@@ -464,26 +761,29 @@ struct ScanReportView: View {
                 )
             }
 
-            // Main message
-            Text(evaluation.message)
-                .font(.body)
+            Text(
+                evaluation.message
+            )
+            .font(.body)
 
-            // Element information
             HStack(spacing: 8) {
 
-                Text(evaluation.elementType)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    evaluation.elementType
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
                 if !evaluation.elementLabel.isEmpty {
 
-                    Text(evaluation.elementLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        evaluation.elementLabel
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             }
 
-            // Identifier
             if !evaluation.identifier.isEmpty {
 
                 Text(
@@ -493,9 +793,9 @@ struct ScanReportView: View {
                 .foregroundStyle(.secondary)
             }
 
-            // Frame
             let frameText = String(
-                format: "Frame: %.0f, %.0f — %.0f × %.0f",
+                format:
+                    "Frame: %.0f, %.0f — %.0f × %.0f",
                 evaluation.frameX,
                 evaluation.frameY,
                 evaluation.frameWidth,
@@ -506,7 +806,6 @@ struct ScanReportView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            // Remediation
             if !evaluation.remediation.isEmpty {
 
                 VStack(
@@ -518,8 +817,10 @@ struct ScanReportView: View {
                         .font(.caption)
                         .fontWeight(.semibold)
 
-                    Text(evaluation.remediation)
-                        .font(.callout)
+                    Text(
+                        evaluation.remediation
+                    )
+                    .font(.callout)
                 }
                 .padding(.top, 4)
             }
@@ -579,9 +880,11 @@ struct ScanReportView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Text("\(value)")
-                .font(.title)
-                .fontWeight(.bold)
+            Text(
+                "\(value)"
+            )
+            .font(.title)
+            .fontWeight(.bold)
         }
         .frame(
             maxWidth: .infinity,
@@ -607,8 +910,10 @@ struct ScanReportView: View {
 
             Text(title)
 
-            Text("\(value)")
-                .fontWeight(.semibold)
+            Text(
+                "\(value)"
+            )
+            .fontWeight(.semibold)
         }
         .font(.caption)
     }
@@ -627,8 +932,10 @@ struct ScanReportView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Text("\(value)")
-                .fontWeight(.semibold)
+            Text(
+                "\(value)"
+            )
+            .fontWeight(.semibold)
         }
     }
 
@@ -660,23 +967,25 @@ struct ScanReportView: View {
         _ status: RuleResultStatus
     ) -> some View {
 
-        Text(status.displayName)
-            .font(.caption)
-            .fontWeight(.bold)
-            .padding(
-                .horizontal,
-                9
-            )
-            .padding(
-                .vertical,
-                5
-            )
-            .background(
-                Capsule()
-                    .fill(
-                        Color.secondary.opacity(0.15)
-                    )
-            )
+        Text(
+            status.displayName
+        )
+        .font(.caption)
+        .fontWeight(.bold)
+        .padding(
+            .horizontal,
+            9
+        )
+        .padding(
+            .vertical,
+            5
+        )
+        .background(
+            Capsule()
+                .fill(
+                    Color.secondary.opacity(0.15)
+                )
+        )
     }
 
     // MARK: - Severity Badge
@@ -685,8 +994,29 @@ struct ScanReportView: View {
         _ severity: AccessibilityFinding.Severity
     ) -> some View {
 
-        Text(severity.displayName)
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        Text(
+            severity.displayName
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
+    // MARK: - Annotation Color
+
+    private func annotationColor(
+        _ severity: AccessibilityFinding.Severity
+    ) -> Color {
+
+        switch severity {
+
+        case .error:
+            return .red
+
+        case .warning:
+            return .orange
+
+        case .info:
+            return .blue
+        }
     }
 }
