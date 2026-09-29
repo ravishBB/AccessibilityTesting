@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AppKit
+import ImageIO
 
 struct ScanReportView: View {
 
@@ -16,7 +17,7 @@ struct ScanReportView: View {
 
         ScrollView {
 
-            VStack(
+            LazyVStack(
                 alignment: .leading,
                 spacing: 24
             ) {
@@ -227,7 +228,7 @@ struct ScanReportView: View {
                 if let annotatedData =
                     screenshot.annotatedImageData,
                    let annotatedImage =
-                    NSImage(data: annotatedData) {
+                    thumbnailImage(from: annotatedData, maxPixelSize: 900) {
 
                     Image(
                         nsImage: annotatedImage
@@ -249,9 +250,7 @@ struct ScanReportView: View {
                     )
 
                 } else if let rawImage =
-                            NSImage(
-                                data: screenshot.imageData
-                            ) {
+                            thumbnailImage(from: screenshot.imageData, maxPixelSize: 900) {
 
                     VStack(
                         alignment: .leading,
@@ -344,6 +343,43 @@ struct ScanReportView: View {
             )
             .fill(
                 Color.secondary.opacity(0.06)
+            )
+        )
+    }
+
+    // MARK: - Image Thumbnail
+
+    private func thumbnailImage(
+        from data: Data,
+        maxPixelSize: Int
+    ) -> NSImage? {
+
+        guard let source = CGImageSourceCreateWithData(
+            data as CFData,
+            nil
+        ) else {
+            return nil
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            options as CFDictionary
+        ) else {
+            return nil
+        }
+
+        return NSImage(
+            cgImage: cgImage,
+            size: NSSize(
+                width: cgImage.width,
+                height: cgImage.height
             )
         )
     }

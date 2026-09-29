@@ -14,19 +14,16 @@ import AppKit
 final class ScannerViewModel: ObservableObject {
 
     // MARK: - Devices
-
     @Published var devices: [Device] = []
     @Published var selectedDevice: Device?
     @Published var isLoadingDevices: Bool = false
 
     // MARK: - Applications
-
     @Published var applications: [InstalledApp] = []
     @Published var selectedApplication: InstalledApp?
     @Published var isLoadingApplications: Bool = false
 
     // MARK: - Scan State
-
     @Published var status: String = "Ready"
     @Published var isScanning: Bool = false
     @Published var findings: [AccessibilityFinding] = []
@@ -40,13 +37,9 @@ final class ScannerViewModel: ObservableObject {
     )!
 
     // MARK: - Stable Snapshot Configuration
-
-    /// Number of attempts allowed when the UI hierarchy changes
-    /// while the screenshot is being captured.
     private let maximumSnapshotAttempts = 3
 
-    /// Small delay allowing the target application's UI to settle
-    /// before beginning a snapshot.
+ 
     private let initialUISettleDelayNanoseconds: UInt64 =
         500_000_000
 
@@ -283,7 +276,7 @@ final class ScannerViewModel: ObservableObject {
 
             status = "Creating Appium session..."
 
-            try await appium.createSession(configuration: configuration)
+            _ = try await appium.createSession(configuration: configuration)
 
             print("==========================================")
             print("APPIUM SESSION CREATED")
@@ -302,23 +295,8 @@ final class ScannerViewModel: ObservableObject {
                 appium: appium
             )
 
-            print("==========================================")
-            print("INITIAL SCREEN CAPTURED")
-            print("==========================================")
-
-            // --------------------------------------------------
-            // 3. CREATE RULE ENGINE
-            // --------------------------------------------------
-
             let scanner = AccessibilityScanner()
 
-            // --------------------------------------------------
-            // 4. START COMPLETE-APP CRAWLER
-            // --------------------------------------------------
-
-            print("==========================================")
-            print("STARTING APP CRAWLER")
-            print("==========================================")
 
             status = "Crawling application..."
 
@@ -337,15 +315,6 @@ final class ScannerViewModel: ObservableObject {
 
             }
 
-            print("==========================================")
-            print("APP CRAWLER FINISHED")
-            print("Screens discovered: \(crawledScreens.count)")
-            print("==========================================")
-
-            // --------------------------------------------------
-            // 5. CONVERT CRAWLED SCREENS TO REPORT SCREENS
-            // --------------------------------------------------
-
             status = "Building accessibility report..."
 
             var screenResults: [ScreenScanResult] = []
@@ -356,9 +325,57 @@ final class ScannerViewModel: ObservableObject {
                     crawledScreen.rootNode
                 )
 
-                let evaluations = scanner.evaluateForReport(
-                    rootNode: crawledScreen.rootNode
+                // Keep all findings discovered while crawling/scrolling.
+                // Visual/contextual rules are evaluated only against the
+                // exact screenshot that is being annotated.
+                let screenshotContext = AccessibilityRuleContext(
+                    screenshotData: crawledScreen.screenshotData,
+                    screenshotWidth: crawledScreen.screenshotWidth,
+                    screenshotHeight: crawledScreen.screenshotHeight,
+                    hierarchyWidth: crawledScreen.rootNode.frame.width,
+                    hierarchyHeight: crawledScreen.rootNode.frame.height
                 )
+
+                let contextualEvaluations = scanner.evaluateForReport(
+                    rootNode: crawledScreen.rootNode,
+                    context: screenshotContext
+                )
+
+                let evaluations = mergeEvaluations(
+                    crawledScreen.evaluations,
+                    contextualEvaluations
+                )
+
+                // Only evaluations from the exact viewport represented by
+                // this screenshot may be drawn onto this screenshot.
+                let screenshotEvaluations = mergeEvaluations(
+                    crawledScreen.screenshotEvaluations,
+                    contextualEvaluations
+                )
+
+                let annotations = screenshotEvaluations
+                    .filter {
+                        $0.status == .fail ||
+                        $0.status == .warning ||
+                        $0.status == .validate
+                    }
+                    .enumerated()
+                    .map { index, evaluation in
+                        ScreenshotAnnotation(
+                            number: index + 1,
+                            evaluation: evaluation
+                        )
+                    }
+
+                let annotatedImageData =
+                    ScreenshotAnnotator().annotate(
+                        imageData: crawledScreen.screenshotData,
+                        screenshotWidth: crawledScreen.screenshotWidth,
+                        screenshotHeight: crawledScreen.screenshotHeight,
+                        hierarchyWidth: crawledScreen.rootNode.frame.width,
+                        hierarchyHeight: crawledScreen.rootNode.frame.height,
+                        evaluations: screenshotEvaluations
+                    )
 
                 let screenResult = ScreenScanResult(
                     name: "Screen \(screenResults.count + 1)",
@@ -366,10 +383,11 @@ final class ScannerViewModel: ObservableObject {
                     evaluations: evaluations,
                     screenshot: ScanScreenshot(
                         imageData: crawledScreen.screenshotData,
-                        annotatedImageData: nil,
+                        annotatedImageData: annotatedImageData,
                         width: crawledScreen.screenshotWidth,
                         height: crawledScreen.screenshotHeight
-                    )
+                    ),
+                    annotations: annotations
                 )
 
                 screenResults.append(screenResult)
@@ -389,12 +407,8 @@ final class ScannerViewModel: ObservableObject {
                 startedAt: startedAt,
                 finishedAt: finishedAt,
                 screens: screenResults,
-                rulesExecuted: 2
+                rulesExecuted: AccessibilityRules.all.count
             )
-
-            // --------------------------------------------------
-            // 7. UPDATE UI
-            // --------------------------------------------------
 
             self.scanResult = result
 
@@ -420,10 +434,7 @@ final class ScannerViewModel: ObservableObject {
             status = """
             Scan complete — \(screenResults.count) screens discovered
             """
-
-            print("==========================================")
-            print("COMPLETE APP SCAN FINISHED")
-            print("==========================================")
+            
             print("Screens: \(screenResults.count)")
             print("Elements: \(result.totalElementsTested)")
             print("Failures: \(result.totalFailures)")
@@ -432,22 +443,12 @@ final class ScannerViewModel: ObservableObject {
             print("Passes: \(result.totalPasses)")
             print("==========================================")
 
-            // --------------------------------------------------
-            // 8. DELETE APPIUM SESSION
-            // --------------------------------------------------
 
             try? await appium.deleteSession()
 
         } catch {
-
-            print("==========================================")
-            print("SCAN FAILED")
-            print("==========================================")
-            print(error)
-            print("==========================================")
-
+            
             status = "Scan failed"
-
             errorMessage = error.localizedDescription
         }
     }
@@ -464,10 +465,6 @@ final class ScannerViewModel: ObservableObject {
                 "Synchronizing UI state " +
                 "\(attempt)/\(maximumSnapshotAttempts)..."
 
-            // -------------------------------------------------
-            // A. Read hierarchy BEFORE screenshot
-            // -------------------------------------------------
-
             let sourceBefore =
                 try await appium.getSource()
 
@@ -479,9 +476,6 @@ final class ScannerViewModel: ObservableObject {
                     sourceBefore
                 )
 
-            // -------------------------------------------------
-            // B. Capture screenshot immediately
-            // -------------------------------------------------
 
             status =
                 "Capturing synchronized screenshot..."
@@ -618,16 +612,7 @@ final class ScannerViewModel: ObservableObject {
     }
 
     // MARK: - Hierarchy Signature
-
-    /// Creates a deterministic representation of the
-    /// accessibility hierarchy.
-    ///
-    /// We intentionally include the properties that matter
-    /// to accessibility scanning and screenshot coordinates.
-    ///
-    /// If this signature is identical before and after the
-    /// screenshot call, the hierarchy was stable across the
-    /// screenshot operation.
+    
     private func hierarchySignature(
         _ node: AccessibilityNode
     ) -> String {
@@ -708,6 +693,54 @@ final class ScannerViewModel: ObservableObject {
         return result
     }
     
+    private func mergeEvaluations(
+        _ base: [AccessibilityRuleEvaluation],
+        _ additions: [AccessibilityRuleEvaluation]
+    ) -> [AccessibilityRuleEvaluation] {
+        var replacementByKey: [String: AccessibilityRuleEvaluation] = [:]
+        for evaluation in additions {
+            replacementByKey[evaluationKey(evaluation)] = evaluation
+        }
+
+        var result: [AccessibilityRuleEvaluation] = []
+        var consumed = Set<String>()
+
+        for evaluation in base {
+            let key = evaluationKey(evaluation)
+            if let replacement = replacementByKey[key] {
+                result.append(replacement)
+                consumed.insert(key)
+            } else {
+                result.append(evaluation)
+            }
+        }
+
+        for evaluation in additions {
+            let key = evaluationKey(evaluation)
+            if !consumed.contains(key) && !base.contains(where: { evaluationKey($0) == key }) {
+                result.append(evaluation)
+                consumed.insert(key)
+            }
+        }
+
+        return result
+    }
+
+    private func evaluationKey(
+        _ evaluation: AccessibilityRuleEvaluation
+    ) -> String {
+        [
+            evaluation.ruleID,
+            evaluation.elementType,
+            evaluation.identifier,
+            evaluation.elementLabel,
+            String(format: "%.1f", evaluation.frameX),
+            String(format: "%.1f", evaluation.frameY),
+            String(format: "%.1f", evaluation.frameWidth),
+            String(format: "%.1f", evaluation.frameHeight)
+        ].joined(separator: "|")
+    }
+
     private func countNodes(
         _ node: AccessibilityNode
     ) -> Int {

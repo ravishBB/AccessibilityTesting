@@ -12,10 +12,7 @@ final class AccessibilityScanner {
     
 
     init(
-        rules: [AccessibilityRule] = [
-            AccessibleNameRule(),
-            TouchTargetRule()
-        ]
+        rules: [AccessibilityRule] = AccessibilityRules.all
     ) {
         self.rules = rules
     }
@@ -55,14 +52,16 @@ final class AccessibilityScanner {
     // MARK: - Evaluation
 
     func evaluateForReport(
-        rootNode: AccessibilityNode
+        rootNode: AccessibilityNode,
+        context: AccessibilityRuleContext? = nil
     ) -> [AccessibilityRuleEvaluation] {
 
         var evaluations: [AccessibilityRuleEvaluation] = []
 
         evaluateNode(
             rootNode,
-            evaluations: &evaluations
+            evaluations: &evaluations,
+            context: context
         )
 
         return evaluations
@@ -70,7 +69,8 @@ final class AccessibilityScanner {
 
     private func evaluateNode(
         _ node: AccessibilityNode,
-        evaluations: inout [AccessibilityRuleEvaluation]
+        evaluations: inout [AccessibilityRuleEvaluation],
+        context: AccessibilityRuleContext?
     ) {
         guard node.exists else {
             return
@@ -78,9 +78,21 @@ final class AccessibilityScanner {
 
         // Run every rule against this element.
         for rule in rules {
-            if let evaluation = rule.evaluate(
-                node: node
-            ) {
+            let evaluation: AccessibilityRuleEvaluation?
+
+            if let contextualRule = rule as? ContextualAccessibilityRule,
+               let context {
+                evaluation = contextualRule.evaluate(
+                    node: node,
+                    context: context
+                )
+            } else {
+                evaluation = rule.evaluate(
+                    node: node
+                )
+            }
+
+            if let evaluation {
                 evaluations.append(evaluation)
             }
         }
@@ -89,7 +101,8 @@ final class AccessibilityScanner {
         for child in node.children {
             evaluateNode(
                 child,
-                evaluations: &evaluations
+                evaluations: &evaluations,
+                context: context
             )
         }
     }

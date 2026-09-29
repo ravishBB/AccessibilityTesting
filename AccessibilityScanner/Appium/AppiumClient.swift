@@ -153,12 +153,6 @@ final class AppiumClient {
                 throw AppiumError.invalidResponse
             }
 
-            let errorText =
-                String(
-                    data: data,
-                    encoding: .utf8
-                ) ?? ""
-
             throw AppiumError.appiumError(
                 statusCode:
                     statusCode,
@@ -408,7 +402,7 @@ final class AppiumClient {
         )
         else {
 
-            let responseText =
+            _ =
                 String(
                     data: data,
                     encoding: .utf8
@@ -569,7 +563,6 @@ final class AppiumClient {
     }
     
     // MARK: - Scroll Down
-
     func scrollDown() async throws {
 
         guard let sessionID = sessionID else {
@@ -592,17 +585,25 @@ final class AppiumClient {
         )
 
         let payload: [String: Any] = [
+
             "script": "mobile: scroll",
+
             "args": [
                 [
-                    "direction": "down"
+                    "direction": "down",
+
+                    // Approximately one viewport.
+                    //
+                    // This is the key change.
+                    "distance": 0.85
                 ]
             ]
         ]
 
-        request.httpBody = try JSONSerialization.data(
-            withJSONObject: payload
-        )
+        request.httpBody =
+            try JSONSerialization.data(
+                withJSONObject: payload
+            )
 
         let (data, response) =
             try await URLSession.shared.data(

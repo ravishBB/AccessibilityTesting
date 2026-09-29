@@ -10,9 +10,16 @@ import CoreGraphics
 import AppKit
 
 struct CrawledScreen {
-    let signature: ScreenSignature
+    let signature: String
     let rootNode: AccessibilityNode
+
+    // All issues discovered while scanning every scroll viewport.
     let evaluations: [AccessibilityRuleEvaluation]
+
+    // Issues belonging to the exact viewport represented by screenshotData.
+    // This is what must be used for screenshot annotations.
+    let screenshotEvaluations: [AccessibilityRuleEvaluation]
+
     let actions: [NavigationAction]
 
     let screenshotData: Data
@@ -22,7 +29,14 @@ struct CrawledScreen {
 
 struct ScrollableScreenScanResult {
     let topSnapshot: StableScanSnapshot
+
+    // Complete findings from the whole scrollable content.
     let evaluations: [AccessibilityRuleEvaluation]
+
+    // Findings from the initial/top viewport only. These coordinates
+    // are guaranteed to belong to topSnapshot.screenshotData.
+    let topEvaluations: [AccessibilityRuleEvaluation]
+
     let viewportCount: Int
 }
 
@@ -49,7 +63,7 @@ final class AppCrawler {
     private let configuration: AppCrawlerConfiguration
 
     private var visitedScreens:
-        Set<ScreenSignature> = []
+        Set<String> = []
 
     private var discoveredScreens:
         [CrawledScreen] = []
@@ -113,12 +127,27 @@ final class AppCrawler {
             return
         }
 
+        // Content-based identity: frame/position data (as used by
+        // ScreenSignature) is too volatile here — a keyboard, a
+        // scroll offset, or a shifted banner produces a different
+        // ScreenSignature for what is logically the same screen,
+        // causing it to be re-scanned and re-screenshotted.
         let signature =
-            ScreenSignature(
-                rootNode: snapshot.rootNode
+            contentFingerprint(
+                from: snapshot.rootNode
             )
 
         if visitedScreens.contains(signature) {
+
+            print("""
+            ==========================================
+            CRAWLER DUPLICATE SCREEN SKIPPED
+            ==========================================
+            Already-visited screen recognized — not \
+            re-scanned or re-screenshotted.
+            ==========================================
+            """)
+
             return
         }
 
@@ -139,6 +168,9 @@ final class AppCrawler {
 
         let evaluations =
             scrollResult.evaluations
+
+        let screenshotEvaluations =
+            scrollResult.topEvaluations
 
         let actions =
             navigationActions(
@@ -184,6 +216,7 @@ final class AppCrawler {
             signature: signature,
             rootNode: topSnapshot.rootNode,
             evaluations: evaluations,
+            screenshotEvaluations: screenshotEvaluations,
             actions: actions,
             screenshotData: topSnapshot.screenshotData,
             screenshotWidth: topSnapshot.screenshotWidth,
@@ -225,13 +258,11 @@ final class AppCrawler {
             )
 
             let currentSignature =
-                ScreenSignature(
-                    rootNode: snapshot.rootNode
+                contentFingerprint(
+                    from: snapshot.rootNode
                 )
 
-            do {
-
-                guard let xpath = action.xpath else {
+            guard let xpath = action.xpath else {
 
                     statusHandler(
                         "Skipping action without identifier or label: " +
@@ -292,30 +323,16 @@ final class AppCrawler {
                     continue
                 }
 
-            } catch {
-
-                print("""
-                ==========================================
-                CRAWLER ACTION FAILED
-                ==========================================
-                Action:
-                    \(action.displayName)
-
-                Type:
-                    \(action.type)
-
-                Error:
-                    \(error.localizedDescription)
-                ==========================================
-                """)
-
-                continue
-            }
-
             try await Task.sleep(
                 nanoseconds:
                     configuration.settleDelayNanoseconds
             )
+
+            // Whether the tap actually navigated away from the
+            // current screen. Defaults to true (assume navigation)
+            // when the post-tap snapshot can't be captured, since we
+            // can't prove otherwise — see the catch block below.
+            var didNavigate = true
 
             do {
 
@@ -323,13 +340,30 @@ final class AppCrawler {
                     try await captureStableSnapshot()
 
                 let nextSignature =
-                    ScreenSignature(
-                        rootNode:
+                    contentFingerprint(
+                        from:
                             nextSnapshot.rootNode
                     )
 
                 if nextSignature ==
                     currentSignature {
+
+                    // The tap was a no-op (e.g. it just toggled
+                    // something in place). There is nothing to
+                    // navigate back from, so don't call goBack()
+                    // below — doing so was popping the parent
+                    // screen itself and cutting the remaining
+                    // actions on it short.
+                    didNavigate = false
+
+                    print("""
+                    ==========================================
+                    CRAWLER NO-OP TAP
+                    ==========================================
+                    Action did not change the screen: \
+                    \(action.displayName)
+                    ==========================================
+                    """)
 
                     statusHandler(
                         "Action did not change the screen: " +
@@ -347,6 +381,15 @@ final class AppCrawler {
                     )
 
                 } else {
+
+                    print("""
+                    ==========================================
+                    CRAWLER DUPLICATE SCREEN SKIPPED
+                    ==========================================
+                    Tap navigated to an already-visited screen \
+                    — not re-scanned or re-screenshotted.
+                    ==========================================
+                    """)
 
                     statusHandler(
                         "Screen already visited — skipping."
@@ -374,6 +417,15 @@ final class AppCrawler {
                 break
             }
 
+            guard didNavigate else {
+
+                statusHandler(
+                    "No back navigation needed — continuing with next action."
+                )
+
+                continue
+            }
+
             do {
                 try await appium.goBack()
 
@@ -394,8 +446,8 @@ final class AppCrawler {
                     try await captureStableSnapshot()
 
                 let backSignature =
-                    ScreenSignature(
-                        rootNode:
+                    contentFingerprint(
+                        from:
                             backSnapshot.rootNode
                     )
 
@@ -433,6 +485,13 @@ final class AppCrawler {
         var collectedEvaluations:
             [AccessibilityRuleEvaluation] = []
 
+        // These evaluations belong specifically to the initial viewport,
+        // which is also the viewport represented by topSnapshot.screenshotData.
+        let topEvaluations =
+            scanner.evaluateForReport(
+                rootNode: initialSnapshot.rootNode
+            )
+
         var seenEvaluationKeys:
             Set<String> = []
 
@@ -462,10 +521,16 @@ final class AppCrawler {
             // Scan current viewport
             // -----------------------------------------------------
 
-            let evaluations =
-                scanner.evaluateForReport(
-                    rootNode: currentSnapshot.rootNode
-                )
+            let evaluations: [AccessibilityRuleEvaluation]
+
+            if scrollIndex == 0 {
+                evaluations = topEvaluations
+            } else {
+                evaluations =
+                    scanner.evaluateForReport(
+                        rootNode: currentSnapshot.rootNode
+                    )
+            }
 
             for evaluation in evaluations {
 
@@ -589,7 +654,7 @@ final class AppCrawler {
          */
 
         var previousTopFingerprint =
-            viewportContentFingerprint(
+            contentFingerprint(
                 from: currentSnapshot.rootNode
             )
 
@@ -610,7 +675,7 @@ final class AppCrawler {
                 try await captureStableSnapshot()
 
             let currentTopFingerprint =
-                viewportContentFingerprint(
+                contentFingerprint(
                     from: topSnapshot.rootNode
                 )
 
@@ -684,11 +749,18 @@ final class AppCrawler {
         return ScrollableScreenScanResult(
             topSnapshot: initialSnapshot,
             evaluations: collectedEvaluations,
+            topEvaluations: topEvaluations,
             viewportCount: viewportCount
         )
     }
     
-    private func viewportContentFingerprint(
+    // Content-only identity for a node tree: type, identifier,
+    // label and value, ignoring frame/position. Used both to detect
+    // when a scroll view has stopped moving, and — more broadly —
+    // to identify whether two captures represent the same logical
+    // screen, regardless of transient layout differences (keyboard,
+    // scroll offset, minor animation).
+    private func contentFingerprint(
         from rootNode: AccessibilityNode
     ) -> String {
 
@@ -703,41 +775,58 @@ final class AppCrawler {
                 return
             }
 
-            guard node.exists else {
+            // The status bar (clock, battery, signal/wifi icons) is
+            // part of the accessibility tree WDA reports, but its
+            // values change every capture regardless of what the
+            // app is doing. Including it means two captures of the
+            // exact same app screen, taken even a few seconds apart,
+            // almost never fingerprint equal — which is why screens
+            // were being re-explored and re-screenshotted as if new.
+            if node.type ==
+                "XCUIElementTypeStatusBar" {
                 return
             }
 
-            guard node.visible else {
-                return
+            // Neither `exists` nor `visible` is allowed to stop
+            // recursion — only whether THIS node's own line gets
+            // added to the fingerprint. Returning early here would
+            // silently drop the entire subtree beneath a node WDA
+            // marks as not existing/visible, which is exactly what
+            // made two structurally different screens collapse to
+            // the same (or an empty) fingerprint and register as
+            // unchanged, even though the underlying content — proven
+            // by a very different source length — had clearly
+            // changed.
+            if node.exists && node.visible {
+
+                let identifier =
+                    node.identifier
+                        .trimmingCharacters(
+                            in: .whitespacesAndNewlines
+                        )
+
+                let label =
+                    node.label
+                        .trimmingCharacters(
+                            in: .whitespacesAndNewlines
+                        )
+
+                let value =
+                    node.value?
+                        .trimmingCharacters(
+                            in: .whitespacesAndNewlines
+                        ) ?? ""
+
+                values.append(
+                    [
+                        node.type,
+                        identifier,
+                        label,
+                        value
+                    ]
+                    .joined(separator: "|")
+                )
             }
-
-            let identifier =
-                node.identifier
-                    .trimmingCharacters(
-                        in: .whitespacesAndNewlines
-                    )
-
-            let label =
-                node.label
-                    .trimmingCharacters(
-                        in: .whitespacesAndNewlines
-                    )
-
-            let value =
-                node.value?
-                    .trimmingCharacters(
-                        in: .whitespacesAndNewlines
-                    ) ?? ""
-
-            values.append(
-                [
-                    node.type,
-                    identifier,
-                    label,
-                    value
-                ]
-                .joined(separator: "|")
-            )
 
             for child in node.children {
 
@@ -1110,3 +1199,4 @@ private extension CGRect {
         )
     }
 }
+
