@@ -13,11 +13,7 @@ struct CrawledScreen {
     let signature: String
     let rootNode: AccessibilityNode
 
-    // All issues discovered while scanning every scroll viewport.
     let evaluations: [AccessibilityRuleEvaluation]
-
-    // Issues belonging to the exact viewport represented by screenshotData.
-    // This is what must be used for screenshot annotations.
     let screenshotEvaluations: [AccessibilityRuleEvaluation]
 
     let actions: [NavigationAction]
@@ -28,15 +24,10 @@ struct CrawledScreen {
 }
 
 struct ScrollableScreenScanResult {
+    
     let topSnapshot: StableScanSnapshot
-
-    // Complete findings from the whole scrollable content.
     let evaluations: [AccessibilityRuleEvaluation]
-
-    // Findings from the initial/top viewport only. These coordinates
-    // are guaranteed to belong to topSnapshot.screenshotData.
     let topEvaluations: [AccessibilityRuleEvaluation]
-
     let viewportCount: Int
 }
 
@@ -127,26 +118,12 @@ final class AppCrawler {
             return
         }
 
-        // Content-based identity: frame/position data (as used by
-        // ScreenSignature) is too volatile here — a keyboard, a
-        // scroll offset, or a shifted banner produces a different
-        // ScreenSignature for what is logically the same screen,
-        // causing it to be re-scanned and re-screenshotted.
         let signature =
             contentFingerprint(
                 from: snapshot.rootNode
             )
 
         if visitedScreens.contains(signature) {
-
-            print("""
-            ==========================================
-            CRAWLER DUPLICATE SCREEN SKIPPED
-            ==========================================
-            Already-visited screen recognized — not \
-            re-scanned or re-screenshotted.
-            ==========================================
-            """)
 
             return
         }
@@ -176,20 +153,6 @@ final class AppCrawler {
             navigationActions(
                 from: topSnapshot.rootNode
             )
-        
-        print("""
-        ==========================================
-        CRAWLER SCREEN
-        ==========================================
-
-        Screen:
-            \(discoveredScreens.count + 1)
-
-        Actions found:
-            \(actions.count)
-
-        ==========================================
-        """)
 
         for (index, action) in actions.enumerated() {
 
@@ -328,10 +291,6 @@ final class AppCrawler {
                     configuration.settleDelayNanoseconds
             )
 
-            // Whether the tap actually navigated away from the
-            // current screen. Defaults to true (assume navigation)
-            // when the post-tap snapshot can't be captured, since we
-            // can't prove otherwise — see the catch block below.
             var didNavigate = true
 
             do {
@@ -347,13 +306,6 @@ final class AppCrawler {
 
                 if nextSignature ==
                     currentSignature {
-
-                    // The tap was a no-op (e.g. it just toggled
-                    // something in place). There is nothing to
-                    // navigate back from, so don't call goBack()
-                    // below — doing so was popping the parent
-                    // screen itself and cutting the remaining
-                    // actions on it short.
                     didNavigate = false
 
                     print("""
@@ -484,9 +436,7 @@ final class AppCrawler {
 
         var collectedEvaluations:
             [AccessibilityRuleEvaluation] = []
-
-        // These evaluations belong specifically to the initial viewport,
-        // which is also the viewport represented by topSnapshot.screenshotData.
+        
         let topEvaluations =
             scanner.evaluateForReport(
                 rootNode: initialSnapshot.rootNode
@@ -497,17 +447,12 @@ final class AppCrawler {
 
         let maximumScrolls = 20
 
-        // Used only for detecting downward viewport movement.
         var previousViewportSignature =
             ScreenSignature(
                 rootNode: initialSnapshot.rootNode
             )
 
         var viewportCount = 0
-
-        // ---------------------------------------------------------
-        // 1. Scan all scrollable viewports
-        // ---------------------------------------------------------
 
         for scrollIndex in 0...maximumScrolls {
 
@@ -516,10 +461,6 @@ final class AppCrawler {
             statusHandler(
                 "Scanning viewport \(viewportCount)..."
             )
-
-            // -----------------------------------------------------
-            // Scan current viewport
-            // -----------------------------------------------------
 
             let evaluations: [AccessibilityRuleEvaluation]
 
@@ -548,11 +489,7 @@ final class AppCrawler {
                     )
                 }
             }
-
-            // -----------------------------------------------------
-            // Maximum scroll protection
-            // -----------------------------------------------------
-
+            
             if scrollIndex == maximumScrolls {
 
                 statusHandler(
@@ -561,10 +498,6 @@ final class AppCrawler {
 
                 break
             }
-
-            // -----------------------------------------------------
-            // Scroll down
-            // -----------------------------------------------------
 
             statusHandler(
                 "Scrolling down..."
@@ -584,18 +517,10 @@ final class AppCrawler {
                 break
             }
 
-            // -----------------------------------------------------
-            // Wait for UI to settle
-            // -----------------------------------------------------
-
             try await Task.sleep(
                 nanoseconds:
                     configuration.settleDelayNanoseconds
             )
-
-            // -----------------------------------------------------
-            // Capture next viewport
-            // -----------------------------------------------------
 
             let nextSnapshot =
                 try await captureStableSnapshot()
@@ -605,10 +530,6 @@ final class AppCrawler {
                     rootNode:
                         nextSnapshot.rootNode
                 )
-
-            // -----------------------------------------------------
-            // Detect bottom
-            // -----------------------------------------------------
 
             if nextViewportSignature ==
                 previousViewportSignature {
@@ -620,10 +541,6 @@ final class AppCrawler {
                 break
             }
 
-            // -----------------------------------------------------
-            // Continue scanning next viewport
-            // -----------------------------------------------------
-
             currentSnapshot =
                 nextSnapshot
 
@@ -631,27 +548,9 @@ final class AppCrawler {
                 nextViewportSignature
         }
 
-        // ---------------------------------------------------------
-        // 2. Return to top
-        // ---------------------------------------------------------
-
         statusHandler(
             "Returning to top of screen..."
         )
-
-        /*
-         IMPORTANT:
-
-         Do NOT compare ScreenSignature here.
-
-         ScreenSignature contains frame information and therefore
-         is appropriate for detecting viewport movement, but it
-         should not be used to decide whether the scroll view has
-         reached its top.
-
-         Instead, compare the logical content fingerprint before
-         and after an upward scroll.
-         */
 
         var previousTopFingerprint =
             contentFingerprint(
@@ -680,9 +579,6 @@ final class AppCrawler {
                 )
 
             print("""
-            ==========================================
-            CRAWLER RESTORE TOP
-            ==========================================
             Attempt:
                 \(attempt)
 
@@ -690,13 +586,6 @@ final class AppCrawler {
                 \(currentTopFingerprint != previousTopFingerprint)
             ==========================================
             """)
-
-            /*
-             If another upward scroll produces exactly the same
-             logical content, the scroll view is no longer moving.
-
-             That means we have reached the top.
-             */
 
             if currentTopFingerprint ==
                 previousTopFingerprint {
@@ -718,10 +607,6 @@ final class AppCrawler {
             )
         }
 
-        // ---------------------------------------------------------
-        // 3. Report restoration result
-        // ---------------------------------------------------------
-
         if reachedTop {
 
             statusHandler(
@@ -737,15 +622,6 @@ final class AppCrawler {
             )
         }
 
-        // ---------------------------------------------------------
-        // IMPORTANT
-        //
-        // Navigation always uses the original top snapshot.
-        //
-        // The original snapshot represents the state before
-        // scrolling started.
-        // ---------------------------------------------------------
-
         return ScrollableScreenScanResult(
             topSnapshot: initialSnapshot,
             evaluations: collectedEvaluations,
@@ -754,12 +630,6 @@ final class AppCrawler {
         )
     }
     
-    // Content-only identity for a node tree: type, identifier,
-    // label and value, ignoring frame/position. Used both to detect
-    // when a scroll view has stopped moving, and — more broadly —
-    // to identify whether two captures represent the same logical
-    // screen, regardless of transient layout differences (keyboard,
-    // scroll offset, minor animation).
     private func contentFingerprint(
         from rootNode: AccessibilityNode
     ) -> String {
@@ -774,29 +644,11 @@ final class AppCrawler {
                 "A11YScannerIgnore" {
                 return
             }
-
-            // The status bar (clock, battery, signal/wifi icons) is
-            // part of the accessibility tree WDA reports, but its
-            // values change every capture regardless of what the
-            // app is doing. Including it means two captures of the
-            // exact same app screen, taken even a few seconds apart,
-            // almost never fingerprint equal — which is why screens
-            // were being re-explored and re-screenshotted as if new.
             if node.type ==
                 "XCUIElementTypeStatusBar" {
                 return
             }
-
-            // Neither `exists` nor `visible` is allowed to stop
-            // recursion — only whether THIS node's own line gets
-            // added to the fingerprint. Returning early here would
-            // silently drop the entire subtree beneath a node WDA
-            // marks as not existing/visible, which is exactly what
-            // made two structurally different screens collapse to
-            // the same (or an empty) fingerprint and register as
-            // unchanged, even though the underlying content — proven
-            // by a very different source length — had clearly
-            // changed.
+            
             if node.exists && node.visible {
 
                 let identifier =

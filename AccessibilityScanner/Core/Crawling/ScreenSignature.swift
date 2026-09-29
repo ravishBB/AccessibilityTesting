@@ -42,11 +42,6 @@ struct ScreenSignature: Hashable {
             return
         }
 
-        // The status bar's clock/battery/signal values change
-        // between captures regardless of app state, which can
-        // make an otherwise-stable or otherwise-unmoved screen
-        // register as changed. See the matching note in
-        // AppCrawler.contentFingerprint.
         if node.type == "XCUIElementTypeStatusBar" {
             return
         }

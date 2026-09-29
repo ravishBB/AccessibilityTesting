@@ -15,13 +15,9 @@ final class DeviceDiscoveryService {
 
         var devices: [Device] = []
 
-        // Discover simulators
-
         devices.append(
             contentsOf: try discoverSimulators()
         )
-
-        // Discover physical devices
 
         devices.append(
             contentsOf: try discoverPhysicalDevices()
@@ -31,7 +27,6 @@ final class DeviceDiscoveryService {
     }
 
     // MARK: - Simulators
-
     private func discoverSimulators() throws -> [Device] {
 
         let output = try runCommand(
@@ -132,12 +127,7 @@ final class DeviceDiscoveryService {
             ]
         )
 
-        print("")
-        print("======================================")
-        print("DEVICECTL OUTPUT")
-        print("======================================")
         print(output)
-        print("======================================")
 
         return parsePhysicalDevices(
             output
@@ -145,7 +135,6 @@ final class DeviceDiscoveryService {
     }
 
     // MARK: - Parse Physical Devices
-
     private func parsePhysicalDevices(
         _ output: String
     ) -> [Device] {
@@ -195,21 +184,14 @@ final class DeviceDiscoveryService {
                     type: .physical
                 )
 
-            print("")
-            print("======================================")
-            print("PHYSICAL DEVICE FOUND")
-            print("======================================")
             print("Name: \(device.name)")
             print("UDID: \(device.udid)")
             print("State: \(device.state)")
             print("Type: \(device.type)")
-            print("======================================")
 
             devices.append(device)
         }
-
-        // Remove duplicates by UDID.
-
+        
         var uniqueDevices:
             [String: Device] = [:]
 
@@ -235,20 +217,6 @@ final class DeviceDiscoveryService {
     private func extractPhysicalUDID(
         from line: String
     ) -> String? {
-
-        /*
-         Physical Apple device UDID:
-
-         00008030-001E11943641802E
-
-         Format:
-         8 hexadecimal characters
-         -
-         16 hexadecimal characters
-
-         Total:
-         25 characters
-         */
 
         let pattern =
             #"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}"#
@@ -346,19 +314,12 @@ final class DeviceDiscoveryService {
     }
 
     // MARK: - Determine State
-
     private func determineState(
         from line: String
     ) -> String {
 
         let lower =
             line.lowercased()
-
-        /*
-         Check unavailable first because
-         "unavailable" contains the word
-         "available".
-         */
 
         if lower.contains(
             "unavailable"

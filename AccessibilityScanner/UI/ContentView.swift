@@ -21,19 +21,9 @@ struct ContentView: View {
     var body: some View {
 
         VStack(spacing: 0) {
-
-            // =====================================================
-            // Header
-            // =====================================================
-
             header
 
             Divider()
-
-            // =====================================================
-            // Main Content
-            // =====================================================
-
             ScrollView {
 
                 VStack(
@@ -51,10 +41,6 @@ struct ContentView: View {
             }
 
             Divider()
-
-            // =====================================================
-            // Status Bar
-            // =====================================================
 
             statusBar
         }
@@ -180,10 +166,6 @@ struct ContentView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
 
-            // =================================================
-            // Device
-            // =================================================
-
             VStack(
                 alignment: .leading,
                 spacing: 8
@@ -240,10 +222,6 @@ struct ContentView: View {
                 }
             }
 
-            // =================================================
-            // Application
-            // =================================================
-
             VStack(
                 alignment: .leading,
                 spacing: 8
@@ -295,10 +273,6 @@ struct ContentView: View {
                 }
             }
 
-            // =================================================
-            // Selected Configuration Details
-            // =================================================
-
             if let device = viewModel.selectedDevice,
                let application =
                     viewModel.selectedApplication {
@@ -349,10 +323,6 @@ struct ContentView: View {
                     )
                 }
             }
-
-            // =================================================
-            // Scan Button
-            // =================================================
 
             HStack {
 
@@ -450,10 +420,6 @@ struct ContentView: View {
 
                 Spacer()
 
-                // =============================================
-                // Full Report Button
-                // =============================================
-
                 if viewModel.scanResult != nil {
 
                     Button {
@@ -471,10 +437,6 @@ struct ContentView: View {
                     }
                     .buttonStyle(.bordered)
                 }
-
-                // =============================================
-                // Issue Count
-                // =============================================
 
                 if !viewModel.findings.isEmpty {
 

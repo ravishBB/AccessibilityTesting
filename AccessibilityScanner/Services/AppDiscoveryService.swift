@@ -34,14 +34,8 @@ final class AppDiscoveryService {
 
         // Do not call simctl listapps on a shutdown simulator.
         guard device.state.lowercased() == "booted" else {
-            print("")
-            print("======================================")
-            print("SIMULATOR NOT BOOTED")
-            print("======================================")
             print("Device: \(device.name)")
             print("State: \(device.state)")
-            print("Skipping application discovery.")
-            print("======================================")
 
             return []
         }
@@ -84,13 +78,9 @@ final class AppDiscoveryService {
                 ) ?? ""
 
             print("")
-            print("======================================")
-            print("SIMULATOR APP DISCOVERY FAILED")
-            print("======================================")
             print("Device: \(device.name)")
             print("UDID: \(device.udid)")
             print(errorText)
-            print("======================================")
 
             throw AppDiscoveryError.commandFailed(
                 "Unable to retrieve applications from the simulator."
@@ -141,11 +131,6 @@ final class AppDiscoveryService {
         }
 
         let cleanedApps = cleanAndSort(apps)
-
-        print("")
-        print("======================================")
-        print("SIMULATOR APPLICATIONS")
-        print("======================================")
         print("Device: \(device.name)")
         print("UDID: \(device.udid)")
         print("Apps found: \(cleanedApps.count)")
@@ -156,8 +141,6 @@ final class AppDiscoveryService {
                 "• \(app.name) — \(app.bundleID)"
             )
         }
-
-        print("======================================")
 
         return cleanedApps
     }
@@ -200,18 +183,12 @@ final class AppDiscoveryService {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
 
-        print("")
-        print("======================================")
-        print("PHYSICAL DEVICE APP DISCOVERY")
-        print("======================================")
         print("Device: \(device.name)")
         print("UDID: \(device.udid)")
-        print("======================================")
 
         do {
             try process.run()
         } catch {
-            print("❌ Unable to start devicectl:")
             print(error.localizedDescription)
 
             throw AppDiscoveryError.commandFailed(
@@ -233,12 +210,7 @@ final class AppDiscoveryService {
                     encoding: .utf8
                 ) ?? "Unknown devicectl error."
 
-            print("")
-            print("======================================")
-            print("DEVICECTL APP DISCOVERY FAILED")
-            print("======================================")
             print(errorText)
-            print("======================================")
 
             throw AppDiscoveryError.commandFailed(
                 "Unable to retrieve applications from the connected iPhone.\n\(errorText)"
@@ -248,8 +220,6 @@ final class AppDiscoveryService {
         guard FileManager.default.fileExists(
             atPath: outputURL.path
         ) else {
-
-            print("❌ devicectl did not create JSON output.")
 
             throw AppDiscoveryError.invalidResponse
         }
@@ -261,7 +231,6 @@ final class AppDiscoveryService {
                 contentsOf: outputURL
             )
         } catch {
-            print("❌ Unable to read devicectl JSON:")
             print(error.localizedDescription)
 
             throw AppDiscoveryError.invalidResponse
@@ -271,10 +240,6 @@ final class AppDiscoveryService {
             from: data
         )
 
-        print("")
-        print("======================================")
-        print("PHYSICAL DEVICE APPLICATIONS")
-        print("======================================")
         print("Device: \(device.name)")
         print("UDID: \(device.udid)")
         print("Apps found: \(apps.count)")
@@ -285,8 +250,6 @@ final class AppDiscoveryService {
                 "• \(app.name) — \(app.bundleID)"
             )
         }
-
-        print("======================================")
 
         return apps
     }
@@ -305,7 +268,6 @@ final class AppDiscoveryService {
                 options: []
             )
         } catch {
-            print("❌ Invalid JSON returned by devicectl:")
             print(error.localizedDescription)
 
             throw AppDiscoveryError.invalidResponse
@@ -314,14 +276,12 @@ final class AppDiscoveryService {
         guard let root =
                 json as? [String: Any]
         else {
-            print("❌ devicectl response is not a dictionary.")
             throw AppDiscoveryError.invalidResponse
         }
 
         guard let result =
                 root["result"] as? [String: Any]
         else {
-            print("❌ Missing 'result' in devicectl response.")
             print("Top-level keys: \(root.keys)")
 
             throw AppDiscoveryError.invalidResponse
@@ -330,7 +290,6 @@ final class AppDiscoveryService {
         guard let appObjects =
                 result["apps"] as? [[String: Any]]
         else {
-            print("❌ Missing 'apps' in devicectl response.")
             print("Result keys: \(result.keys)")
 
             throw AppDiscoveryError.invalidResponse

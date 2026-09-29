@@ -21,9 +21,6 @@ final class ScreenshotAnnotator {
         evaluations: [AccessibilityRuleEvaluation]
     ) -> Data? {
 
-        // ---------------------------------------------------------
-        // 1. Decode screenshot
-        // ---------------------------------------------------------
 
         guard let sourceImage = NSImage(data: imageData) else {
             print("ANNOTATOR: Could not decode source image.")
@@ -39,10 +36,6 @@ final class ScreenshotAnnotator {
             print("ANNOTATOR: Invalid dimensions.")
             return nil
         }
-
-        // ---------------------------------------------------------
-        // 2. Get actual screenshot pixel dimensions
-        // ---------------------------------------------------------
 
         guard let sourceCGImage = sourceImage.cgImage(
             forProposedRect: nil,
@@ -78,10 +71,6 @@ final class ScreenshotAnnotator {
         Accessibility hierarchy:
             \(hierarchyWidth) × \(hierarchyHeight)
         """)
-
-        // ---------------------------------------------------------
-        // 3. Create issue annotations
-        // ---------------------------------------------------------
 
         let annotations = evaluations
             .filter {
@@ -163,9 +152,6 @@ final class ScreenshotAnnotator {
             fraction: 1.0
         )
 
-        // ---------------------------------------------------------
-        // 6. Coordinate conversion
-        // ---------------------------------------------------------
 
         let screenshotPixelWidth = CGFloat(pixelWidth)
         let screenshotPixelHeight = CGFloat(pixelHeight)
@@ -173,25 +159,12 @@ final class ScreenshotAnnotator {
         let hierarchyW = CGFloat(hierarchyWidth)
         let hierarchyH = CGFloat(hierarchyHeight)
 
-        /*
-         WDA normally reports coordinates in the same aspect ratio
-         as the iOS screen.
-
-         We calculate both scales first.
-         */
 
         let scaleX =
             screenshotPixelWidth / hierarchyW
 
         let scaleY =
             screenshotPixelHeight / hierarchyH
-
-        /*
-         For a normal iOS screenshot these should be almost equal.
-
-         Use separate X/Y scales because some devices/screenshots
-         can have different pixel scaling.
-         */
 
         let screenshotBounds = NSRect(
             x: 0,
@@ -245,10 +218,6 @@ final class ScreenshotAnnotator {
                 width = \(frame.width)
                 height = \(frame.height)
             """)
-
-            // -----------------------------------------------------
-            // Convert WDA X/Y/width/height to screenshot pixels
-            // -----------------------------------------------------
 
             let convertedX =
                 frame.origin.x * scaleX
@@ -320,18 +289,12 @@ final class ScreenshotAnnotator {
                 height = \(clippedRect.height)
             """)
 
-            // -----------------------------------------------------
-            // Draw rectangle
-            // -----------------------------------------------------
 
             drawRectangle(
                 rect: clippedRect,
                 severity: annotation.severity
             )
 
-            // -----------------------------------------------------
-            // Draw marker
-            // -----------------------------------------------------
 
             drawMarker(
                 number: annotation.number,
@@ -453,19 +416,12 @@ final class ScreenshotAnnotator {
 
         let markerSize: CGFloat = 30
 
-        // ---------------------------------------------------------
-        // Try to put marker at top-left INSIDE the rectangle.
-        // ---------------------------------------------------------
 
         var markerX =
             rect.minX
 
         var markerY =
             rect.maxY - markerSize
-
-        // ---------------------------------------------------------
-        // Horizontal safety
-        // ---------------------------------------------------------
 
         markerX =
             max(
@@ -478,10 +434,6 @@ final class ScreenshotAnnotator {
                 markerX,
                 screenshotBounds.maxX - markerSize
             )
-
-        // ---------------------------------------------------------
-        // Vertical safety
-        // ---------------------------------------------------------
 
         markerY =
             max(

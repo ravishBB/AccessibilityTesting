@@ -19,10 +19,6 @@ struct FindingCard: View {
             spacing: 12
         ) {
 
-            // =============================================
-            // Header
-            // =============================================
-
             HStack(
                 alignment: .top
             ) {
@@ -44,10 +40,6 @@ struct FindingCard: View {
 
                 severityBadge
             }
-
-            // =============================================
-            // Element Information
-            // =============================================
 
             VStack(
                 alignment: .leading,
@@ -99,10 +91,6 @@ struct FindingCard: View {
                     )
                 )
             }
-
-            // =============================================
-            // Remediation
-            // =============================================
 
             if !finding.remediation.isEmpty {
 

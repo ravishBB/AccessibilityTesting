@@ -269,26 +269,11 @@ final class ScannerViewModel: ObservableObject {
             )
 
             let appium = AppiumClient(baseURL: configuration.appiumURL)
-
-            // --------------------------------------------------
-            // 1. CREATE APPIUM SESSION
-            // --------------------------------------------------
-
             status = "Creating Appium session..."
 
             _ = try await appium.createSession(configuration: configuration)
 
-            print("==========================================")
-            print("APPIUM SESSION CREATED")
-            print("==========================================")
-
-            // Give the application time to settle.
             try await Task.sleep(for: .milliseconds(500))
-
-            // --------------------------------------------------
-            // 2. CAPTURE INITIAL SCREEN
-            // --------------------------------------------------
-
             status = "Reading initial accessibility hierarchy..."
 
             let initialSnapshot = try await captureStableSnapshot(
@@ -324,10 +309,7 @@ final class ScannerViewModel: ObservableObject {
                 let elementCount = countNodes(
                     crawledScreen.rootNode
                 )
-
-                // Keep all findings discovered while crawling/scrolling.
-                // Visual/contextual rules are evaluated only against the
-                // exact screenshot that is being annotated.
+                
                 let screenshotContext = AccessibilityRuleContext(
                     screenshotData: crawledScreen.screenshotData,
                     screenshotWidth: crawledScreen.screenshotWidth,
@@ -345,9 +327,6 @@ final class ScannerViewModel: ObservableObject {
                     crawledScreen.evaluations,
                     contextualEvaluations
                 )
-
-                // Only evaluations from the exact viewport represented by
-                // this screenshot may be drawn onto this screenshot.
                 let screenshotEvaluations = mergeEvaluations(
                     crawledScreen.screenshotEvaluations,
                     contextualEvaluations
@@ -393,10 +372,6 @@ final class ScannerViewModel: ObservableObject {
                 screenResults.append(screenResult)
             }
 
-            // --------------------------------------------------
-            // 6. CREATE COMPLETE SCAN RESULT
-            // --------------------------------------------------
-
             let finishedAt = Date()
 
             let result = AccessibilityScanResult(
@@ -441,7 +416,6 @@ final class ScannerViewModel: ObservableObject {
             print("Warnings: \(result.totalWarnings)")
             print("Validations: \(result.totalValidations)")
             print("Passes: \(result.totalPasses)")
-            print("==========================================")
 
 
             try? await appium.deleteSession()
@@ -508,10 +482,6 @@ final class ScannerViewModel: ObservableObject {
                     .invalidScreenshot
             }
 
-            // -------------------------------------------------
-            // C. Read hierarchy AFTER screenshot
-            // -------------------------------------------------
-
             status =
                 "Verifying UI stability..."
 
@@ -526,10 +496,6 @@ final class ScannerViewModel: ObservableObject {
                     sourceAfter
                 )
 
-            // -------------------------------------------------
-            // D. Compare hierarchy before/after screenshot
-            // -------------------------------------------------
-
             let beforeSignature =
                 hierarchySignature(
                     rootBefore
@@ -543,9 +509,6 @@ final class ScannerViewModel: ObservableObject {
             if beforeSignature == afterSignature {
 
                 print("""
-                ==========================================
-                STABLE UI SNAPSHOT
-                ==========================================
 
                 Attempt:
                     \(attempt)
@@ -558,8 +521,6 @@ final class ScannerViewModel: ObservableObject {
 
                 Result:
                     STABLE
-
-                ==========================================
                 """)
 
                 return StableScanSnapshot(
@@ -570,14 +531,7 @@ final class ScannerViewModel: ObservableObject {
                 )
             }
 
-            // -------------------------------------------------
-            // E. UI changed while capturing snapshot
-            // -------------------------------------------------
-
             print("""
-            ==========================================
-            UNSTABLE UI SNAPSHOT
-            ==========================================
 
             Attempt:
                 \(attempt)
@@ -591,8 +545,6 @@ final class ScannerViewModel: ObservableObject {
 
             After hierarchy:
                 \(rootAfter.frame.width) × \(rootAfter.frame.height)
-
-            ==========================================
             """)
 
             if attempt < maximumSnapshotAttempts {

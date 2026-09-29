@@ -4,9 +4,6 @@ import CoreGraphics
 import AppKit
 
 // MARK: - Common rule context
-
-/// Optional visual context shared by the same rule engine for both SwiftUI and UIKit apps.
-/// The scanner never depends on the app framework or source code.
 struct AccessibilityRuleContext {
     let screenshotData: Data?
     let screenshotWidth: Double

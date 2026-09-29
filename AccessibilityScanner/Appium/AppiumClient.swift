@@ -164,44 +164,10 @@ final class AppiumClient {
 
         } catch let error
             as AppiumError {
-
-            print("")
-            print(
-                "======================================"
-            )
-            print(
-                "APPIUM SESSION CREATION FAILED"
-            )
-            print(
-                "======================================"
-            )
-            print(
-                error.localizedDescription
-            )
-            print(
-                "======================================"
-            )
-
+            
             throw error
 
         } catch {
-
-            print("")
-            print(
-                "======================================"
-            )
-            print(
-                "APPIUM CONNECTION FAILED"
-            )
-            print(
-                "======================================"
-            )
-            print(
-                error.localizedDescription
-            )
-            print(
-                "======================================"
-            )
 
             throw error
         }
