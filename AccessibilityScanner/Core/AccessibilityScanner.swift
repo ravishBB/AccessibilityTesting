@@ -64,6 +64,13 @@ final class AccessibilityScanner {
             context: context
         )
 
+        // Evaluate hierarchy-wide rules once. These rules need sibling or
+        // geometric context and cannot be implemented correctly per element.
+        for rule in rules {
+            guard let screenRule = rule as? ScreenAccessibilityRule else { continue }
+            evaluations.append(contentsOf: screenRule.evaluate(rootNode: rootNode))
+        }
+
         return evaluations
     }
 

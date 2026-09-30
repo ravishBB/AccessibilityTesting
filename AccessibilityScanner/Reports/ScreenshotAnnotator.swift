@@ -72,19 +72,9 @@ final class ScreenshotAnnotator {
             \(hierarchyWidth) × \(hierarchyHeight)
         """)
 
-        let annotations = evaluations
-            .filter {
-                $0.status == .fail ||
-                $0.status == .warning ||
-                $0.status == .validate
-            }
-            .enumerated()
-            .map { index, evaluation in
-                ScreenshotAnnotation(
-                    number: index + 1,
-                    evaluation: evaluation
-                )
-            }
+        let annotations = ScreenshotAnnotation.makeAnnotations(
+            from: evaluations
+        )
 
         print("""
         Issues:

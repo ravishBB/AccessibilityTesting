@@ -51,7 +51,6 @@ struct AccessibilityRules {
             AccessibleLabelImageRule(),
             DescriptiveImageRule(),
             AdjustableValueRule(),
-            DuplicateInteractiveNameRule(),
             DisabledButtonStateRule(),
             RoleTraitConsistencyRule(),
             StateTraitConsistencyRule(),
@@ -62,6 +61,8 @@ struct AccessibilityRules {
             FormLabelRule(),
             AutocompleteRule(),
             ScreenTitleRule(),
+            DuplicateInteractiveNameRule(),
+            InteractiveTargetOverlapRule(),
 
             // Explicit validation rules. These are surfaced as VALIDATE,
             // never as an invented pass/fail result.
@@ -114,6 +115,9 @@ struct CommonAccessibleNameRule: AccessibilityRule {
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard RuleHelper.controls.contains(node.type), node.visible, node.enabled else { return nil }
+        // Buttons have a dedicated descriptive-name rule. Keeping the common
+        // rule off buttons prevents duplicate PASS/FAIL records.
+        guard node.type != "XCUIElementTypeButton" else { return nil }
         if RuleHelper.clean(node.label).isEmpty {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Interactive element has no accessible name.",
@@ -225,6 +229,141 @@ private enum RuleHelper {
         node.visible && node.exists && node.frame.width > 0 && node.frame.height > 0
     }
 
+    static func isImageLikeButton(_ node: AccessibilityNode) -> Bool {
+        guard node.type == "XCUIElementTypeButton" else { return false }
+
+        let identifier = node.identifier.lowercased()
+        let label = clean(node.label)
+
+        // A button that contains an image child is an image button even when
+        // the developer did not use an image/icon identifier. This is one of
+        // the strongest image-button signals available in WDA's hierarchy.
+        let containsImageChild = node.children.contains { child in
+            child.type == "XCUIElementTypeImage"
+        }
+
+        return label.isEmpty && (
+            containsImageChild ||
+            identifier.contains("image") ||
+            identifier.contains("icon") ||
+            identifier.contains("glyph") ||
+            identifier.contains("symbol")
+        )
+    }
+
+    static func allNodes(_ root: AccessibilityNode) -> [AccessibilityNode] {
+        var result: [AccessibilityNode] = []
+
+        func visit(_ node: AccessibilityNode) {
+            if node.exists { result.append(node) }
+            for child in node.children {
+                visit(child)
+            }
+        }
+
+        visit(root)
+        return result
+    }
+
+    static func nearbyVisualLabel(for field: AccessibilityNode, in root: AccessibilityNode) -> AccessibilityNode? {
+        let labels = allNodes(root).filter { node in
+            node.type == "XCUIElementTypeStaticText" &&
+            isVisible(node) &&
+            !clean(node.label).isEmpty &&
+            !node.frame.intersects(field.frame)
+        }
+
+        let candidates = labels.compactMap { label -> (AccessibilityNode, CGFloat)? in
+            let verticalGap = max(
+                field.frame.minY - label.frame.maxY,
+                label.frame.minY - field.frame.maxY,
+                0
+            )
+            let horizontalGap = max(
+                field.frame.minX - label.frame.maxX,
+                label.frame.minX - field.frame.maxX,
+                0
+            )
+
+            let horizontalOverlap = max(
+                0,
+                min(field.frame.maxX, label.frame.maxX) -
+                max(field.frame.minX, label.frame.minX)
+            )
+            let verticalOverlap = max(
+                0,
+                min(field.frame.maxY, label.frame.maxY) -
+                max(field.frame.minY, label.frame.minY)
+            )
+
+            let width = max(field.frame.width, label.frame.width, 1)
+            let height = max(field.frame.height, label.frame.height, 1)
+
+            // Label above/below the field with meaningful horizontal alignment.
+            if verticalGap <= 24 && horizontalOverlap / width >= 0.30 {
+                return (label, verticalGap)
+            }
+
+            // Label to the left/right of the field with meaningful vertical alignment.
+            if horizontalGap <= 32 && verticalOverlap / height >= 0.30 {
+                return (label, horizontalGap)
+            }
+
+            return nil
+        }
+
+        return candidates.min { $0.1 < $1.1 }?.0
+    }
+
+    static func visibleInteractiveNodes(_ root: AccessibilityNode) -> [AccessibilityNode] {
+        var result: [AccessibilityNode] = []
+
+        func visit(_ node: AccessibilityNode) {
+            if node.exists, node.visible, node.enabled, controls.contains(node.type),
+               node.frame.width > 0, node.frame.height > 0, !clean(node.label).isEmpty {
+                result.append(node)
+            }
+            for child in node.children {
+                visit(child)
+            }
+        }
+
+        visit(root)
+        return result
+    }
+
+    static func nodeKey(_ node: AccessibilityNode) -> String {
+        [
+            node.type,
+            node.identifier,
+            clean(node.label),
+            String(format: "%.1f", node.frame.origin.x),
+            String(format: "%.1f", node.frame.origin.y),
+            String(format: "%.1f", node.frame.width),
+            String(format: "%.1f", node.frame.height)
+        ].joined(separator: "|")
+    }
+
+    static func warning(
+        ruleID: String,
+        name: String,
+        description: String,
+        node: AccessibilityNode,
+        message: String,
+        remediation: String
+    ) -> AccessibilityRuleEvaluation {
+        AccessibilityRuleEvaluation(
+            ruleID: ruleID,
+            ruleName: name,
+            ruleDescription: description,
+            status: .warning,
+            severity: .warning,
+            message: message,
+            remediation: remediation,
+            node: node
+        )
+    }
+
     static func validation(
         ruleID: String,
         name: String,
@@ -294,6 +433,8 @@ struct DescriptiveButtonNameRule: AccessibilityRule {
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.type == "XCUIElementTypeButton", node.visible else { return nil }
+        // Image-only buttons are reported by the image-button-specific rule.
+        guard !RuleHelper.isImageLikeButton(node) else { return nil }
         if RuleHelper.isGenericName(node.label) {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Button accessible name is missing or generic.",
@@ -311,10 +452,10 @@ struct ImageButtonNameRule: AccessibilityRule {
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.type == "XCUIElementTypeButton", node.visible else { return nil }
-        let imageLike = node.label.isEmpty && (node.identifier.lowercased().contains("image") || node.identifier.lowercased().contains("icon"))
-        guard imageLike || node.label.isEmpty else { return nil }
+        let imageLike = RuleHelper.isImageLikeButton(node)
+        guard imageLike else { return nil }
         return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                               message: "Image-like button has no accessible name.",
+                               message: "Image-based button has no accessible name.",
                                remediation: "Provide an accessibility label that describes the action, not only the image appearance.")
     }
 }
@@ -375,6 +516,7 @@ struct DescriptiveInteractiveNameRule: AccessibilityRule {
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard RuleHelper.controls.contains(node.type), node.visible else { return nil }
+        guard node.type != "XCUIElementTypeButton" else { return nil }
         if RuleHelper.isGenericName(node.label) {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Interactive element has a missing or generic accessible name.",
@@ -436,18 +578,99 @@ struct AdjustableValueRule: AccessibilityRule {
     }
 }
 
-struct DuplicateInteractiveNameRule: AccessibilityRule {
+struct DuplicateInteractiveNameRule: ScreenAccessibilityRule {
     let id = "duplicate-interactive-name"
-    let title = "Interactive elements have identical accessible name"
-    let description = "Identically named controls should have distinguishable context when their actions differ."
+    let title = "Interactive elements have identical accessible names"
+    let description = "Repeated accessible names can make controls indistinguishable to assistive technology."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type), node.visible else { return nil }
-        let name = RuleHelper.clean(node.label).lowercased()
-        guard !name.isEmpty else { return nil }
-        // This rule is completed at screen/report level by the scanner's sibling context.
-        // For a single node we cannot safely conclude duplication.
-        return nil
+        nil
+    }
+
+    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        let controls = RuleHelper.visibleInteractiveNodes(rootNode)
+        let groups = Dictionary(grouping: controls) {
+            RuleHelper.clean($0.label).lowercased()
+        }
+
+        return groups.values
+            .filter { $0.count > 1 }
+            .flatMap { group -> [AccessibilityRuleEvaluation] in
+                let types = Set(group.map(\.type))
+                // Repeated names on the same role can be perfectly legitimate
+                // (for example a list of identical cells). Only flag them when
+                // the scanner cannot establish that they represent the same role.
+                // Mixed roles are a stronger signal of ambiguous naming.
+                let shouldWarn = types.count > 1 || group.count <= 5
+                guard shouldWarn else { return [] }
+
+                return group.map { node in
+                    RuleHelper.warning(
+                        ruleID: id,
+                        name: title,
+                        description: description,
+                        node: node,
+                        message: "Multiple interactive elements share the accessible name \"\(RuleHelper.clean(node.label))\".",
+                        remediation: "If these controls perform different actions, give each a unique or contextual accessible name."
+                    )
+                }
+            }
+    }
+}
+
+struct InteractiveTargetOverlapRule: ScreenAccessibilityRule {
+    let id = "interactive-target-overlap"
+    let title = "Interactive targets do not improperly overlap"
+    let description = "Interactive controls should not substantially overlap in a way that can make activation ambiguous."
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        nil
+    }
+
+    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        let controls = RuleHelper.visibleInteractiveNodes(rootNode)
+        var results: [AccessibilityRuleEvaluation] = []
+        var reported = Set<String>()
+
+        for index in controls.indices {
+            for otherIndex in controls.indices where otherIndex > index {
+                let first = controls[index]
+                let second = controls[otherIndex]
+                let intersection = first.frame.intersection(second.frame)
+
+                guard !intersection.isNull, intersection.width > 0, intersection.height > 0 else { continue }
+
+                let firstArea = max(first.frame.width * first.frame.height, 1)
+                let secondArea = max(second.frame.width * second.frame.height, 1)
+                let overlapRatio = max(
+                    (intersection.width * intersection.height) / firstArea,
+                    (intersection.width * intersection.height) / secondArea
+                )
+
+                // Ignore tiny boundary/contact intersections. A 25% overlap of
+                // either target is a meaningful black-box warning.
+                guard overlapRatio >= 0.25 else { continue }
+
+                let pairKey = [
+                    RuleHelper.nodeKey(first),
+                    RuleHelper.nodeKey(second)
+                ].sorted().joined(separator: "|")
+                guard reported.insert(pairKey).inserted else { continue }
+
+                results.append(
+                    RuleHelper.warning(
+                        ruleID: id,
+                        name: title,
+                        description: description,
+                        node: first,
+                        message: "Interactive target overlaps another interactive target by approximately \(Int(overlapRatio * 100))% of one of the affected targets.",
+                        remediation: "Ensure interactive hit areas do not overlap unintentionally. If the overlap is intentional, verify that each action remains independently discoverable and operable."
+                    )
+                )
+            }
+        }
+
+        return results
     }
 }
 
@@ -469,56 +692,135 @@ struct DisabledButtonStateRule: AccessibilityRule {
 
 struct RoleTraitConsistencyRule: AccessibilityRule {
     let id = "role-trait-consistency"
-    let title = "Accessibility role trait correctly matches element type"
+    let title = "Accessibility role and traits are consistent"
     let description = "Accessibility traits should agree with the exposed element role."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.visible else { return nil }
         let traits = node.traits.lowercased()
+
         if node.type == "XCUIElementTypeButton" && traits.contains("statictext") {
-            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "Button is exposing a conflicting static-text trait.",
-                                   remediation: "Expose the correct accessibility role for the control.")
+            return RuleHelper.fail(
+                ruleID: id, name: title, description: description, node: node,
+                message: "Button exposes a conflicting static-text trait.",
+                remediation: "Expose the correct accessibility role and remove conflicting traits."
+            )
         }
-        return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                               message: "No obvious role/trait conflict was found in the WDA hierarchy.")
+
+        if node.type == "XCUIElementTypeImage" && traits.contains("button") {
+            return RuleHelper.fail(
+                ruleID: id, name: title, description: description, node: node,
+                message: "Image exposes a button trait while the WDA element role is image.",
+                remediation: "Expose the interactive element as a button, or remove the button semantics if the image is decorative/non-interactive."
+            )
+        }
+
+        if traits.contains("link") && !["XCUIElementTypeButton", "XCUIElementTypeStaticText", "XCUIElementTypeLink"].contains(node.type) {
+            return RuleHelper.warning(
+                ruleID: id, name: title, description: description, node: node,
+                message: "Element exposes link semantics on an unexpected WDA element type.",
+                remediation: "Verify the element's role is represented consistently for assistive technology."
+            )
+        }
+
+        return RuleHelper.pass(
+            ruleID: id, name: title, description: description, node: node,
+            message: "No obvious role/trait conflict was found in the WDA hierarchy."
+        )
     }
 }
 
 struct StateTraitConsistencyRule: AccessibilityRule {
     let id = "state-trait-consistency"
-    let title = "Accessibility state trait correctly reflects element's actual state"
+    let title = "Accessibility state is consistent with the current control state"
     let description = "Exposed state information should agree with the control's current state."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard RuleHelper.controls.contains(node.type), node.visible else { return nil }
-        // WDA exposes enabled directly. Other state transitions require interaction.
+        let traits = node.traits.lowercased()
+
         if !node.enabled && node.hittable {
-            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "Control is reported disabled but remains hittable.",
-                                   remediation: "Ensure the accessibility state and interaction state remain synchronized.")
+            return RuleHelper.fail(
+                ruleID: id, name: title, description: description, node: node,
+                message: "Control is reported disabled but remains hittable.",
+                remediation: "Synchronize the disabled state with the control's interaction behavior."
+            )
         }
-        return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                               message: "Current enabled/hittable state is internally consistent.")
+
+        if traits.contains("selected") &&
+            !["XCUIElementTypeButton", "XCUIElementTypeSegmentedControl", "XCUIElementTypePickerWheel"].contains(node.type) {
+            return RuleHelper.warning(
+                ruleID: id, name: title, description: description, node: node,
+                message: "Selected state is exposed on a control type where selection semantics are not obvious.",
+                remediation: "Verify that the selected state represents a real current state and is announced correctly."
+            )
+        }
+
+        if node.isAdjustable && !node.hasValue {
+            return RuleHelper.fail(
+                ruleID: id, name: title, description: description, node: node,
+                message: "Adjustable control has no current accessibility value.",
+                remediation: "Expose the current value so assistive technology can communicate the control's state."
+            )
+        }
+
+        return RuleHelper.pass(
+            ruleID: id, name: title, description: description, node: node,
+            message: "Current enabled, hittable, and exposed state information is internally consistent."
+        )
     }
 }
 
-struct TextClippingRule: AccessibilityRule {
+struct TextClippingRule: ScreenAccessibilityRule {
     let id = "text-clipping"
-    let title = "Text getting clipped"
-    let description = "Visible text should not be clipped by its accessible element bounds."
+    let title = "Text is not clipped by layout bounds"
+    let description = "Visible text should remain within the screen and its accessible layout bounds."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.isText(node), node.visible else { return nil }
-        guard !RuleHelper.clean(node.label).isEmpty else { return nil }
-        // WDA does not expose rendered glyph bounds, so only an obvious zero-sized case is testable.
-        if node.frame.width <= 0 || node.frame.height <= 0 {
-            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "Text element has no visible bounds.",
-                                   remediation: "Ensure the text has sufficient layout space.")
+        nil
+    }
+
+    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        let rootBounds = rootNode.frame
+
+        return RuleHelper.allNodes(rootNode).compactMap { node in
+            guard RuleHelper.isText(node), node.visible, !RuleHelper.clean(node.label).isEmpty else { return nil }
+
+            if node.frame.width <= 0 || node.frame.height <= 0 {
+                return RuleHelper.fail(
+                    ruleID: id,
+                    name: title,
+                    description: description,
+                    node: node,
+                    message: "Text element has no visible layout bounds.",
+                    remediation: "Ensure the text receives sufficient layout space and is not collapsed."
+                )
+            }
+
+            let visibleIntersection = node.frame.intersection(rootBounds)
+            let area = max(node.frame.width * node.frame.height, 1)
+            let visibleArea = max(visibleIntersection.width * visibleIntersection.height, 0)
+            let visibleRatio = visibleArea / area
+
+            if visibleRatio < 0.80 {
+                return RuleHelper.fail(
+                    ruleID: id,
+                    name: title,
+                    description: description,
+                    node: node,
+                    message: "Text element extends outside the visible screen bounds (approximately \(Int(visibleRatio * 100))% visible).",
+                    remediation: "Adjust the layout so the complete text remains visible at the current content size and orientation."
+                )
+            }
+
+            return RuleHelper.pass(
+                ruleID: id,
+                name: title,
+                description: description,
+                node: node,
+                message: "Text element is within the current screen bounds; rendered glyph clipping still requires visual validation."
+            )
         }
-        return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                               message: "Text has visible bounds; pixel-level clipping requires visual validation.")
     }
 }
 
@@ -567,20 +869,48 @@ struct TabAccessibilityRule: AccessibilityRule {
     }
 }
 
-struct FormLabelRule: AccessibilityRule {
+struct FormLabelRule: ScreenAccessibilityRule {
     let id = "form-visual-label"
-    let title = "Missing visual label for form control"
+    let title = "Form controls have an associated visible label"
     let description = "Form controls should have a visible label independent of placeholder text."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.textInputs.contains(node.type), node.visible else { return nil }
-        guard RuleHelper.clean(node.label).isEmpty else {
-            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                                   message: "Form control exposes a label.")
+        nil
+    }
+
+    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        RuleHelper.allNodes(rootNode).compactMap { node in
+            guard RuleHelper.textInputs.contains(node.type), node.visible else { return nil }
+
+            if !RuleHelper.clean(node.label).isEmpty {
+                return RuleHelper.pass(
+                    ruleID: id,
+                    name: title,
+                    description: description,
+                    node: node,
+                    message: "Form control exposes an accessible name; visual label association is also checked from nearby hierarchy text."
+                )
+            }
+
+            if let visualLabel = RuleHelper.nearbyVisualLabel(for: node, in: rootNode) {
+                return RuleHelper.pass(
+                    ruleID: id,
+                    name: title,
+                    description: description,
+                    node: node,
+                    message: "A nearby visible text label (\"\(RuleHelper.clean(visualLabel.label))\") is associated with the form control by screen geometry."
+                )
+            }
+
+            return RuleHelper.validation(
+                ruleID: id,
+                name: title,
+                description: description,
+                node: node,
+                message: "No accessible or nearby visible text label could be established from the current hierarchy.",
+                remediation: "Provide a persistent visible label associated with the field; do not rely on placeholder text alone."
+            )
         }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "No accessible label is exposed; visually inspecting the screen is required to determine whether a visible label exists.",
-                                     remediation: "Verify that a persistent visible label is associated with the field.")
     }
 }
 

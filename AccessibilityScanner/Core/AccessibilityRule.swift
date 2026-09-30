@@ -20,3 +20,13 @@ protocol AccessibilityRule {
         node: AccessibilityNode
     ) -> AccessibilityRuleEvaluation?
 }
+
+// Rules that require the complete accessibility hierarchy rather than a
+// single element implement this protocol. These rules are evaluated once
+// after the normal per-node rules have finished.
+protocol ScreenAccessibilityRule: AccessibilityRule {
+
+    func evaluate(
+        rootNode: AccessibilityNode
+    ) -> [AccessibilityRuleEvaluation]
+}

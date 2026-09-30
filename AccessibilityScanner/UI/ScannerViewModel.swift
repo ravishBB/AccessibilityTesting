@@ -332,19 +332,9 @@ final class ScannerViewModel: ObservableObject {
                     contextualEvaluations
                 )
 
-                let annotations = screenshotEvaluations
-                    .filter {
-                        $0.status == .fail ||
-                        $0.status == .warning ||
-                        $0.status == .validate
-                    }
-                    .enumerated()
-                    .map { index, evaluation in
-                        ScreenshotAnnotation(
-                            number: index + 1,
-                            evaluation: evaluation
-                        )
-                    }
+                let annotations = ScreenshotAnnotation.makeAnnotations(
+                    from: screenshotEvaluations
+                )
 
                 let annotatedImageData =
                     ScreenshotAnnotator().annotate(
@@ -364,7 +354,9 @@ final class ScannerViewModel: ObservableObject {
                         imageData: crawledScreen.screenshotData,
                         annotatedImageData: annotatedImageData,
                         width: crawledScreen.screenshotWidth,
-                        height: crawledScreen.screenshotHeight
+                        height: crawledScreen.screenshotHeight,
+                        hierarchyWidth: crawledScreen.rootNode.frame.width,
+                        hierarchyHeight: crawledScreen.rootNode.frame.height
                     ),
                     annotations: annotations
                 )
