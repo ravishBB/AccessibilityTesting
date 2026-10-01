@@ -2,7 +2,7 @@
 //  ShareJSONButton.swift
 //  AccessibilityScanner
 //
-//  Phase 5 - Native JSON sharing
+//  Created by Ravish Kumar on 01/10/26.
 //
 
 import SwiftUI

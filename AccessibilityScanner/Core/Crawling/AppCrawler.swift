@@ -17,6 +17,7 @@ struct CrawledScreen {
     let screenshotEvaluations: [AccessibilityRuleEvaluation]
 
     let actions: [NavigationAction]
+    var transitions: [NavigationTransition]
 
     let screenshotData: Data
     let screenshotWidth: Double
@@ -175,12 +176,15 @@ final class AppCrawler {
             """)
         }
 
+        let screenIndex = discoveredScreens.count
+
         let screen = CrawledScreen(
             signature: signature,
             rootNode: topSnapshot.rootNode,
             evaluations: evaluations,
             screenshotEvaluations: screenshotEvaluations,
             actions: actions,
+            transitions: [],
             screenshotData: topSnapshot.screenshotData,
             screenshotWidth: topSnapshot.screenshotWidth,
             screenshotHeight: topSnapshot.screenshotHeight
@@ -303,6 +307,16 @@ final class AppCrawler {
                         from:
                             nextSnapshot.rootNode
                     )
+
+                if nextSignature != currentSignature {
+                    discoveredScreens[screenIndex].transitions.append(
+                        NavigationTransition(
+                            sourceSignature: signature,
+                            targetSignature: nextSignature,
+                            action: action
+                        )
+                    )
+                }
 
                 if nextSignature ==
                     currentSignature {

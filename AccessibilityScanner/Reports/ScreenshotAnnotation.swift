@@ -1,3 +1,10 @@
+//
+//  ScreenshotAnnotation.swift
+//  AccessibilityScanner
+//
+//  Created by Ravish Kumar on 24/09/26.
+//
+
 import Foundation
 import CoreGraphics
 

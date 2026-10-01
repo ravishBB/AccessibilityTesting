@@ -257,8 +257,20 @@ final class ScannerViewModel: ObservableObject {
                 self.isScanning = false
             }
         let startedAt = Date()
+        var activeAppium: AppiumClient?
+
+        // Always release an Appium session, including when crawling, parsing,
+        // reporting, or screenshot processing fails midway through a scan.
+        defer {
+            if let appium = activeAppium {
+                Task {
+                    try? await appium.deleteSession()
+                }
+            }
+        }
 
         do {
+            try Task.checkCancellation()
             status = "Connecting to Appium..."
 
             let configuration = ScannerConfiguration(
@@ -269,9 +281,11 @@ final class ScannerViewModel: ObservableObject {
             )
 
             let appium = AppiumClient(baseURL: configuration.appiumURL)
+            activeAppium = appium
             status = "Creating Appium session..."
 
             _ = try await appium.createSession(configuration: configuration)
+            try Task.checkCancellation()
 
             try await Task.sleep(for: .milliseconds(500))
             status = "Reading initial accessibility hierarchy..."
@@ -305,6 +319,8 @@ final class ScannerViewModel: ObservableObject {
             var screenResults: [ScreenScanResult] = []
 
             for crawledScreen in crawledScreens {
+
+                try Task.checkCancellation()
 
                 let elementCount = countNodes(
                     crawledScreen.rootNode
@@ -348,8 +364,10 @@ final class ScannerViewModel: ObservableObject {
 
                 let screenResult = ScreenScanResult(
                     name: "Screen \(screenResults.count + 1)",
+                    signature: crawledScreen.signature,
                     elementCount: elementCount,
                     evaluations: evaluations,
+                    transitions: crawledScreen.transitions,
                     screenshot: ScanScreenshot(
                         imageData: crawledScreen.screenshotData,
                         annotatedImageData: annotatedImageData,
@@ -366,7 +384,7 @@ final class ScannerViewModel: ObservableObject {
 
             let finishedAt = Date()
 
-            let result = AccessibilityScanResult(
+            let draftResult = AccessibilityScanResult(
                 applicationName: application.name,
                 bundleID: application.bundleID,
                 deviceName: device.name,
@@ -376,6 +394,30 @@ final class ScannerViewModel: ObservableObject {
                 screens: screenResults,
                 rulesExecuted: AccessibilityRules.all.count
             )
+
+            let integrityIssues = AccessibilityReportIntegrity.validate(draftResult)
+            guard integrityIssues.isEmpty else {
+                let details = integrityIssues.map(\.message).joined(separator: " ")
+                throw ScannerViewModelError.reportIntegrityFailure(details)
+            }
+
+            status = "Building accessibility intelligence..."
+
+            let baseline = AccessibilityRegressionStore.shared.load(
+                bundleID: application.bundleID
+            )
+
+            let intelligence = AccessibilityIntelligenceEngine.analyze(
+                report: draftResult,
+                baseline: baseline
+            )
+
+            let result = draftResult.settingIntelligence(intelligence)
+
+            // Store the completed scan as the baseline for the next scan of
+            // this application. The current report retains the comparison
+            // result calculated against the previous baseline.
+            AccessibilityRegressionStore.shared.save(report: result)
 
             self.scanResult = result
 
@@ -410,13 +452,33 @@ final class ScannerViewModel: ObservableObject {
             print("Passes: \(result.totalPasses)")
 
 
-            try? await appium.deleteSession()
-
         } catch {
             
-            status = "Scan failed"
-            errorMessage = error.localizedDescription
+            if Task.isCancelled {
+                status = "Scan cancelled"
+                errorMessage = "The scan was cancelled before completion. No partial result was saved."
+            } else {
+                status = "Scan failed"
+                errorMessage = userFacingScanError(error)
+            }
         }
+    }
+
+    private func userFacingScanError(_ error: Error) -> String {
+        if let appiumError = error as? AppiumError {
+            return appiumError.errorDescription ?? "Appium could not complete the scan."
+        }
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cannotConnectToHost, .networkConnectionLost, .timedOut:
+                return "AccessibilityScanner could not communicate with Appium. Verify that Appium and WebDriverAgent are running, then try again."
+            default:
+                return urlError.localizedDescription
+            }
+        }
+
+        return error.localizedDescription
     }
 
     // MARK: - Stable Snapshot Capture
@@ -715,6 +777,7 @@ private enum ScannerViewModelError:
 
     case invalidScreenshot
     case unstableUI
+    case reportIntegrityFailure(String)
 
     var errorDescription: String? {
 
@@ -729,6 +792,9 @@ private enum ScannerViewModelError:
 
             return
                 "The application's UI changed while the screenshot and accessibility hierarchy were being synchronized. Please try the scan again."
+
+        case .reportIntegrityFailure(let details):
+            return "The scan completed, but the generated report failed an internal consistency check. No report was saved. \(details)"
         }
     }
 }

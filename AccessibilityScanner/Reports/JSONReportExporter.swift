@@ -2,8 +2,7 @@
 //  JSONReportExporter.swift
 //  AccessibilityScanner
 //
-//  Phase 5 - JSON report export
-//
+//  Created by Ravish Kumar on 29/09/26.
 
 import Foundation
 
@@ -91,13 +90,15 @@ private struct JSONReportPayload: Codable {
     let summary: JSONSummary
     let screens: [JSONScreen]
     let rules: [JSONRuleSummary]
+    let intelligence: AccessibilityIntelligence?
 
     init(report: AccessibilityScanResult) {
-        self.schemaVersion = "1.0"
+        self.schemaVersion = "1.2"
         self.scan = JSONScanMetadata(report: report)
         self.summary = JSONSummary(report: report)
         self.screens = report.screens.map(JSONScreen.init)
         self.rules = report.ruleSummaries.map(JSONRuleSummary.init)
+        self.intelligence = report.intelligence
     }
 }
 
@@ -153,6 +154,7 @@ private struct JSONSummary: Codable {
 private struct JSONScreen: Codable {
     let id: UUID
     let name: String
+    let signature: String
     let elementCount: Int
     let failures: Int
     let warnings: Int
@@ -162,10 +164,12 @@ private struct JSONScreen: Codable {
     let screenshot: JSONScreenshot?
     let annotations: [JSONAnnotation]
     let evaluations: [JSONEvaluation]
+    let transitions: [JSONTransition]
 
     init(screen: ScreenScanResult) {
         self.id = screen.id
         self.name = screen.name
+        self.signature = screen.signature
         self.elementCount = screen.elementCount
         self.failures = screen.failures
         self.warnings = screen.warnings
@@ -175,6 +179,35 @@ private struct JSONScreen: Codable {
         self.screenshot = screen.screenshot.map(JSONScreenshot.init)
         self.annotations = screen.annotations.map(JSONAnnotation.init)
         self.evaluations = screen.evaluations.map(JSONEvaluation.init)
+        self.transitions = screen.transitions.map(JSONTransition.init)
+    }
+}
+
+
+private struct JSONTransition: Codable {
+    let id: UUID
+    let targetSignature: String
+    let actionID: String
+    let actionLabel: String
+    let actionIdentifier: String
+    let actionType: String
+    let frame: JSONFrame
+    let xpath: String?
+
+    init(transition: NavigationTransition) {
+        self.id = transition.id
+        self.targetSignature = transition.targetSignature
+        self.actionID = transition.actionID
+        self.actionLabel = transition.actionLabel
+        self.actionIdentifier = transition.actionIdentifier
+        self.actionType = transition.actionType
+        self.frame = JSONFrame(
+            x: transition.actionFrameX,
+            y: transition.actionFrameY,
+            width: transition.actionFrameWidth,
+            height: transition.actionFrameHeight
+        )
+        self.xpath = transition.xpath
     }
 }
 

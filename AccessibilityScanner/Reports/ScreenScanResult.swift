@@ -10,8 +10,10 @@ import Foundation
 struct ScreenScanResult: Identifiable, Codable {
     let id: UUID
     let name: String
+    let signature: String
     let elementCount: Int
     let evaluations: [AccessibilityRuleEvaluation]
+    let transitions: [NavigationTransition]
 
     // Screenshot information
     let screenshot: ScanScreenshot?
@@ -21,15 +23,19 @@ struct ScreenScanResult: Identifiable, Codable {
 
     init(
         name: String,
+        signature: String = "",
         elementCount: Int,
         evaluations: [AccessibilityRuleEvaluation],
+        transitions: [NavigationTransition] = [],
         screenshot: ScanScreenshot? = nil,
         annotations: [ScreenshotAnnotation] = []
     ) {
         self.id = UUID()
         self.name = name
+        self.signature = signature
         self.elementCount = elementCount
         self.evaluations = evaluations
+        self.transitions = transitions
         self.screenshot = screenshot
         self.annotations = annotations
     }

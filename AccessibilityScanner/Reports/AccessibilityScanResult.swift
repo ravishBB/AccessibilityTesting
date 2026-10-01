@@ -23,6 +23,7 @@ struct AccessibilityScanResult: Identifiable, Codable {
     let screens: [ScreenScanResult]
 
     let rulesExecuted: Int
+    let intelligence: AccessibilityIntelligence?
 
     init(
         applicationName: String,
@@ -32,7 +33,8 @@ struct AccessibilityScanResult: Identifiable, Codable {
         startedAt: Date,
         finishedAt: Date,
         screens: [ScreenScanResult],
-        rulesExecuted: Int
+        rulesExecuted: Int,
+        intelligence: AccessibilityIntelligence? = nil
     ) {
         self.id = UUID()
 
@@ -47,6 +49,31 @@ struct AccessibilityScanResult: Identifiable, Codable {
 
         self.screens = screens
         self.rulesExecuted = rulesExecuted
+        self.intelligence = intelligence
+    }
+
+    init(
+        id: UUID,
+        applicationName: String,
+        bundleID: String,
+        deviceName: String,
+        deviceUDID: String,
+        startedAt: Date,
+        finishedAt: Date,
+        screens: [ScreenScanResult],
+        rulesExecuted: Int,
+        intelligence: AccessibilityIntelligence?
+    ) {
+        self.id = id
+        self.applicationName = applicationName
+        self.bundleID = bundleID
+        self.deviceName = deviceName
+        self.deviceUDID = deviceUDID
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.screens = screens
+        self.rulesExecuted = rulesExecuted
+        self.intelligence = intelligence
     }
 
     var totalElementsTested: Int {
@@ -118,6 +145,10 @@ struct AccessibilityScanResult: Identifiable, Codable {
         allEvaluations.filter {
             $0.status == .pass
         }
+    }
+
+    var resolvedIntelligence: AccessibilityIntelligence {
+        intelligence ?? AccessibilityIntelligenceEngine.analyze(report: self)
     }
 
     var ruleSummaries: [RuleSummary] {
