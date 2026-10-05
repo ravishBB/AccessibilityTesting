@@ -658,8 +658,7 @@ final class AppCrawler {
                 "A11YScannerIgnore" {
                 return
             }
-            if node.type ==
-                "XCUIElementTypeStatusBar" {
+            if node.role == .statusBar {
                 return
             }
             
@@ -811,13 +810,13 @@ final class AppCrawler {
             return false
         }
 
-        let supportedTypes: Set<String> = [
-            "XCUIElementTypeButton",
-            "XCUIElementTypeLink",
-            "XCUIElementTypeCell"
+        let supportedRoles: Set<AccessibilityRole> = [
+            .button,
+            .link,
+            .cell
         ]
 
-        guard supportedTypes.contains(node.type) else {
+        guard supportedRoles.contains(node.role) else {
             return false
         }
 
@@ -911,7 +910,7 @@ final class AppCrawler {
                 try await appium.getSource()
 
             let parserBefore =
-                WDAElementParser()
+                appium.makeParser()
 
             let rootBefore =
                 try parserBefore.parse(
@@ -930,7 +929,7 @@ final class AppCrawler {
                 try await appium.getSource()
 
             let parserAfter =
-                WDAElementParser()
+                appium.makeParser()
 
             let rootAfter =
                 try parserAfter.parse(

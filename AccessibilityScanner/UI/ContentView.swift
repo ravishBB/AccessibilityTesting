@@ -113,7 +113,7 @@ struct ContentView: View {
                 spacing: 3
             ) {
 
-                Text("iOS Accessibility Scanner")
+                Text("Mobile Accessibility Scanner")
                     .font(.title)
                     .fontWeight(.bold)
 

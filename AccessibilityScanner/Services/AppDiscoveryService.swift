@@ -15,6 +15,12 @@ final class AppDiscoveryService {
         for device: Device
     ) throws -> [InstalledApp] {
 
+        if device.platform == .android {
+            return try AndroidDeviceService().discoverApps(
+                for: device
+            )
+        }
+
         if device.isSimulator {
             return try discoverSimulatorApps(
                 for: device

@@ -28,21 +28,29 @@ struct AccessibilityNode {
 
     var children: [AccessibilityNode]
 
+    /// Platform the node was captured on. Defaults to iOS so existing
+    /// call sites keep working.
+    var platform: MobilePlatform = .ios
+
+    /// Set by platform parsers when the role cannot be derived from `type`
+    /// alone (for example a clickable generic Android `View`).
+    var roleOverride: AccessibilityRole? = nil
+
+    // MARK: - Role
+
+    var role: AccessibilityRole {
+        roleOverride ?? AccessibilityRole.resolve(type: type)
+    }
+
+    /// Android `ImageButton` / FAB: the control itself is the image.
+    var isImageButtonClass: Bool {
+        type.hasSuffix("ImageButton") || type.contains("FloatingActionButton")
+    }
+
     // MARK: - Accessibility Helpers
 
     var isInteractive: Bool {
-
-        let interactiveTypes: Set<String> = [
-            "XCUIElementTypeButton",
-            "XCUIElementTypeTextField",
-            "XCUIElementTypeSecureTextField",
-            "XCUIElementTypeSlider",
-            "XCUIElementTypeSwitch",
-            "XCUIElementTypeStepper",
-            "XCUIElementTypePickerWheel"
-        ]
-
-        return interactiveTypes.contains(type)
+        AccessibilityRole.controls.contains(role)
     }
 
     var hasAccessibleName: Bool {
@@ -68,16 +76,16 @@ struct AccessibilityNode {
     }
 
     var isButton: Bool {
-        type == "XCUIElementTypeButton"
+        role == .button
     }
 
     var isImage: Bool {
-        type == "XCUIElementTypeImage"
+        role == .image
     }
 
     var isAdjustable: Bool {
 
-        type == "XCUIElementTypeSlider" ||
+        role == .slider ||
         traits.localizedCaseInsensitiveContains("adjustable")
     }
 

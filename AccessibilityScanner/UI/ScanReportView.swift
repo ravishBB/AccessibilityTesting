@@ -16,14 +16,35 @@ struct ScanReportView: View {
     @State private var selectedAnnotationID: UUID?
     @State private var selectedScreenID: UUID?
     @State private var showDetailedResults = false
-    @State private var showAppMap = true
-    @State private var showIntelligence = true
+    @State private var showDiff = false
+    @State private var showAppMap = false
+    @State private var showIntelligence = false
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
                 header
                 summarySection
+
+                AccessibilityQualityGateView(
+                    gate: report.resolvedIntelligence.qualityGate
+                )
+
+                if let diff = report.resolvedIntelligence.diff {
+                    DisclosureGroup(isExpanded: $showDiff) {
+                        AccessibilityDiffView(diff: diff)
+                            .padding(.top, 10)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Accessibility Diff")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                            Text("Changes since the previous scan.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
 
                 DisclosureGroup(isExpanded: $showAppMap) {
                     AccessibilityAppMapView(report: report)
@@ -56,6 +77,19 @@ struct ScanReportView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Fix Priorities")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                        }
+                    }
+                }
+
+                if let fixCenter = report.resolvedIntelligence.fixCenter {
+                    DisclosureGroup(isExpanded: .constant(true)) {
+                        AccessibilityFixCenterView(fixCenter: fixCenter)
+                            .padding(.top, 10)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Developer Fix Center")
                                 .font(.title2)
                                 .fontWeight(.bold)
                         }

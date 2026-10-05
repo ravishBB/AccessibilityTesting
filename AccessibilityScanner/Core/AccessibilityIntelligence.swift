@@ -53,14 +53,89 @@ struct StateEngineResult: Codable, Hashable {
     let note: String
 }
 
+struct VoiceOverFocusStop: Identifiable, Codable, Hashable {
+    let id: UUID
+    let position: Int
+    let elementType: String
+    let label: String
+    let identifier: String
+    let frameX: Double
+    let frameY: Double
+    let frameWidth: Double
+    let frameHeight: Double
+    let status: IntelligenceStatus
+    let issue: String?
+
+    var displayName: String {
+        if !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return label
+        }
+        if !identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return identifier
+        }
+        return elementType
+    }
+}
+
+struct VoiceOverJourneyScreen: Identifiable, Codable, Hashable {
+    let id: UUID
+    let screenName: String
+    let screenSignature: String
+    let focusStops: [VoiceOverFocusStop]
+    let issueCount: Int
+    let validationCount: Int
+
+    var status: IntelligenceStatus {
+        if issueCount > 0 { return .fail }
+        if validationCount > 0 { return .validate }
+        return .pass
+    }
+}
+
 struct VoiceOverEngineResult: Codable, Hashable {
     let interactiveElementsObserved: Int
     let accessibleNameFailures: Int
     let hiddenInteractiveFailures: Int
     let roleStateFailures: Int
     let focusOrderValidations: Int
+    let focusStopsObserved: Int
+    let screensWithFocusSequences: Int
+    let screensWithFocusIssues: Int
+    let focusSequences: [VoiceOverJourneyScreen]
     let status: IntelligenceStatus
     let note: String
+}
+
+struct ResponsiveAccessibilityResult: Codable, Hashable {
+    let tested: Bool
+    let originalOrientation: String?
+    let testedOrientation: String?
+    let orientationChanged: Bool
+    let landscapeElementCount: Int
+    let landscapeFailureCount: Int
+    let landscapeWarningCount: Int
+    let landscapeValidationCount: Int
+    let landscapeScreenshotCaptured: Bool
+    let dynamicTypeValidationCount: Int
+    let dynamicTypeFailureCount: Int
+    let status: IntelligenceStatus
+    let note: String
+
+    static let notTested = ResponsiveAccessibilityResult(
+        tested: false,
+        originalOrientation: nil,
+        testedOrientation: nil,
+        orientationChanged: false,
+        landscapeElementCount: 0,
+        landscapeFailureCount: 0,
+        landscapeWarningCount: 0,
+        landscapeValidationCount: 0,
+        landscapeScreenshotCaptured: false,
+        dynamicTypeValidationCount: 0,
+        dynamicTypeFailureCount: 0,
+        status: .notTested,
+        note: "Runtime orientation testing was not performed."
+    )
 }
 
 struct JourneyPath: Identifiable, Codable, Hashable {
@@ -119,15 +194,103 @@ struct RegressionEngineResult: Codable, Hashable {
     let status: IntelligenceStatus
 }
 
+struct AccessibilityRegressionIssueSnapshot: Codable, Hashable {
+    let key: String
+    let screenName: String
+    let screenSignature: String
+    let ruleID: String
+    let ruleName: String
+    let status: RuleResultStatus
+    let severity: AccessibilityFinding.Severity
+    let message: String
+    let remediation: String
+    let elementType: String
+    let elementLabel: String
+    let identifier: String
+    let value: String
+    let frameX: Double
+    let frameY: Double
+    let frameWidth: Double
+    let frameHeight: Double
+}
+
+struct AccessibilityDiffIssue: Identifiable, Codable, Hashable {
+    let id: String
+    let change: String
+    let issue: AccessibilityRegressionIssueSnapshot
+}
+
+struct AccessibilityDiffScreenChange: Identifiable, Codable, Hashable {
+    let id: String
+    let change: String
+    let screenName: String
+    let signature: String
+}
+
+struct AccessibilityDiffResult: Codable, Hashable {
+    let hasBaseline: Bool
+    let newIssues: [AccessibilityDiffIssue]
+    let fixedIssues: [AccessibilityDiffIssue]
+    let addedScreens: [AccessibilityDiffScreenChange]
+    let removedScreens: [AccessibilityDiffScreenChange]
+
+    static let notTested = AccessibilityDiffResult(
+        hasBaseline: false,
+        newIssues: [],
+        fixedIssues: [],
+        addedScreens: [],
+        removedScreens: []
+    )
+}
+
+// MARK: - Accessibility Quality Gate
+
+struct AccessibilityQualityGatePolicy: Codable, Hashable {
+    let failOnNewIssues: Bool
+    let failOnCriticalFailures: Bool
+    let failOnBlockedJourneys: Bool
+    let failOnWCAGAAFailures: Bool
+
+    static let productionDefault = AccessibilityQualityGatePolicy(
+        failOnNewIssues: true,
+        failOnCriticalFailures: true,
+        failOnBlockedJourneys: true,
+        failOnWCAGAAFailures: false
+    )
+}
+
+struct AccessibilityQualityGateCheck: Identifiable, Codable, Hashable {
+    let id: String
+    let title: String
+    let value: Int
+    let enforced: Bool
+    let passed: Bool
+    let detail: String
+}
+
+struct AccessibilityQualityGateResult: Codable, Hashable {
+    let policy: AccessibilityQualityGatePolicy
+    let status: IntelligenceStatus
+    let checks: [AccessibilityQualityGateCheck]
+
+    var enforcedFailureCount: Int {
+        checks.filter { $0.enforced && !$0.passed }.count
+    }
+}
+
 struct AccessibilityIntelligence: Codable, Hashable {
     let generatedAt: Date
     let visual: VisualEngineResult
     let state: StateEngineResult
+    let responsive: ResponsiveAccessibilityResult
     let voiceOver: VoiceOverEngineResult
     let journey: JourneyEngineResult
     let wcag: WCAGEngineResult
     let regression: RegressionEngineResult
+    let diff: AccessibilityDiffResult?
+    let qualityGate: AccessibilityQualityGateResult
     let impactCenter: AccessibilityImpactCenter?
+    let fixCenter: AccessibilityFixCenter?
 
     var overallStatus: IntelligenceStatus {
         if [visual.status, state.status, voiceOver.status, journey.status]
@@ -152,27 +315,63 @@ struct AccessibilityRegressionSnapshot: Codable, Hashable {
     let applicationName: String
     let bundleID: String
     let screenSignatures: Set<String>
+    let screenNames: [String: String]
     let issueKeys: Set<String>
+    let issueDetails: [String: AccessibilityRegressionIssueSnapshot]
     let capturedAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case applicationName, bundleID, screenSignatures, screenNames, issueKeys, issueDetails, capturedAt
+    }
 
     init(report: AccessibilityScanResult) {
         self.applicationName = report.applicationName
         self.bundleID = report.bundleID
         self.screenSignatures = Set(report.screens.map(\.signature))
-        self.issueKeys = Set(
-            report.screens.flatMap { screen in
-                screen.evaluations
-                    .filter {
-                        $0.status == .fail ||
-                        $0.status == .warning ||
-                        $0.status == .validate
-                    }
-                    .map { evaluation in
-                        Self.issueKey(screen: screen, evaluation: evaluation)
-                    }
+        self.screenNames = Dictionary(uniqueKeysWithValues: report.screens.map { ($0.signature, $0.name) })
+
+        var details: [String: AccessibilityRegressionIssueSnapshot] = [:]
+        for screen in report.screens {
+            for evaluation in screen.evaluations where
+                evaluation.status == .fail ||
+                evaluation.status == .warning ||
+                evaluation.status == .validate {
+                let key = Self.issueKey(screen: screen, evaluation: evaluation)
+                details[key] = AccessibilityRegressionIssueSnapshot(
+                    key: key,
+                    screenName: screen.name,
+                    screenSignature: screen.signature,
+                    ruleID: evaluation.ruleID,
+                    ruleName: evaluation.ruleName,
+                    status: evaluation.status,
+                    severity: evaluation.severity,
+                    message: evaluation.message,
+                    remediation: evaluation.remediation,
+                    elementType: evaluation.elementType,
+                    elementLabel: evaluation.elementLabel,
+                    identifier: evaluation.identifier,
+                    value: evaluation.value ?? "",
+                    frameX: evaluation.frameX,
+                    frameY: evaluation.frameY,
+                    frameWidth: evaluation.frameWidth,
+                    frameHeight: evaluation.frameHeight
+                )
             }
-        )
+        }
+        self.issueDetails = details
+        self.issueKeys = Set(details.keys)
         self.capturedAt = report.finishedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        applicationName = try container.decode(String.self, forKey: .applicationName)
+        bundleID = try container.decode(String.self, forKey: .bundleID)
+        screenSignatures = try container.decode(Set<String>.self, forKey: .screenSignatures)
+        screenNames = try container.decodeIfPresent([String: String].self, forKey: .screenNames) ?? [:]
+        issueKeys = try container.decode(Set<String>.self, forKey: .issueKeys)
+        issueDetails = try container.decodeIfPresent([String: AccessibilityRegressionIssueSnapshot].self, forKey: .issueDetails) ?? [:]
+        capturedAt = try container.decode(Date.self, forKey: .capturedAt)
     }
 
     static func issueKey(
@@ -225,7 +424,8 @@ struct AccessibilityIntelligenceEngine {
 
     static func analyze(
         report: AccessibilityScanResult,
-        baseline: AccessibilityRegressionSnapshot? = nil
+        baseline: AccessibilityRegressionSnapshot? = nil,
+        responsive: ResponsiveAccessibilityResult = .notTested
     ) -> AccessibilityIntelligence {
         let visual = analyzeVisual(report)
         let state = analyzeState(report)
@@ -233,32 +433,146 @@ struct AccessibilityIntelligenceEngine {
         let journey = analyzeJourneys(report)
         let wcag = analyzeWCAG(report)
         let regression = analyzeRegression(report, baseline: baseline)
+        let diff = analyzeAccessibilityDiff(report, baseline: baseline)
 
-        let provisional = AccessibilityIntelligence(
+        let provisionalWithoutGate = AccessibilityIntelligence(
             generatedAt: Date(),
             visual: visual,
             state: state,
+            responsive: responsive,
             voiceOver: voiceOver,
             journey: journey,
             wcag: wcag,
             regression: regression,
-            impactCenter: nil
+            diff: diff,
+            qualityGate: AccessibilityQualityGateResult(
+                policy: .productionDefault,
+                status: .notTested,
+                checks: []
+            ),
+            impactCenter: nil,
+            fixCenter: nil
+        )
+
+        let qualityGate = analyzeQualityGate(
+            report: report,
+            intelligence: provisionalWithoutGate,
+            policy: .productionDefault
+        )
+
+        let provisional = AccessibilityIntelligence(
+            generatedAt: provisionalWithoutGate.generatedAt,
+            visual: visual,
+            state: state,
+            responsive: responsive,
+            voiceOver: voiceOver,
+            journey: journey,
+            wcag: wcag,
+            regression: regression,
+            diff: diff,
+            qualityGate: qualityGate,
+            impactCenter: nil,
+            fixCenter: nil
         )
 
         let impactCenter = AccessibilityImpactCenter.analyze(
             report: report,
             intelligence: provisional
         )
+        let fixCenter = AccessibilityFixCenter.analyze(report: report)
 
         return AccessibilityIntelligence(
             generatedAt: provisional.generatedAt,
             visual: visual,
             state: state,
+            responsive: responsive,
             voiceOver: voiceOver,
             journey: journey,
             wcag: wcag,
             regression: regression,
-            impactCenter: impactCenter
+            diff: diff,
+            qualityGate: qualityGate,
+            impactCenter: impactCenter,
+            fixCenter: fixCenter
+        )
+    }
+
+    // MARK: Quality Gate
+
+    private static func analyzeQualityGate(
+        report: AccessibilityScanResult,
+        intelligence: AccessibilityIntelligence,
+        policy: AccessibilityQualityGatePolicy
+    ) -> AccessibilityQualityGateResult {
+        let criticalFailures = report.allEvaluations.filter {
+            $0.status == .fail && $0.severity == .error
+        }.count
+
+        let aaFailures = intelligence.wcag.criteria
+            .filter { $0.level == "AA" }
+            .reduce(0) { $0 + $1.failures }
+
+        let newIssues = intelligence.regression.hasBaseline
+            ? intelligence.regression.newIssues
+            : 0
+
+        let checks = [
+            AccessibilityQualityGateCheck(
+                id: "new-issues",
+                title: "New accessibility issues",
+                value: newIssues,
+                enforced: policy.failOnNewIssues && intelligence.regression.hasBaseline,
+                passed: newIssues == 0,
+                detail: intelligence.regression.hasBaseline
+                    ? (newIssues == 0 ? "No new issues compared with the previous baseline." : "New issues were detected since the previous baseline.")
+                    : "No previous baseline is available; this check will be enforced on the next comparison scan."
+            ),
+            AccessibilityQualityGateCheck(
+                id: "critical-failures",
+                title: "Critical accessibility failures",
+                value: criticalFailures,
+                enforced: policy.failOnCriticalFailures,
+                passed: criticalFailures == 0,
+                detail: criticalFailures == 0
+                    ? "No error-severity accessibility failures were recorded."
+                    : "Error-severity failures require correction before release."
+            ),
+            AccessibilityQualityGateCheck(
+                id: "blocked-journeys",
+                title: "Blocked journeys",
+                value: intelligence.journey.blockedJourneys,
+                enforced: policy.failOnBlockedJourneys,
+                passed: intelligence.journey.blockedJourneys == 0,
+                detail: intelligence.journey.blockedJourneys == 0
+                    ? "No discovered journey was blocked by accessibility findings."
+                    : "One or more discovered workflows contain blocking accessibility findings."
+            ),
+            AccessibilityQualityGateCheck(
+                id: "wcag-aa",
+                title: "WCAG 2.2 AA failures",
+                value: aaFailures,
+                enforced: policy.failOnWCAGAAFailures,
+                passed: aaFailures == 0,
+                detail: aaFailures == 0
+                    ? "No mapped WCAG 2.2 AA failures were recorded."
+                    : (policy.failOnWCAGAAFailures ? "Mapped AA failures are configured to block release." : "AA failures are reported but are not configured to block release.")
+            )
+        ]
+
+        let enforcedFailures = checks.filter { $0.enforced && !$0.passed }.count
+        let status: IntelligenceStatus
+        if enforcedFailures > 0 {
+            status = .fail
+        } else if !intelligence.regression.hasBaseline || intelligence.journey.status == .notTested {
+            status = .validate
+        } else {
+            status = .pass
+        }
+
+        return AccessibilityQualityGateResult(
+            policy: policy,
+            status: status,
+            checks: checks
         )
     }
 
@@ -370,19 +684,11 @@ struct AccessibilityIntelligenceEngine {
     private static func analyzeVoiceOver(
         _ report: AccessibilityScanResult
     ) -> VoiceOverEngineResult {
-        let interactiveTypes: Set<String> = [
-            "XCUIElementTypeButton",
-            "XCUIElementTypeTextField",
-            "XCUIElementTypeSecureTextField",
-            "XCUIElementTypeSlider",
-            "XCUIElementTypeSwitch",
-            "XCUIElementTypeStepper",
-            "XCUIElementTypePickerWheel",
-            "XCUIElementTypeLink"
-        ]
+        let interactiveTypes: Set<AccessibilityRole> =
+            AccessibilityRole.controls.union([.link])
 
         let interactiveEvaluations = report.allEvaluations.filter {
-            interactiveTypes.contains($0.elementType)
+            interactiveTypes.contains($0.elementRole)
         }
 
         let nameRuleIDs: Set<String> = [
@@ -433,10 +739,23 @@ struct AccessibilityIntelligenceEngine {
             $0.status == .validate
         }.count
 
+        let sequences = report.screens.map { screen in
+            buildVoiceOverSequence(
+                screen: screen,
+                interactiveTypes: interactiveTypes,
+                nameRuleIDs: nameRuleIDs,
+                hiddenRuleIDs: hiddenRuleIDs,
+                roleStateRuleIDs: roleStateRuleIDs,
+                focusRuleIDs: focusRuleIDs
+            )
+        }.filter { !$0.focusStops.isEmpty }
+
+        let sequenceIssueCount = sequences.reduce(0) { $0 + $1.issueCount }
+        let sequenceValidationCount = sequences.reduce(0) { $0 + $1.validationCount }
         let status: IntelligenceStatus
-        if nameFailures + hiddenFailures + roleStateFailures > 0 {
+        if nameFailures + hiddenFailures + roleStateFailures > 0 || sequenceIssueCount > 0 {
             status = .fail
-        } else if focusValidations > 0 {
+        } else if focusValidations > 0 || sequenceValidationCount > 0 {
             status = .validate
         } else {
             status = .pass
@@ -452,8 +771,96 @@ struct AccessibilityIntelligenceEngine {
             hiddenInteractiveFailures: hiddenFailures,
             roleStateFailures: roleStateFailures,
             focusOrderValidations: focusValidations,
+            focusStopsObserved: sequences.reduce(0) { $0 + $1.focusStops.count },
+            screensWithFocusSequences: sequences.count,
+            screensWithFocusIssues: sequences.filter { $0.issueCount > 0 }.count,
+            focusSequences: sequences,
             status: status,
-            note: "Hierarchy-based VoiceOver readiness analysis. This does not claim to run the VoiceOver runtime itself."
+            note: "Focus sequences are inferred from the scanned accessibility hierarchy and element geometry. VoiceOver itself is not enabled or driven by this analysis."
+        )
+    }
+
+    private static func buildVoiceOverSequence(
+        screen: ScreenScanResult,
+        interactiveTypes: Set<AccessibilityRole>,
+        nameRuleIDs: Set<String>,
+        hiddenRuleIDs: Set<String>,
+        roleStateRuleIDs: Set<String>,
+        focusRuleIDs: Set<String>
+    ) -> VoiceOverJourneyScreen {
+        let candidates = screen.evaluations.filter { evaluation in
+            interactiveTypes.contains(evaluation.elementRole) ||
+            !evaluation.elementLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }.sorted { lhs, rhs in
+            if lhs.frameY != rhs.frameY { return lhs.frameY < rhs.frameY }
+            if lhs.frameX != rhs.frameX { return lhs.frameX < rhs.frameX }
+            return lhs.elementType < rhs.elementType
+        }
+
+        var seenNames: Set<String> = []
+        var stops: [VoiceOverFocusStop] = []
+
+        for (index, evaluation) in candidates.enumerated() {
+            let trimmedLabel = evaluation.elementLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+            let hidden = hiddenRuleIDs.contains(evaluation.ruleID) && evaluation.status == .fail
+            let nameIssue = nameRuleIDs.contains(evaluation.ruleID) &&
+                (evaluation.status == .fail || evaluation.status == .warning)
+            let roleIssue = roleStateRuleIDs.contains(evaluation.ruleID) && evaluation.status == .fail
+            let focusValidation = focusRuleIDs.contains(evaluation.ruleID) && evaluation.status == .validate
+
+            let duplicateKey = trimmedLabel.lowercased()
+            let duplicate = !duplicateKey.isEmpty && seenNames.contains(duplicateKey)
+            if !duplicateKey.isEmpty { seenNames.insert(duplicateKey) }
+
+            let issue: String?
+            let status: IntelligenceStatus
+            if hidden {
+                issue = "Interactive element is hidden from screen-reader users."
+                status = .fail
+            } else if nameIssue || trimmedLabel.isEmpty {
+                issue = "Accessible name may be missing or incomplete."
+                status = .fail
+            } else if roleIssue {
+                issue = "Role or state information may not be announced correctly."
+                status = .fail
+            } else if duplicate {
+                issue = "Repeated accessible name may make this focus stop ambiguous."
+                status = .warning
+            } else if focusValidation {
+                issue = "Focus order requires manual validation."
+                status = .validate
+            } else {
+                issue = nil
+                status = .pass
+            }
+
+            stops.append(
+                VoiceOverFocusStop(
+                    id: UUID(),
+                    position: index + 1,
+                    elementType: evaluation.elementType,
+                    label: trimmedLabel,
+                    identifier: evaluation.identifier,
+                    frameX: evaluation.frameX,
+                    frameY: evaluation.frameY,
+                    frameWidth: evaluation.frameWidth,
+                    frameHeight: evaluation.frameHeight,
+                    status: status,
+                    issue: issue
+                )
+            )
+        }
+
+        let issueCount = stops.filter { $0.status == .fail || $0.status == .warning }.count
+        let validationCount = stops.filter { $0.status == .validate }.count
+
+        return VoiceOverJourneyScreen(
+            id: UUID(),
+            screenName: screen.name,
+            screenSignature: screen.signature,
+            focusStops: stops,
+            issueCount: issueCount,
+            validationCount: validationCount
         )
     }
 
@@ -726,6 +1133,57 @@ struct AccessibilityIntelligenceEngine {
             status: status
         )
     }
+
+    // MARK: Accessibility Diff
+
+    private static func analyzeAccessibilityDiff(
+        _ report: AccessibilityScanResult,
+        baseline: AccessibilityRegressionSnapshot?
+    ) -> AccessibilityDiffResult {
+        guard let baseline else { return .notTested }
+
+        let current = AccessibilityRegressionSnapshot(report: report)
+        let newKeys = current.issueKeys.subtracting(baseline.issueKeys)
+        let fixedKeys = baseline.issueKeys.subtracting(current.issueKeys)
+
+        let newIssues = newKeys.sorted().compactMap { key -> AccessibilityDiffIssue? in
+            guard let issue = current.issueDetails[key] else { return nil }
+            return AccessibilityDiffIssue(id: "new|\(key)", change: "New", issue: issue)
+        }
+
+        let fixedIssues = fixedKeys.sorted().compactMap { key -> AccessibilityDiffIssue? in
+            guard let issue = baseline.issueDetails[key] else { return nil }
+            return AccessibilityDiffIssue(id: "fixed|\(key)", change: "Fixed", issue: issue)
+        }
+
+        let addedScreens = current.screenSignatures.subtracting(baseline.screenSignatures)
+            .sorted().map { signature in
+                AccessibilityDiffScreenChange(
+                    id: "added|\(signature)",
+                    change: "Added",
+                    screenName: current.screenNames[signature] ?? signature,
+                    signature: signature
+                )
+            }
+
+        let removedScreens = baseline.screenSignatures.subtracting(current.screenSignatures)
+            .sorted().map { signature in
+                AccessibilityDiffScreenChange(
+                    id: "removed|\(signature)",
+                    change: "Removed",
+                    screenName: baseline.screenNames[signature] ?? signature,
+                    signature: signature
+                )
+            }
+
+        return AccessibilityDiffResult(
+            hasBaseline: true,
+            newIssues: newIssues,
+            fixedIssues: fixedIssues,
+            addedScreens: addedScreens,
+            removedScreens: removedScreens
+        )
+    }
 }
 
 // MARK: - Report Integration Helpers
@@ -749,6 +1207,138 @@ extension AccessibilityScanResult {
     }
 }
 
+// MARK: - Quality Gate UI
+
+struct AccessibilityQualityGateView: View {
+    let gate: AccessibilityQualityGateResult
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Accessibility Quality Gate")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    Text("Release checks based on the current scan, regression baseline and discovered journeys.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                gateBadge(gate.status)
+            }
+
+            HStack(spacing: 12) {
+                gateMetric(
+                    title: "Gate",
+                    value: gate.status.title
+                )
+                gateMetric(
+                    title: "Blocking",
+                    value: "\(gate.enforcedFailureCount)"
+                )
+                gateMetric(
+                    title: "Checks",
+                    value: "\(gate.checks.count)"
+                )
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(gate.checks) { check in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: check.enforced && !check.passed ? "xmark.circle.fill" : check.passed ? "checkmark.circle.fill" : "info.circle.fill")
+                            .foregroundStyle(check.enforced && !check.passed ? .red : check.passed ? .green : .secondary)
+                            .frame(width: 18)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 8) {
+                                Text(check.title)
+                                    .font(.callout)
+                                    .fontWeight(.semibold)
+                                if check.enforced {
+                                    Text("ENFORCED")
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(Color.secondary.opacity(0.10))
+                                        .clipShape(Capsule())
+                                } else {
+                                    Text("REPORT ONLY")
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(Color.secondary.opacity(0.10))
+                                        .clipShape(Capsule())
+                                }
+                                Spacer()
+                                Text("\(check.value)")
+                                    .font(.callout)
+                                    .fontWeight(.semibold)
+                                    .monospacedDigit()
+                            }
+
+                            Text(check.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(11)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.055)))
+                }
+            }
+
+            Text("A PASS means no enforced gate condition failed. A VALIDATE result means the scan needs a baseline or deeper runtime validation before a release decision can be made.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.secondary.opacity(0.045))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.secondary.opacity(0.10))
+                )
+        )
+    }
+
+    private func gateMetric(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.headline)
+                .monospacedDigit()
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func gateBadge(_ status: IntelligenceStatus) -> some View {
+        Text(status.title.uppercased())
+            .font(.caption)
+            .fontWeight(.bold)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(gateColor(status).opacity(0.12))
+            .foregroundStyle(gateColor(status))
+            .clipShape(Capsule())
+    }
+
+    private func gateColor(_ status: IntelligenceStatus) -> Color {
+        switch status {
+        case .pass: return .green
+        case .fail: return .red
+        case .warning: return .orange
+        case .validate: return .yellow
+        case .notTested: return .gray
+        }
+    }
+}
+
 // MARK: - Intelligence UI
 
 struct AccessibilityIntelligenceView: View {
@@ -758,6 +1348,8 @@ struct AccessibilityIntelligenceView: View {
         VStack(alignment: .leading, spacing: 18) {
             header
             engineGrid
+            responsiveSection
+            voiceOverJourneySection
             journeySection
             wcagSection
             regressionSection
@@ -817,6 +1409,138 @@ struct AccessibilityIntelligenceView: View {
         .padding(15)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.06)))
+    }
+
+    private var responsiveSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Responsive Accessibility")
+                        .font(.headline)
+                    Text("Runtime orientation smoke test plus Dynamic Type coverage from the accessibility rules.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                statusBadge(intelligence.responsive.status)
+            }
+
+            HStack(spacing: 20) {
+                metric("Landscape elements", intelligence.responsive.landscapeElementCount)
+                metric("Landscape failures", intelligence.responsive.landscapeFailureCount)
+                metric("Landscape warnings", intelligence.responsive.landscapeWarningCount)
+                metric("Text-size checks", intelligence.responsive.dynamicTypeValidationCount + intelligence.responsive.dynamicTypeFailureCount)
+            }
+
+            if intelligence.responsive.tested {
+                HStack(spacing: 10) {
+                    Label(
+                        intelligence.responsive.landscapeScreenshotCaptured ? "Landscape captured" : "Landscape not captured",
+                        systemImage: intelligence.responsive.landscapeScreenshotCaptured ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    if let original = intelligence.responsive.originalOrientation {
+                        Text("Original: \(original)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Text(intelligence.responsive.note)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(15)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.06)))
+    }
+
+    private var voiceOverJourneySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("VoiceOver Navigation")
+                        .font(.headline)
+                    Text("Inferred focus sequence from the scanned accessibility hierarchy.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                statusBadge(intelligence.voiceOver.status)
+            }
+
+            HStack(spacing: 20) {
+                metric("Focus stops", intelligence.voiceOver.focusStopsObserved)
+                metric("Screens", intelligence.voiceOver.screensWithFocusSequences)
+                metric("Screens with issues", intelligence.voiceOver.screensWithFocusIssues)
+            }
+
+            Text("This is a hierarchy-based navigation model. It does not claim to drive the VoiceOver runtime.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if intelligence.voiceOver.focusSequences.isEmpty {
+                Text("No focusable elements were available to build a navigation sequence.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(intelligence.voiceOver.focusSequences) { screen in
+                        DisclosureGroup {
+                            LazyVStack(alignment: .leading, spacing: 5) {
+                                ForEach(screen.focusStops) { stop in
+                                    HStack(alignment: .top, spacing: 8) {
+                                        Text("\(stop.position)")
+                                            .font(.caption2)
+                                            .fontWeight(.bold)
+                                            .frame(width: 24, height: 24)
+                                            .background(Circle().fill(Color.secondary.opacity(0.12)))
+
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            HStack(spacing: 6) {
+                                                Text(stop.displayName)
+                                                    .font(.caption)
+                                                    .fontWeight(.semibold)
+                                                    .lineLimit(2)
+                                                statusBadge(stop.status)
+                                            }
+                                            Text(stop.elementType)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                            if let issue = stop.issue {
+                                                Text(issue)
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                        }
+                                        Spacer()
+                                    }
+                                }
+                            }
+                            .padding(.top, 6)
+                        } label: {
+                            HStack {
+                                statusDot(screen.status)
+                                Text(screen.screenName)
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                Spacer()
+                                Text("\(screen.focusStops.count) stops")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                if screen.issueCount > 0 {
+                                    Text("\(screen.issueCount) issues")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var journeySection: some View {

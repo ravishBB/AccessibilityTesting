@@ -114,10 +114,10 @@ struct CommonAccessibleNameRule: AccessibilityRule {
     let description = "Interactive controls must expose a meaningful accessible name."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type), node.visible, node.enabled else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible, node.enabled else { return nil }
         // Buttons have a dedicated descriptive-name rule. Keeping the common
         // rule off buttons prevents duplicate PASS/FAIL records.
-        guard node.type != "XCUIElementTypeButton" else { return nil }
+        guard node.role != .button else { return nil }
         if RuleHelper.clean(node.label).isEmpty {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Interactive element has no accessible name.",
@@ -134,14 +134,18 @@ struct CommonEnhancedTargetSizeRule: AccessibilityRule {
     let description = "Interactive controls should provide at least a 44×44 point target."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type), node.visible, node.enabled else { return nil }
-        if node.frame.width < 44 || node.frame.height < 44 {
+        guard RuleHelper.controls.contains(node.role), node.visible, node.enabled else { return nil }
+        // iOS: 44pt (HIG). Android: 48dp. Android frames are normalised to dp.
+        let target = node.platform.recommendedTargetSize
+        let unit = node.platform.sizeUnit
+        let size = "\(Int(target))×\(Int(target)) \(unit)"
+        if node.frame.width < target || node.frame.height < target {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "Interactive control does not meet the 44×44 point target size.",
-                                   remediation: "Increase the interactive area to at least 44×44 points.")
+                                   message: "Interactive control does not meet the \(size) target size.",
+                                   remediation: "Increase the interactive area to at least \(size).")
         }
         return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                               message: "Interactive control meets the 44×44 point target size.")
+                               message: "Interactive control meets the \(size) target size.")
     }
 }
 
@@ -151,14 +155,14 @@ struct CommonMinimumTargetSizeRule: AccessibilityRule {
     let description = "Interactive controls should provide at least a 24×24 point target."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type), node.visible, node.enabled else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible, node.enabled else { return nil }
         if node.frame.width < 24 || node.frame.height < 24 {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "Interactive control does not meet the 24×24 point minimum target size.",
-                                   remediation: "Increase the interactive area to at least 24×24 points or provide adequate spacing.")
+                                   message: "Interactive control does not meet the 24×24 \(node.platform.sizeUnit) minimum target size.",
+                                   remediation: "Increase the interactive area to at least 24×24 \(node.platform.sizeUnit) or provide adequate spacing.")
         }
         return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                               message: "Interactive control meets the 24×24 point minimum target size.")
+                               message: "Interactive control meets the 24×24 \(node.platform.sizeUnit) minimum target size.")
     }
 }
 
@@ -166,29 +170,18 @@ struct CommonMinimumTargetSizeRule: AccessibilityRule {
 
 private enum RuleHelper {
 
-    static let buttons: Set<String> = [
-        "XCUIElementTypeButton"
+    static let buttons: Set<AccessibilityRole> = [
+        .button
     ]
 
-    static let textInputs: Set<String> = [
-        "XCUIElementTypeTextField",
-        "XCUIElementTypeSecureTextField",
-        "XCUIElementTypeTextView"
-    ]
+    static let textInputs: Set<AccessibilityRole> =
+        AccessibilityRole.textInputs
 
-    static let controls: Set<String> = [
-        "XCUIElementTypeButton",
-        "XCUIElementTypeTextField",
-        "XCUIElementTypeSecureTextField",
-        "XCUIElementTypeSlider",
-        "XCUIElementTypeSwitch",
-        "XCUIElementTypeStepper",
-        "XCUIElementTypePickerWheel",
-        "XCUIElementTypeSegmentedControl"
-    ]
+    static let controls: Set<AccessibilityRole> =
+        AccessibilityRole.controls
 
-    static let images: Set<String> = [
-        "XCUIElementTypeImage"
+    static let images: Set<AccessibilityRole> = [
+        .image
     ]
 
     static let headingsTraits = [
@@ -219,10 +212,10 @@ private enum RuleHelper {
     }
 
     static func isText(_ node: AccessibilityNode) -> Bool {
-        node.type == "XCUIElementTypeStaticText" ||
-        node.type == "XCUIElementTypeTextView" ||
-        node.type == "XCUIElementTypeTextField" ||
-        node.type == "XCUIElementTypeSecureTextField"
+        node.role == .staticText ||
+        node.role == .textView ||
+        node.role == .textField ||
+        node.role == .secureTextField
     }
 
     static func isVisible(_ node: AccessibilityNode) -> Bool {
@@ -230,20 +223,21 @@ private enum RuleHelper {
     }
 
     static func isImageLikeButton(_ node: AccessibilityNode) -> Bool {
-        guard node.type == "XCUIElementTypeButton" else { return false }
+        guard node.role == .button else { return false }
 
         let identifier = node.identifier.lowercased()
         let label = clean(node.label)
 
         // A button that contains an image child is an image button even when
         // the developer did not use an image/icon identifier. This is one of
-        // the strongest image-button signals available in WDA's hierarchy.
+        // the strongest image-button signals available in the accessibility hierarchy.
         let containsImageChild = node.children.contains { child in
-            child.type == "XCUIElementTypeImage"
+            child.role == .image
         }
 
         return label.isEmpty && (
             containsImageChild ||
+            node.isImageButtonClass ||
             identifier.contains("image") ||
             identifier.contains("icon") ||
             identifier.contains("glyph") ||
@@ -267,7 +261,7 @@ private enum RuleHelper {
 
     static func nearbyVisualLabel(for field: AccessibilityNode, in root: AccessibilityNode) -> AccessibilityNode? {
         let labels = allNodes(root).filter { node in
-            node.type == "XCUIElementTypeStaticText" &&
+            node.role == .staticText &&
             isVisible(node) &&
             !clean(node.label).isEmpty &&
             !node.frame.intersects(field.frame)
@@ -319,7 +313,7 @@ private enum RuleHelper {
         var result: [AccessibilityNode] = []
 
         func visit(_ node: AccessibilityNode) {
-            if node.exists, node.visible, node.enabled, controls.contains(node.type),
+            if node.exists, node.visible, node.enabled, controls.contains(node.role),
                node.frame.width > 0, node.frame.height > 0, !clean(node.label).isEmpty {
                 result.append(node)
             }
@@ -432,7 +426,7 @@ struct DescriptiveButtonNameRule: AccessibilityRule {
     let description = "Button names should identify the action or purpose."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeButton", node.visible else { return nil }
+        guard node.role == .button, node.visible else { return nil }
         // Image-only buttons are reported by the image-button-specific rule.
         guard !RuleHelper.isImageLikeButton(node) else { return nil }
         if RuleHelper.isGenericName(node.label) {
@@ -451,7 +445,7 @@ struct ImageButtonNameRule: AccessibilityRule {
     let description = "Image-only buttons need an accessible name."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeButton", node.visible else { return nil }
+        guard node.role == .button, node.visible else { return nil }
         let imageLike = RuleHelper.isImageLikeButton(node)
         guard imageLike else { return nil }
         return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
@@ -466,7 +460,7 @@ struct EnhancedTargetSizeRule: AccessibilityRule {
     let description = "Interactive controls should expose at least a 44×44 point target."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type), node.visible, node.enabled else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible, node.enabled else { return nil }
         guard node.frame.width < 44 || node.frame.height < 44 else {
             return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                    message: "Interactive control meets the 44pt target size.")
@@ -483,7 +477,7 @@ struct MinimumTargetSizeRule: AccessibilityRule {
     let description = "Interactive controls should expose at least a 24×24 point target."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type), node.visible, node.enabled else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible, node.enabled else { return nil }
         guard node.frame.width >= 24, node.frame.height >= 24 else {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Interactive control is smaller than 24×24pt.",
@@ -500,7 +494,7 @@ struct PlaceholderOnlyNameRule: AccessibilityRule {
     let description = "A placeholder should not be the only accessible name for a form control."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.textInputs.contains(node.type), node.visible else { return nil }
+        guard RuleHelper.textInputs.contains(node.role), node.visible else { return nil }
         guard RuleHelper.clean(node.label).isEmpty,
               !RuleHelper.clean(node.placeholderValue).isEmpty else { return nil }
         return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
@@ -515,8 +509,8 @@ struct DescriptiveInteractiveNameRule: AccessibilityRule {
     let description = "Interactive elements should expose meaningful names."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type), node.visible else { return nil }
-        guard node.type != "XCUIElementTypeButton" else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible else { return nil }
+        guard node.role != .button else { return nil }
         if RuleHelper.isGenericName(node.label) {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Interactive element has a missing or generic accessible name.",
@@ -533,7 +527,7 @@ struct AccessibleLabelImageRule: AccessibilityRule {
     let description = "Meaningful images should expose a textual description."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeImage", node.visible, node.accessible else { return nil }
+        guard node.role == .image, node.visible, node.accessible else { return nil }
         guard RuleHelper.clean(node.label).isEmpty else {
             return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                    message: "Image has an accessibility label.")
@@ -550,7 +544,7 @@ struct DescriptiveImageRule: AccessibilityRule {
     let description = "Image labels should communicate meaningful content."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeImage", node.visible, node.accessible else { return nil }
+        guard node.role == .image, node.visible, node.accessible else { return nil }
         if RuleHelper.isGenericName(node.label) {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Image accessible name is missing or generic.",
@@ -568,6 +562,12 @@ struct AdjustableValueRule: AccessibilityRule {
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.isAdjustable, node.visible else { return nil }
+        if node.platform == .android && !node.hasValue {
+            // RangeInfo / stateDescription are not part of the UiAutomator2 dump.
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                         message: "Range information is not exposed in the Android hierarchy; verify the current value is announced by TalkBack.",
+                                         remediation: "Expose the current value through RangeInfo or stateDescription so TalkBack announces it.")
+        }
         guard node.hasValue else {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Adjustable element does not expose an accessibility value.",
@@ -680,7 +680,7 @@ struct DisabledButtonStateRule: AccessibilityRule {
     let description = "A disabled button should expose its disabled state consistently."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeButton", node.visible else { return nil }
+        guard node.role == .button, node.visible else { return nil }
         if !node.enabled {
             return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                    message: "Button is exposed as disabled by the accessibility hierarchy.")
@@ -699,7 +699,7 @@ struct RoleTraitConsistencyRule: AccessibilityRule {
         guard node.visible else { return nil }
         let traits = node.traits.lowercased()
 
-        if node.type == "XCUIElementTypeButton" && traits.contains("statictext") {
+        if node.role == .button && traits.contains("statictext") {
             return RuleHelper.fail(
                 ruleID: id, name: title, description: description, node: node,
                 message: "Button exposes a conflicting static-text trait.",
@@ -707,25 +707,25 @@ struct RoleTraitConsistencyRule: AccessibilityRule {
             )
         }
 
-        if node.type == "XCUIElementTypeImage" && traits.contains("button") {
+        if node.role == .image && (traits.contains("button") || traits.contains("clickable")) {
             return RuleHelper.fail(
                 ruleID: id, name: title, description: description, node: node,
-                message: "Image exposes a button trait while the WDA element role is image.",
+                message: "Image exposes button/clickable semantics while its exposed role is image.",
                 remediation: "Expose the interactive element as a button, or remove the button semantics if the image is decorative/non-interactive."
             )
         }
 
-        if traits.contains("link") && !["XCUIElementTypeButton", "XCUIElementTypeStaticText", "XCUIElementTypeLink"].contains(node.type) {
+        if traits.contains("link") && ![AccessibilityRole.button, .staticText, .link].contains(node.role) {
             return RuleHelper.warning(
                 ruleID: id, name: title, description: description, node: node,
-                message: "Element exposes link semantics on an unexpected WDA element type.",
+                message: "Element exposes link semantics on an unexpected element type.",
                 remediation: "Verify the element's role is represented consistently for assistive technology."
             )
         }
 
         return RuleHelper.pass(
             ruleID: id, name: title, description: description, node: node,
-            message: "No obvious role/trait conflict was found in the WDA hierarchy."
+            message: "No obvious role/trait conflict was found in the accessibility hierarchy."
         )
     }
 }
@@ -736,7 +736,7 @@ struct StateTraitConsistencyRule: AccessibilityRule {
     let description = "Exposed state information should agree with the control's current state."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type), node.visible else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible else { return nil }
         let traits = node.traits.lowercased()
 
         if !node.enabled && node.hittable {
@@ -748,7 +748,7 @@ struct StateTraitConsistencyRule: AccessibilityRule {
         }
 
         if traits.contains("selected") &&
-            !["XCUIElementTypeButton", "XCUIElementTypeSegmentedControl", "XCUIElementTypePickerWheel"].contains(node.type) {
+            ![AccessibilityRole.button, .segmentedControl, .picker].contains(node.role) {
             return RuleHelper.warning(
                 ruleID: id, name: title, description: description, node: node,
                 message: "Selected state is exposed on a control type where selection semantics are not obvious.",
@@ -756,7 +756,7 @@ struct StateTraitConsistencyRule: AccessibilityRule {
             )
         }
 
-        if node.isAdjustable && !node.hasValue {
+        if node.isAdjustable && !node.hasValue && node.platform == .ios {
             return RuleHelper.fail(
                 ruleID: id, name: title, description: description, node: node,
                 message: "Adjustable control has no current accessibility value.",
@@ -847,7 +847,7 @@ struct SegmentControlRule: AccessibilityRule {
     let description = "Segments that represent choices should expose an interactive role."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeSegmentedControl", node.visible else { return nil }
+        guard node.role == .segmentedControl, node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Segmented control detected; verify every selectable segment is operable and stateful.",
                                      remediation: "Test segment selection and selected-state announcements.")
@@ -860,7 +860,7 @@ struct TabAccessibilityRule: AccessibilityRule {
     let description = "Tab controls should expose an appropriate tab role and selected state."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeButton", node.visible else { return nil }
+        guard node.role == .button, node.visible else { return nil }
         let text = (node.label + " " + node.identifier).lowercased()
         guard text.contains("tab") else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
@@ -880,7 +880,7 @@ struct FormLabelRule: ScreenAccessibilityRule {
 
     func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
         RuleHelper.allNodes(rootNode).compactMap { node in
-            guard RuleHelper.textInputs.contains(node.type), node.visible else { return nil }
+            guard RuleHelper.textInputs.contains(node.role), node.visible else { return nil }
 
             if !RuleHelper.clean(node.label).isEmpty {
                 return RuleHelper.pass(
@@ -920,9 +920,9 @@ struct AutocompleteRule: AccessibilityRule {
     let description = "Form fields should expose appropriate autocomplete semantics where applicable."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.textInputs.contains(node.type), node.visible else { return nil }
+        guard RuleHelper.textInputs.contains(node.role), node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Autocomplete metadata is not exposed by the current WDA node model; verify it on the form field.",
+                                     message: "Autocomplete metadata is not exposed by the current hierarchy node model; verify it on the form field.",
                                      remediation: "Verify the field has the correct autocomplete/content-type semantics.")
     }
 }
@@ -933,7 +933,7 @@ struct ScreenTitleRule: AccessibilityRule {
     let description = "Screens should expose a meaningful title to assistive technology."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeNavigationBar", node.visible else { return nil }
+        guard node.role == .navigationBar, node.visible else { return nil }
         if RuleHelper.clean(node.label).isEmpty {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Navigation bar has no accessible title.",
@@ -1190,7 +1190,7 @@ struct LinkRoleRule: AccessibilityRule {
     let title = "Text functions as a link but is missing role link"
     let description = "Link-like text should expose link semantics."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeStaticText", node.visible, !node.label.isEmpty else { return nil }
+        guard node.role == .staticText, node.visible, !node.label.isEmpty else { return nil }
         let hint = (node.label + " " + node.identifier).lowercased()
         guard hint.contains("http") || hint.contains("www") || hint.contains("link") else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
@@ -1204,9 +1204,9 @@ struct ButtonRoleRule: AccessibilityRule {
     let title = "Text functions as a button but is missing role button"
     let description = "Actionable text should expose button semantics when appropriate."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeStaticText", node.visible else { return nil }
+        guard node.role == .staticText, node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "WDA cannot determine whether a static text element has a tap gesture. Verify actionable text manually or through interaction testing.",
+                                     message: "The hierarchy cannot determine whether a static text element has a tap gesture. Verify actionable text manually or through interaction testing.",
                                      remediation: "If the text performs an action, expose an appropriate button role.")
     }
 }
@@ -1216,7 +1216,7 @@ struct DecorativeImageRule: AccessibilityRule {
     let title = "Check if Image should be marked as decorative"
     let description = "Decorative images should not add redundant screen-reader content."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeImage", node.visible else { return nil }
+        guard node.role == .image, node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Only product/design intent can determine whether this image is decorative.",
                                      remediation: "If decorative, hide it from assistive technology; otherwise provide a useful description.")
@@ -1228,7 +1228,7 @@ struct ScreenReaderHiddenInteractiveRule: AccessibilityRule {
     let title = "Check if interactive control needs to be hidden for screen reader user"
     let description = "Interactive controls should not be unintentionally hidden from assistive technology."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type), node.visible else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible else { return nil }
         if node.hittable && !node.accessible {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Control is hittable but not exposed as accessible.",
@@ -1257,7 +1257,7 @@ struct FocusOrderRule: AccessibilityRule {
     let title = "Check if focus order is correct on the screen"
     let description = "Accessibility focus should follow a meaningful reading/interaction order."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeApplication" else { return nil }
+        guard node.role == .application else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Focus order requires observing actual accessibility focus traversal.",
                                      remediation: "Traverse the screen with VoiceOver/keyboard focus and compare the order with the visual reading order.")
@@ -1269,7 +1269,7 @@ struct OrientationRule: AccessibilityRule {
     let title = "Check if all the content is available when the device orientation is changed"
     let description = "Content should remain available in supported orientations."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeApplication" else { return nil }
+        guard node.role == .application else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Orientation behavior requires rotating the device and rescanning the hierarchy.",
                                      remediation: "Run portrait and landscape scans and compare available content and controls.")
@@ -1293,9 +1293,9 @@ struct LanguageRule: AccessibilityRule {
     let title = "Missing language attribute for content"
     let description = "Content language should be correctly identified where it differs from the app language."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeApplication" else { return nil }
+        guard node.role == .application else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Language metadata is not exposed by the current WDA XML model.",
+                                     message: "Language metadata is not exposed by the current hierarchy XML model.",
                                      remediation: "Verify app and per-content language attributes using VoiceOver or accessibility APIs.")
     }
 }
@@ -1321,7 +1321,7 @@ struct LoadingIndicatorContrastRule: AccessibilityRule {
         let text = (node.type + " " + node.identifier + " " + node.label).lowercased()
         guard text.contains("progress") || text.contains("loading") || text.contains("activity") else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Rendered colors are unavailable from WDA; verify loading indicator contrast visually.",
+                                     message: "Rendered colors are unavailable from the accessibility hierarchy; verify loading indicator contrast visually.",
                                      remediation: "Measure indicator/background contrast in the rendered screenshot.")
     }
 }
@@ -1331,7 +1331,7 @@ struct LiveRegionRule: AccessibilityRule {
     let title = "Live region is defined for dynamic content"
     let description = "Dynamic updates that require announcement should expose appropriate accessibility notifications."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeStaticText", node.visible else { return nil }
+        guard node.role == .staticText, node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Dynamic update behavior cannot be inferred from a static hierarchy snapshot.",
                                      remediation: "Trigger the update and verify the screen-reader announcement.")
@@ -1343,7 +1343,7 @@ struct TimeLimitedUIRule: AccessibilityRule {
     let title = "Time-limited UI has a visible user control"
     let description = "Time-limited content should provide a user-controlled extension or equivalent mechanism."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeApplication" else { return nil }
+        guard node.role == .application else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Timing behavior cannot be inferred from one hierarchy snapshot.",
                                      remediation: "Exercise timed UI and verify a visible mechanism to extend or disable the time limit.")
@@ -1355,7 +1355,7 @@ struct FocusIndicatorRule: AccessibilityRule {
     let title = "Focus indicator is clearly visible"
     let description = "Keyboard/accessibility focus should have a visible indicator with sufficient contrast."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeApplication" else { return nil }
+        guard node.role == .application else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Focus-indicator visibility requires actual keyboard/VoiceOver focus and screenshot comparison.",
                                      remediation: "Move focus across controls and verify a visible, sufficiently contrasting indicator.")
@@ -1367,9 +1367,9 @@ struct NonTextContrastRule: AccessibilityRule {
     let title = "Non-text element has sufficient contrast with its background"
     let description = "Meaningful non-text UI components should have sufficient contrast."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type) || node.type == "XCUIElementTypeImage", node.visible else { return nil }
+        guard RuleHelper.controls.contains(node.role) || node.role == .image, node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Rendered colors cannot be obtained from WDA; verify non-text contrast visually.",
+                                     message: "Rendered colors cannot be obtained from the accessibility hierarchy; verify non-text contrast visually.",
                                      remediation: "Measure the relevant component and background contrast in the screenshot.")
     }
 }
@@ -1379,9 +1379,9 @@ struct FormBorderContrastRule: AccessibilityRule {
     let title = "Border of form controls has sufficient contrast with its background"
     let description = "Visible form-control boundaries should remain distinguishable."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.textInputs.contains(node.type), node.visible else { return nil }
+        guard RuleHelper.textInputs.contains(node.role), node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Border color is not exposed by WDA.",
+                                     message: "Border color is not exposed by the accessibility hierarchy.",
                                      remediation: "Measure the rendered control border against its background.")
     }
 }
@@ -1417,7 +1417,7 @@ struct GestureKeyboardRule: AccessibilityRule {
     let title = "Gesture-only control is operable with keyboard"
     let description = "Important actions should have an operable non-gesture alternative."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeApplication" else { return nil }
+        guard node.role == .application else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Gesture-only operation cannot be inferred from the hierarchy.",
                                      remediation: "Exercise gesture interactions and verify keyboard/assistive-technology alternatives where applicable.")
@@ -1429,9 +1429,9 @@ struct TouchPhaseRule: AccessibilityRule {
     let title = "Action fires on touch up, allowing cancellation"
     let description = "Actions should generally allow cancellation before activation where applicable."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type), node.visible else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Touch-down/touch-up behavior cannot be inferred from WDA XML.",
+                                     message: "Touch-down/touch-up behavior cannot be inferred from the accessibility hierarchy XML.",
                                      remediation: "Interact with the control and verify activation can be cancelled before touch-up when applicable.")
     }
 }
@@ -1441,7 +1441,7 @@ struct ComplexGestureRule: AccessibilityRule {
     let title = "Complex gesture has no accessibility alternative"
     let description = "Complex gestures should have an equivalent accessible action."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeApplication" else { return nil }
+        guard node.role == .application else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Complex gestures cannot be identified from the static hierarchy.",
                                      remediation: "Exercise complex gestures and verify equivalent accessible actions/custom actions.")
@@ -1453,7 +1453,7 @@ struct ReadingOrderRule: AccessibilityRule {
     let title = "Reading order is accurate"
     let description = "Accessibility traversal should follow a meaningful reading order."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.type == "XCUIElementTypeApplication" else { return nil }
+        guard node.role == .application else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Reading order cannot be proven from a static hierarchy alone.",
                                      remediation: "Traverse the screen with VoiceOver and compare focus order with the intended visual reading order.")
@@ -1465,9 +1465,9 @@ struct KeyboardFocusRule: AccessibilityRule {
     let title = "Interactive control can receive keyboard focus"
     let description = "Keyboard users should be able to reach interactive controls where keyboard operation is supported."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type), node.visible else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Keyboard focusability is not exposed by the WDA node model.",
+                                     message: "Keyboard focusability is not exposed by the hierarchy node model.",
                                      remediation: "Run keyboard navigation and verify every required control can receive focus.")
     }
 }
@@ -1477,7 +1477,7 @@ struct StateUpdateRule: AccessibilityRule {
     let title = "State does not get updated on user interaction"
     let description = "Interactive state should update after user actions."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.type), node.visible else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "State transition requires an interaction probe; this snapshot only shows the current state.",
                                      remediation: "Interact with the control, capture a second hierarchy, and verify the state/value changes correctly.")
@@ -1492,7 +1492,7 @@ struct LinkColorRule: AccessibilityRule {
         let text = (node.label + " " + node.identifier).lowercased()
         guard text.contains("link") else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Rendered link color and non-color differentiation are not exposed by WDA.",
+                                     message: "Rendered link color and non-color differentiation are not exposed by the accessibility hierarchy.",
                                      remediation: "Verify links have sufficient contrast and a non-color cue where required.")
     }
 }
@@ -1502,7 +1502,7 @@ struct VisualLabelRule: AccessibilityRule {
     let title = "Visual label is specified for form control"
     let description = "Form controls should have a visible, persistent label."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.textInputs.contains(node.type), node.visible else { return nil }
+        guard RuleHelper.textInputs.contains(node.role), node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Visual-label presence cannot be determined from the accessibility hierarchy alone.",
                                      remediation: "Inspect the screenshot and verify a persistent visible label is associated with the field.")
@@ -1516,7 +1516,7 @@ struct LanguageChangeRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard RuleHelper.isText(node), node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Per-element language metadata is not exposed by WDA XML.",
+                                     message: "Per-element language metadata is not exposed by the accessibility hierarchy XML.",
                                      remediation: "Verify language changes are identified for screen-reader pronunciation.")
     }
 }

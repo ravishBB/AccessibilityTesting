@@ -4,14 +4,19 @@
 //  Created by Ravish Kumar on 22/09/26.
 
 import Foundation
+import CoreGraphics
 
 final class AppiumClient {
 
     private let baseURL: URL
     private(set) var sessionID: String?
-    private let xcodeOrgId = "EJ5R49N3EY"
-    private let xcodeSigningId = "Apple Development"
     private let showXcodeLog = true
+
+    /// Platform of the active session. Set by `createSession`.
+    private(set) var platform: MobilePlatform = .ios
+
+    /// Pixels per dp on Android (1 on iOS, where WDA already reports points).
+    private(set) var displayScale: CGFloat = 1
 
     init(baseURL: URL) {
         self.baseURL = baseURL
@@ -42,35 +47,7 @@ final class AppiumClient {
         request.timeoutInterval =
             120
 
-        let body: [String: Any] = [
-
-            "capabilities": [
-
-                "alwaysMatch": [
-                    "platformName": "iOS",
-                    "appium:automationName":
-                        "XCUITest",
-                    "appium:deviceName":
-                        configuration.deviceName,
-                    "appium:udid":
-                        configuration.udid,
-                    "appium:bundleId":
-                        configuration.bundleID,
-                    "appium:noReset":
-                        true,
-
-                    "appium:newCommandTimeout":
-                        300,
-                    "appium:xcodeOrgId":
-                        xcodeOrgId,
-
-                    "appium:xcodeSigningId":
-                        xcodeSigningId,
-                    "appium:showXcodeLog":
-                        showXcodeLog
-                ]
-            ]
-        ]
+        let body = sessionBody(for: configuration)
 
         request.httpBody =
             try JSONSerialization.data(
@@ -131,6 +108,11 @@ final class AppiumClient {
                     self.sessionID =
                         sessionID
 
+                    configureSession(
+                        capabilities: value["capabilities"] as? [String: Any],
+                        configuration: configuration
+                    )
+
                     return sessionID
                 }
 
@@ -140,6 +122,11 @@ final class AppiumClient {
 
                     self.sessionID =
                         sessionID
+
+                    configureSession(
+                        capabilities: json["capabilities"] as? [String: Any],
+                        configuration: configuration
+                    )
 
                     return sessionID
                 }
@@ -293,6 +280,59 @@ final class AppiumClient {
         return source
     }
 
+    // MARK: - Device Orientation
+
+    func getOrientation() async throws -> String {
+        guard let sessionID else {
+            throw AppiumError.noActiveSession
+        }
+
+        let url = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("orientation")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+
+        guard
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let value = json["value"] as? String
+        else {
+            throw AppiumError.invalidResponse
+        }
+
+        return value.uppercased()
+    }
+
+    func setOrientation(_ orientation: String) async throws {
+        guard let sessionID else {
+            throw AppiumError.noActiveSession
+        }
+
+        let normalized = orientation.uppercased()
+        guard normalized == "PORTRAIT" || normalized == "LANDSCAPE" else {
+            throw AppiumError.appiumError(statusCode: 400, message: "Unsupported orientation: \(orientation)")
+        }
+
+        let url = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("orientation")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["orientation": normalized])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+    }
+
     // MARK: - Delete Session
 
     func deleteSession() async throws {
@@ -417,8 +457,8 @@ final class AppiumClient {
                         [
                             "type": "pointerMove",
                             "duration": 0,
-                            "x": Int(point.x),
-                            "y": Int(point.y)
+                            "x": Int(point.x * displayScale),
+                            "y": Int(point.y * displayScale)
                         ],
                         [
                             "type": "pointerDown",
@@ -487,6 +527,10 @@ final class AppiumClient {
     }
     
     func scrollUp() async throws {
+        if platform == .android {
+            try await androidScroll(direction: "up", percent: 0.5)
+            return
+        }
         guard let sessionID = sessionID else {
             throw AppiumError.noActiveSession
         }
@@ -530,6 +574,10 @@ final class AppiumClient {
     
     // MARK: - Scroll Down
     func scrollDown() async throws {
+        if platform == .android {
+            try await androidScroll(direction: "down", percent: 0.85)
+            return
+        }
 
         guard let sessionID = sessionID else {
             throw AppiumError.noActiveSession
@@ -677,6 +725,169 @@ final class AppiumClient {
             clickResponse,
             data: clickData
         )
+    }
+
+    // MARK: - Platform support
+
+    /// Source parser matching the active session's platform.
+    func makeParser() -> any AccessibilitySourceParser {
+        switch platform {
+        case .ios:
+            return WDAElementParser()
+        case .android:
+            return AndroidElementParser(displayScale: displayScale)
+        }
+    }
+
+    private func sessionBody(
+        for configuration: ScannerConfiguration
+    ) -> [String: Any] {
+
+        var capabilities: [String: Any]
+
+        switch configuration.platform {
+
+        case .ios:
+            capabilities = [
+                "platformName": "iOS",
+                "appium:automationName": "XCUITest",
+                "appium:deviceName": configuration.deviceName,
+                "appium:udid": configuration.udid,
+                "appium:bundleId": configuration.bundleID,
+                "appium:noReset": true,
+                "appium:newCommandTimeout": 300,
+                "appium:xcodeOrgId": configuration.xcodeOrgID,
+                "appium:xcodeSigningId": configuration.xcodeSigningID,
+                "appium:showXcodeLog": showXcodeLog
+            ]
+
+        case .android:
+            capabilities = [
+                "platformName": "Android",
+                "appium:automationName": "UiAutomator2",
+                "appium:deviceName": configuration.deviceName,
+                "appium:udid": configuration.udid,
+                "appium:appPackage": configuration.bundleID,
+                "appium:appWaitActivity": "*",
+                "appium:noReset": true,
+                "appium:newCommandTimeout": 300
+            ]
+
+            if let activity = configuration.appActivity, !activity.isEmpty {
+                capabilities["appium:appActivity"] = activity
+            }
+        }
+
+        return [
+            "capabilities": [
+                "alwaysMatch": capabilities
+            ]
+        ]
+    }
+
+    /// Records the platform and, for Android, the pixel→dp scale.
+    private func configureSession(
+        capabilities: [String: Any]?,
+        configuration: ScannerConfiguration
+    ) {
+
+        platform = configuration.platform
+        displayScale = 1
+
+        guard platform == .android else { return }
+
+        func number(_ any: Any?) -> Double? {
+            if let value = any as? Double { return value }
+            if let value = any as? Int { return Double(value) }
+            if let value = any as? String { return Double(value) }
+            return nil
+        }
+
+        if let ratio = number(capabilities?["pixelRatio"]), ratio > 0 {
+            displayScale = CGFloat(ratio)
+        } else if let dpi = number(capabilities?["deviceScreenDensity"]), dpi > 0 {
+            displayScale = CGFloat(dpi / 160.0)
+        } else if let dpi = configuration.displayDensity, dpi > 0 {
+            displayScale = CGFloat(Double(dpi) / 160.0)
+        } else {
+            print("Warning: Android display density unavailable; frames stay in pixels.")
+        }
+
+        print("Android display scale: \(displayScale)")
+    }
+
+    private func windowRectPixels() async throws -> CGRect {
+
+        guard let sessionID else {
+            throw AppiumError.noActiveSession
+        }
+
+        let url = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("window")
+            .appendingPathComponent("rect")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        try validateResponse(response, data: data)
+
+        guard
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let value = json["value"] as? [String: Any],
+            let width = value["width"] as? Double ?? (value["width"] as? Int).map(Double.init),
+            let height = value["height"] as? Double ?? (value["height"] as? Int).map(Double.init)
+        else {
+            throw AppiumError.invalidResponse
+        }
+
+        return CGRect(x: 0, y: 0, width: width, height: height)
+    }
+
+    /// Android scrolling via `mobile: scrollGesture` (UiAutomator2).
+    private func androidScroll(
+        direction: String,
+        percent: Double
+    ) async throws {
+
+        guard let sessionID else {
+            throw AppiumError.noActiveSession
+        }
+
+        let rect = try await windowRectPixels()
+
+        let url = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("execute")
+            .appendingPathComponent("sync")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let payload: [String: Any] = [
+            "script": "mobile: scrollGesture",
+            "args": [
+                [
+                    "left": Int(rect.width * 0.1),
+                    "top": Int(rect.height * 0.2),
+                    "width": Int(rect.width * 0.8),
+                    "height": Int(rect.height * 0.6),
+                    "direction": direction,
+                    "percent": percent
+                ]
+            ]
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        try validateResponse(response, data: data)
     }
 
     // MARK: - Extract Error Message

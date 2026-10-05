@@ -23,6 +23,7 @@ struct AccessibilityRuleEvaluation: Identifiable, Codable {
     let remediation: String
 
     let elementType: String
+    let elementRole: AccessibilityRole
     let elementLabel: String
     let identifier: String
     let value: String?
@@ -55,6 +56,7 @@ struct AccessibilityRuleEvaluation: Identifiable, Codable {
         self.remediation = remediation
 
         self.elementType = node.type
+        self.elementRole = node.role
         self.elementLabel = node.label
         self.identifier = node.identifier
         self.value = node.value
@@ -63,6 +65,11 @@ struct AccessibilityRuleEvaluation: Identifiable, Codable {
         self.frameY = node.frame.origin.y
         self.frameWidth = node.frame.width
         self.frameHeight = node.frame.height
+    }
+
+    /// Platform the evaluated element was captured on.
+    var platform: MobilePlatform {
+        MobilePlatform.infer(fromElementType: elementType)
     }
 
     var frame: CGRect {

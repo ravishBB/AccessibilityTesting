@@ -5,6 +5,7 @@
 //  Created by Ravish Kumar on 24/09/26.
 
 
+
 import Foundation
 import SwiftUI
 
@@ -26,25 +27,6 @@ struct AccessibilityHotspot: Identifiable, Codable, Hashable {
         if warnings > 0 { return .warning }
         if validations > 0 { return .validate }
         return .pass
-    }
-}
-
-struct AccessibilityFixOpportunity: Identifiable, Codable, Hashable {
-    let id: String
-    let ruleID: String
-    let ruleName: String
-    let severity: AccessibilityFinding.Severity
-    let status: RuleResultStatus
-    let occurrences: Int
-    let affectedScreens: Int
-    let affectedJourneys: Int
-    let blockedJourneys: Int
-    let impactScore: Int
-    let screenNames: [String]
-    let remediation: String
-
-    var statusTitle: String {
-        status.displayName
     }
 }
 
@@ -145,19 +127,34 @@ struct AccessibilityImpactCenter: Codable, Hashable {
                     $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
                 }
 
+            let elements = Array(Set(evaluations.map { evaluation in
+                let label = evaluation.elementLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+                let identifier = evaluation.identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !label.isEmpty { return label }
+                if !identifier.isEmpty { return identifier }
+                return evaluation.elementType
+            }).sorted().prefix(5))
+
+            let guidance = AccessibilityFixGuidance.forRule(ruleID: ruleID, first: first)
+
             return AccessibilityFixOpportunity(
                 id: ruleID,
                 ruleID: ruleID,
                 ruleName: first.ruleName,
                 severity: first.severity,
-                status: first.status,
                 occurrences: evaluations.count,
                 affectedScreens: screenSignatures.count,
+                screenNames: names,
+                affectedElements: elements,
+                remediation: guidance.remediation,
+                confidence: guidance.confidence,
+                swiftUIExample: guidance.swiftUIExample,
+                uikitExample: guidance.uikitExample,
+                status: first.status,
                 affectedJourneys: affectedJourneys.count,
                 blockedJourneys: blockedJourneys,
                 impactScore: impact,
-                screenNames: names,
-                remediation: first.remediation
+                platform: first.platform
             )
         }
         .sorted {

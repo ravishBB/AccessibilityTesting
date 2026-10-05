@@ -17,6 +17,7 @@ struct NavigationAction:
     let identifier: String
     let type: String
     let frame: CGRect
+    let platform: MobilePlatform
 
     init(node: AccessibilityNode) {
 
@@ -24,6 +25,7 @@ struct NavigationAction:
         self.identifier = node.identifier
         self.type = node.type
         self.frame = node.frame
+        self.platform = node.platform
 
         self.id =
             node.identifier +
@@ -77,8 +79,12 @@ struct NavigationAction:
             )
             .isEmpty {
 
-            return
-                "//*[@name=\(escapedIdentifier)]"
+            switch platform {
+            case .ios:
+                return "//*[@name=\(escapedIdentifier)]"
+            case .android:
+                return "//*[@resource-id=\(escapedIdentifier)]"
+            }
         }
 
         let escapedLabel =
@@ -90,8 +96,12 @@ struct NavigationAction:
             )
             .isEmpty {
 
-            return
-                "//*[@label=\(escapedLabel)]"
+            switch platform {
+            case .ios:
+                return "//*[@label=\(escapedLabel)]"
+            case .android:
+                return "//*[@content-desc=\(escapedLabel) or @text=\(escapedLabel)]"
+            }
         }
 
         return nil

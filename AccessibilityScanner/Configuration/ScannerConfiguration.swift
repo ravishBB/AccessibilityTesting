@@ -10,9 +10,23 @@ import Foundation
 struct ScannerConfiguration {
 
     let appiumURL: URL
+
+    /// iOS bundle identifier or Android application package name.
     let bundleID: String
     let deviceName: String
     let udid: String
+
+    let platform: MobilePlatform
+
+    /// Android launcher activity. Optional: Appium resolves it when omitted.
+    let appActivity: String?
+
+    /// Android display density in dpi. Fallback when Appium does not report it.
+    let displayDensity: Int?
+
+    /// iOS physical-device signing for WebDriverAgent.
+    let xcodeOrgID: String
+    let xcodeSigningID: String
 
     init(
         appiumURL: URL = URL(
@@ -20,11 +34,21 @@ struct ScannerConfiguration {
         )!,
         bundleID: String,
         deviceName: String,
-        udid: String
+        udid: String,
+        platform: MobilePlatform = .ios,
+        appActivity: String? = nil,
+        displayDensity: Int? = nil,
+        xcodeOrgID: String = "EJ5R49N3EY",
+        xcodeSigningID: String = "Apple Development"
     ) {
         self.appiumURL = appiumURL
         self.bundleID = bundleID
         self.deviceName = deviceName
         self.udid = udid
+        self.platform = platform
+        self.appActivity = appActivity
+        self.displayDensity = displayDensity
+        self.xcodeOrgID = xcodeOrgID
+        self.xcodeSigningID = xcodeSigningID
     }
 }

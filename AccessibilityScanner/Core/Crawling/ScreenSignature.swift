@@ -42,7 +42,7 @@ struct ScreenSignature: Hashable {
             return
         }
 
-        if node.type == "XCUIElementTypeStatusBar" {
+        if node.role == .statusBar {
             return
         }
 

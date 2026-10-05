@@ -224,13 +224,13 @@ final class AccessibilityScanner {
 
         if node.visible {
 
-            let textTypes: Set<String> = [
-                "XCUIElementTypeStaticText",
-                "XCUIElementTypeNavigationBar"
+            let textRoles: Set<AccessibilityRole> = [
+                .staticText,
+                .navigationBar
             ]
 
-            if textTypes.contains(
-                node.type
+            if textRoles.contains(
+                node.role
             ) {
 
                 let label =

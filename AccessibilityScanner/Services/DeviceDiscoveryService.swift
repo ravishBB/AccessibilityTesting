@@ -23,6 +23,11 @@ final class DeviceDiscoveryService {
             contentsOf: try discoverPhysicalDevices()
         )
 
+        // Android emulators and devices (empty when adb is not installed).
+        devices.append(
+            contentsOf: AndroidDeviceService().discoverDevices()
+        )
+
         return devices
     }
 
