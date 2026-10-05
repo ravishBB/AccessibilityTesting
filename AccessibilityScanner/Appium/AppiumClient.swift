@@ -727,6 +727,51 @@ final class AppiumClient {
         )
     }
 
+    // MARK: - Launch / Activate App
+
+    /// Brings the app under test to the foreground, launching it if needed.
+    /// Works on both platforms (`mobile: activateApp`):
+    ///  - iOS (XCUITest) takes `bundleId`
+    ///  - Android (UiAutomator2) takes `appId`
+    /// Failure is non-fatal: the session capabilities already request a launch.
+    func activateApp(bundleID: String) async {
+
+        guard let sessionID else { return }
+
+        let url = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("execute")
+            .appendingPathComponent("sync")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+
+        let argument: [String: Any]
+
+        switch platform {
+        case .ios:
+            argument = ["bundleId": bundleID]
+        case .android:
+            argument = ["appId": bundleID]
+        }
+
+        let payload: [String: Any] = [
+            "script": "mobile: activateApp",
+            "args": [argument]
+        ]
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try validateResponse(response, data: data)
+        } catch {
+            print("Warning: could not activate app \(bundleID): \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Platform support
 
     /// Source parser matching the active session's platform.
@@ -770,7 +815,13 @@ final class AppiumClient {
                 "appium:appPackage": configuration.bundleID,
                 "appium:appWaitActivity": "*",
                 "appium:noReset": true,
-                "appium:newCommandTimeout": 300
+                "appium:newCommandTimeout": 300,
+                // Launch the app as soon as the session starts, even when it
+                // is already running in the background (noReset alone can
+                // leave it untouched).
+                "appium:autoLaunch": true,
+                "appium:forceAppLaunch": true,
+                "appium:shouldTerminateApp": true
             ]
 
             if let activity = configuration.appActivity, !activity.isEmpty {

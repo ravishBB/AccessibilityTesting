@@ -304,7 +304,13 @@ final class ScannerViewModel: ObservableObject {
             _ = try await appium.createSession(configuration: configuration)
             try Task.checkCancellation()
 
-            try await Task.sleep(for: .milliseconds(500))
+            // Make sure the app under test is in the foreground on both
+            // iOS and Android before reading the hierarchy.
+            status = "Launching application..."
+            await appium.activateApp(bundleID: application.bundleID)
+            try Task.checkCancellation()
+
+            try await Task.sleep(for: .milliseconds(1000))
             status = "Reading initial accessibility hierarchy..."
 
             let initialSnapshot = try await captureStableSnapshot(
