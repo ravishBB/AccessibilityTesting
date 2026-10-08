@@ -173,9 +173,19 @@ struct AccessibilityScanResult: Identifiable, Codable {
                 )
             }
             .sorted {
-                $0.ruleName.localizedCaseInsensitiveCompare(
+                if $0.failures != $1.failures { return $0.failures > $1.failures }
+                if $0.warnings != $1.warnings { return $0.warnings > $1.warnings }
+                if $0.validations != $1.validations { return $0.validations > $1.validations }
+                return $0.ruleName.localizedCaseInsensitiveCompare(
                     $1.ruleName
                 ) == .orderedAscending
             }
+    }
+
+    /// Findings grouped by rule with stable fingerprints. Computing this walks
+    /// every evaluation, so callers that need it repeatedly should keep the
+    /// result instead of re-reading this property.
+    var findingGrouping: FindingGrouping {
+        FindingGrouping(report: self)
     }
 }

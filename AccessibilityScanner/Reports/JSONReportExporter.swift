@@ -19,8 +19,16 @@ struct JSONReportExporter {
         }
     }
 
+    struct Options {
+        /// Embed downscaled screenshots as base64 JPEG. Turn off for lightweight CI artifacts.
+        var includeScreenshots = true
+        var maxScreenshotPixelSize = 900
+    }
+
+    var options = Options()
+
     func makeJSONData(from report: AccessibilityScanResult) throws -> Data {
-        let payload = JSONReportPayload(report: report)
+        let payload = JSONReportPayload(report: report, options: options)
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [
@@ -86,19 +94,94 @@ struct JSONReportExporter {
 private struct JSONReportPayload: Codable {
 
     let schemaVersion: String
+    let reportID: UUID
+    let generator: JSONGenerator
     let scan: JSONScanMetadata
     let summary: JSONSummary
+    let findings: [JSONGroupedFinding]
     let screens: [JSONScreen]
     let rules: [JSONRuleSummary]
     let intelligence: AccessibilityIntelligence?
 
-    init(report: AccessibilityScanResult) {
-        self.schemaVersion = "1.3"
+    init(report: AccessibilityScanResult, options: JSONReportExporter.Options) {
+        let grouping = FindingGrouping(report: report)
+
+        // 1.4 is additive over 1.3: generator, reportID, findings, per-evaluation
+        // fingerprint/wcag/impact, rule metadata and embedded screenshots.
+        self.schemaVersion = "1.4"
+        self.reportID = report.id
+        self.generator = JSONGenerator()
         self.scan = JSONScanMetadata(report: report)
-        self.summary = JSONSummary(report: report)
-        self.screens = report.screens.map(JSONScreen.init)
+        self.summary = JSONSummary(report: report, grouping: grouping)
+        self.findings = grouping.groups.map(JSONGroupedFinding.init)
+        self.screens = report.screens.map {
+            JSONScreen(screen: $0, grouping: grouping, options: options)
+        }
         self.rules = report.ruleSummaries.map(JSONRuleSummary.init)
         self.intelligence = report.intelligence
+    }
+}
+
+private struct JSONGenerator: Codable {
+    let name: String
+    let version: String
+    let build: String
+    let ruleSetVersion: String
+    let standard: String
+    let catalogRuleCount: Int
+
+    init() {
+        self.name = ScannerBuildInfo.productName
+        self.version = ScannerBuildInfo.version
+        self.build = ScannerBuildInfo.build
+        self.ruleSetVersion = ScannerBuildInfo.ruleSetVersion
+        self.standard = ScannerBuildInfo.wcagVersion
+        self.catalogRuleCount = AccessibilityRuleCatalog.ruleCount
+    }
+}
+
+private struct JSONWCAG: Codable {
+    let criterion: String
+    let title: String?
+    let level: String?
+
+    init?(metadata: AccessibilityRuleMetadata) {
+        guard let criterion = metadata.wcagCriterion else { return nil }
+        self.criterion = criterion
+        self.title = metadata.wcagTitle
+        self.level = metadata.wcagLevel
+    }
+}
+
+private struct JSONGroupedFinding: Codable {
+    let id: String
+    let ruleID: String
+    let ruleName: String
+    let status: String
+    let severity: String
+    let impact: String
+    let wcag: JSONWCAG?
+    let affectedUsers: String
+    let howToTest: String
+    let remediation: String
+    let elementCount: Int
+    let screenCount: Int
+    let fingerprints: [String]
+
+    init(group: GroupedFinding) {
+        self.id = group.id
+        self.ruleID = group.ruleID
+        self.ruleName = group.ruleName
+        self.status = group.status.rawValue
+        self.severity = group.severity.rawValue
+        self.impact = group.metadata.impact.rawValue
+        self.wcag = JSONWCAG(metadata: group.metadata)
+        self.affectedUsers = group.metadata.affectedUsers
+        self.howToTest = group.metadata.howToTest
+        self.remediation = group.remediation
+        self.elementCount = group.count
+        self.screenCount = group.screenCount
+        self.fingerprints = group.occurrences.map(\.fingerprint)
     }
 }
 
@@ -138,8 +221,15 @@ private struct JSONSummary: Codable {
     let totalPasses: Int
     let totalIssues: Int
     let overallStatus: String
+    /// Unique affected elements (duplicates merged), as shown in the report.
+    let uniqueFailures: Int
+    let uniqueWarnings: Int
+    let uniqueManualReview: Int
 
-    init(report: AccessibilityScanResult) {
+    init(report: AccessibilityScanResult, grouping: FindingGrouping) {
+        self.uniqueFailures = grouping.failureCount
+        self.uniqueWarnings = grouping.warningCount
+        self.uniqueManualReview = grouping.manualReviewCount
         self.totalElementsTested = report.totalElementsTested
         self.totalEvaluations = report.allEvaluations.count
         self.totalFailures = report.totalFailures
@@ -167,7 +257,11 @@ private struct JSONScreen: Codable {
     let evaluations: [JSONEvaluation]
     let transitions: [JSONTransition]
 
-    init(screen: ScreenScanResult) {
+    init(
+        screen: ScreenScanResult,
+        grouping: FindingGrouping,
+        options: JSONReportExporter.Options
+    ) {
         self.id = screen.id
         self.name = screen.name
         self.signature = screen.signature
@@ -177,10 +271,19 @@ private struct JSONScreen: Codable {
         self.validations = screen.validations
         self.passes = screen.passes
         self.affectedElements = screen.affectedElements
-        self.screenshot = screen.screenshot.map(JSONScreenshot.init)
+        self.screenshot = screen.screenshot.map {
+            JSONScreenshot(screenshot: $0, options: options)
+        }
         self.annotations = screen.annotations.map(JSONAnnotation.init)
-        self.viewportScreenshots = screen.viewportScreenshots.map(JSONViewportScreenshot.init)
-        self.evaluations = screen.evaluations.map(JSONEvaluation.init)
+        self.viewportScreenshots = screen.viewportScreenshots.map {
+            JSONViewportScreenshot(viewport: $0, options: options)
+        }
+        self.evaluations = screen.evaluations.map {
+            JSONEvaluation(
+                evaluation: $0,
+                fingerprint: grouping.fingerprintByEvaluationID[$0.id]
+            )
+        }
         self.transitions = screen.transitions.map(JSONTransition.init)
     }
 }
@@ -192,10 +295,10 @@ private struct JSONViewportScreenshot: Codable {
     let screenshot: JSONScreenshot
     let annotations: [JSONAnnotation]
 
-    init(viewport: ScreenshotViewport) {
+    init(viewport: ScreenshotViewport, options: JSONReportExporter.Options) {
         self.id = viewport.id
         self.index = viewport.index
-        self.screenshot = JSONScreenshot(screenshot: viewport.screenshot)
+        self.screenshot = JSONScreenshot(screenshot: viewport.screenshot, options: options)
         self.annotations = viewport.annotations.map(JSONAnnotation.init)
     }
 }
@@ -234,8 +337,29 @@ private struct JSONScreenshot: Codable {
     let hierarchyHeight: Double
     let hasOriginalImage: Bool
     let hasAnnotatedImage: Bool
+    /// Present when screenshots are embedded. JPEG, longest side capped by the export options.
+    let imageMimeType: String?
+    let imageBase64: String?
+    let annotatedImageBase64: String?
 
-    init(screenshot: ScanScreenshot) {
+    init(screenshot: ScanScreenshot, options: JSONReportExporter.Options) {
+        if options.includeScreenshots {
+            let original = ReportImageEncoder.encode(
+                screenshot.imageData,
+                maxPixelSize: options.maxScreenshotPixelSize
+            )
+            let annotated = screenshot.annotatedImageData.flatMap {
+                ReportImageEncoder.encode($0, maxPixelSize: options.maxScreenshotPixelSize)
+            }
+            self.imageMimeType = original?.mimeType ?? annotated?.mimeType
+            self.imageBase64 = original?.base64
+            self.annotatedImageBase64 = annotated?.base64
+        } else {
+            self.imageMimeType = nil
+            self.imageBase64 = nil
+            self.annotatedImageBase64 = nil
+        }
+
         self.width = screenshot.width
         self.height = screenshot.height
         self.hierarchyWidth = screenshot.hierarchyWidth
@@ -286,8 +410,16 @@ private struct JSONEvaluation: Codable {
     let message: String
     let remediation: String
     let element: JSONElement
+    /// Stable ID for non-pass results; nil for passes.
+    let fingerprint: String?
+    let impact: String
+    let wcag: JSONWCAG?
 
-    init(evaluation: AccessibilityRuleEvaluation) {
+    init(evaluation: AccessibilityRuleEvaluation, fingerprint: String?) {
+        let metadata = AccessibilityRuleCatalog.metadata(for: evaluation.ruleID)
+        self.fingerprint = fingerprint
+        self.impact = metadata.impact.rawValue
+        self.wcag = JSONWCAG(metadata: metadata)
         self.id = evaluation.id
         self.ruleID = evaluation.ruleID
         self.ruleName = evaluation.ruleName
@@ -337,8 +469,17 @@ private struct JSONRuleSummary: Codable {
     let fail: Int
     let warning: Int
     let validate: Int
+    let impact: String
+    let wcag: JSONWCAG?
+    let affectedUsers: String
+    let howToTest: String
 
     init(summary: RuleSummary) {
+        let metadata = AccessibilityRuleCatalog.metadata(for: summary.ruleID)
+        self.impact = metadata.impact.rawValue
+        self.wcag = JSONWCAG(metadata: metadata)
+        self.affectedUsers = metadata.affectedUsers
+        self.howToTest = metadata.howToTest
         self.ruleID = summary.ruleID
         self.ruleName = summary.ruleName
         self.severity = summary.severity.rawValue

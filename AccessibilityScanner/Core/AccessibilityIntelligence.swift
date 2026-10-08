@@ -1005,40 +1005,22 @@ struct AccessibilityIntelligenceEngine {
         let level: String
     }
 
-    private static let wcagMappings: [String: WCGMapping] = [
-        "accessible-name": .init(criterion: "4.1.2", title: "Name, Role, Value", level: "A"),
-        "button-name-descriptive": .init(criterion: "4.1.2", title: "Name, Role, Value", level: "A"),
-        "image-button-name": .init(criterion: "4.1.2", title: "Name, Role, Value", level: "A"),
-        "interactive-name-descriptive": .init(criterion: "4.1.2", title: "Name, Role, Value", level: "A"),
-        "image-accessible-label": .init(criterion: "1.1.1", title: "Non-text Content", level: "A"),
-        "image-name-descriptive": .init(criterion: "1.1.1", title: "Non-text Content", level: "A"),
-        "contrast-standard-text-4-5": .init(criterion: "1.4.3", title: "Contrast (Minimum)", level: "AA"),
-        "contrast-large-text-3": .init(criterion: "1.4.3", title: "Contrast (Minimum)", level: "AA"),
-        "contrast-standard-text-7": .init(criterion: "1.4.6", title: "Contrast (Enhanced)", level: "AAA"),
-        "contrast-large-text-4-5": .init(criterion: "1.4.6", title: "Contrast (Enhanced)", level: "AAA"),
-        "contrast-text-over-image": .init(criterion: "1.4.3", title: "Contrast (Minimum)", level: "AA"),
-        "contrast-opacity": .init(criterion: "1.4.3", title: "Contrast (Minimum)", level: "AA"),
-        "non-text-contrast": .init(criterion: "1.4.11", title: "Non-text Contrast", level: "AA"),
-        "form-border-contrast": .init(criterion: "1.4.11", title: "Non-text Contrast", level: "AA"),
-        "text-resize": .init(criterion: "1.4.4", title: "Resize Text", level: "AA"),
-        "text-clipping": .init(criterion: "1.4.4", title: "Resize Text", level: "AA"),
-        "target-size-minimum-24": .init(criterion: "2.5.8", title: "Target Size (Minimum)", level: "AA"),
-        "touch-target-size-24": .init(criterion: "2.5.8", title: "Target Size (Minimum)", level: "AA"),
-        "focus-order": .init(criterion: "2.4.3", title: "Focus Order", level: "A"),
-        "screen-title": .init(criterion: "2.4.2", title: "Page Titled / Screen Title", level: "A"),
-        "text-link-role": .init(criterion: "4.1.2", title: "Name, Role, Value", level: "A"),
-        "text-button-role": .init(criterion: "4.1.2", title: "Name, Role, Value", level: "A"),
-        "role-trait-consistency": .init(criterion: "4.1.2", title: "Name, Role, Value", level: "A"),
-        "state-trait-consistency": .init(criterion: "4.1.2", title: "Name, Role, Value", level: "A"),
-        "adjustable-accessibility-value": .init(criterion: "4.1.2", title: "Name, Role, Value", level: "A"),
-        "motion-alternative": .init(criterion: "2.5.4", title: "Motion Actuation", level: "A"),
-        "form-autocomplete": .init(criterion: "1.3.5", title: "Identify Input Purpose", level: "AA"),
-        "language": .init(criterion: "3.1.1", title: "Language of Page / App", level: "A"),
-        "modal-accessibility": .init(criterion: "2.1.2", title: "No Keyboard Trap", level: "A"),
-        "live-region": .init(criterion: "4.1.3", title: "Status Messages", level: "AA"),
-        "loading-indicator-contrast": .init(criterion: "1.4.11", title: "Non-text Contrast", level: "AA"),
-        "time-limited-ui": .init(criterion: "2.2.1", title: "Timing Adjustable", level: "A")
-    ]
+    /// Derived from `AccessibilityRuleCatalog`, the single source of truth for
+    /// WCAG mappings, so the report, JSON export and this analysis never drift.
+    private static let wcagMappings: [String: WCGMapping] = {
+        var result: [String: WCGMapping] = [:]
+        for metadata in AccessibilityRuleCatalog.allMetadata {
+            guard let criterion = metadata.wcagCriterion,
+                  let title = metadata.wcagTitle,
+                  let level = metadata.wcagLevel else { continue }
+            result[metadata.ruleID] = WCGMapping(
+                criterion: criterion,
+                title: title,
+                level: level
+            )
+        }
+        return result
+    }()
 
     private static func analyzeWCAG(
         _ report: AccessibilityScanResult

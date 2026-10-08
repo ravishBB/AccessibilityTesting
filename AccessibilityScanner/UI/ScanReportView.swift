@@ -13,6 +13,14 @@ struct ScanReportView: View {
 
     let report: AccessibilityScanResult
 
+    /// Findings grouped by rule, computed once per report rather than on every body pass.
+    private let grouping: FindingGrouping
+
+    init(report: AccessibilityScanResult) {
+        self.report = report
+        self.grouping = FindingGrouping(report: report)
+    }
+
     @State private var selectedAnnotationID: UUID?
     @State private var selectedViewportID: UUID?
     @State private var selectedScreenID: UUID?
@@ -149,7 +157,7 @@ struct ScanReportView: View {
                 Spacer()
 
                 HStack(spacing: 12) {
-                    ShareJSONButton(report: report)
+                    ShareReportMenu(report: report)
                     statusBadge(report.overallStatus)
                 }
             }
@@ -189,28 +197,27 @@ struct ScanReportView: View {
             HStack(alignment: .firstTextBaseline) {
                 sectionTitle("Scan Summary")
                 Spacer()
-                statusBadge(report.overallStatus)
             }
 
             HStack(spacing: 12) {
                 headlineMetric(
-                    title: "Open findings",
-                    value: report.totalFailures + report.totalWarnings + report.totalValidations,
-                    subtitle: "failures, warnings & review",
+                    title: "Failures & warnings",
+                    value: grouping.issueCount,
+                    subtitle: "\(grouping.failureCount) failures · \(grouping.warningCount) warnings",
                     symbol: "exclamationmark.triangle.fill",
-                    prominent: true
+                    prominent: grouping.issueCount > 0
+                )
+                headlineMetric(
+                    title: "Manual review",
+                    value: grouping.manualReviewCount,
+                    subtitle: "checks a tester must verify",
+                    symbol: "checklist"
                 )
                 headlineMetric(
                     title: "Passed checks",
                     value: report.totalPasses,
                     subtitle: "successful checks",
                     symbol: "checkmark.circle.fill"
-                )
-                headlineMetric(
-                    title: "Manual review",
-                    value: report.totalValidations,
-                    subtitle: "checks needing tester verification",
-                    symbol: "checklist"
                 )
                 headlineMetric(
                     title: "Screens",
@@ -221,11 +228,11 @@ struct ScanReportView: View {
             }
 
             Text(
-                report.totalFailures > 0
+                grouping.failureCount > 0
                     ? "Fix the automated failures first, then complete the manual checks listed in Tester Action Center."
-                    : report.totalWarnings > 0
+                    : grouping.warningCount > 0
                         ? "Review the warnings and complete the manual checks before sign-off."
-                        : report.totalValidations > 0
+                        : grouping.manualReviewCount > 0
                             ? "Automated checks did not prove every requirement. Complete the manual checks before sign-off."
                             : "No accessibility findings were recorded in the scanned screens."
             )
@@ -235,145 +242,127 @@ struct ScanReportView: View {
         }
     }
 
+    /// Manual-review items only. Failures and warnings live in "Open Findings".
     private var testerActionCenterSection: some View {
-        let actionable = report.issueEvaluations
-            .sorted {
-                let rank: [AccessibilityFinding.Severity: Int] = [.error: 0, .warning: 1, .info: 2]
-                let lhs = rank[$0.severity] ?? 9
-                let rhs = rank[$1.severity] ?? 9
-                if lhs != rhs { return lhs < rhs }
-                if $0.status != $1.status { return $0.status == .fail }
-                return $0.ruleName.localizedCaseInsensitiveCompare($1.ruleName) == .orderedAscending
-            }
-            .prefix(8)
-
-        return VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
                 sectionTitle("Tester Action Center")
                 Spacer()
-                Text("What to verify before sign-off")
+                Text("Manual checks required before sign-off")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            if actionable.isEmpty {
-                Label("No tester action is currently required", systemImage: "checkmark.seal.fill")
+            if grouping.manualReviewGroups.isEmpty {
+                Label("No manual verification is required", systemImage: "checkmark.seal.fill")
                     .font(.headline)
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.07)))
             } else {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(actionable.enumerated()), id: \.element.id) { index, evaluation in
-                        Button {
-                            selectEvaluation(evaluation)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    Text("\(index + 1)")
-                                        .font(.caption2.bold())
-                                        .frame(width: 22, height: 22)
-                                        .background(statusColor(evaluation.status))
-                                        .foregroundStyle(.white)
-                                        .clipShape(Circle())
-
-                                    Text(evaluation.ruleName)
-                                        .font(.callout.bold())
-                                        .lineLimit(2)
-
-                                    Spacer()
-                                    statusBadge(evaluation.status)
-                                }
-
-                                Text(evaluation.targetDescription)
-                                    .font(.caption.bold())
-                                    .foregroundStyle(.primary)
-
-                                Text(evaluation.evidenceSummary)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-
-                                Label(evaluation.testerAction, systemImage: "checklist")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .padding(12)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.055)))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.10)))
-                        }
-                        .buttonStyle(.plain)
+                    ForEach(grouping.manualReviewGroups) { group in
+                        groupCard(group, showHowToTest: true)
                     }
                 }
             }
         }
     }
 
+    /// Failures and warnings, one card per rule, nothing truncated.
     private var actionSummarySection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionTitle("Open Findings")
+            HStack {
+                sectionTitle("Open Findings")
+                Spacer()
+                Text("\(grouping.issueGroups.count) rules · \(grouping.issueCount) elements")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
-            if report.issueEvaluations.isEmpty {
-                Label("No open findings", systemImage: "checkmark.circle.fill")
+            if grouping.issueGroups.isEmpty {
+                Label("No failures or warnings", systemImage: "checkmark.circle.fill")
                     .font(.headline)
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.07)))
             } else {
                 LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(report.issueEvaluations.prefix(6).enumerated()), id: \.offset) { index, evaluation in
-                        Button {
-                            selectEvaluation(evaluation)
-                        } label: {
-                            HStack(alignment: .top, spacing: 12) {
-                                Text("\(index + 1)")
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                    .foregroundStyle(.white)
-                                    .frame(width: 26, height: 26)
-                                    .background(statusColor(evaluation.status))
-                                    .clipShape(Circle())
-
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack(spacing: 8) {
-                                        Text(evaluation.ruleName)
-                                            .font(.callout)
-                                            .fontWeight(.semibold)
-                                            .lineLimit(2)
-                                        statusBadge(evaluation.status)
-                                    }
-
-                                    Text(evaluation.elementLabel.isEmpty ? evaluation.elementType : evaluation.elementLabel)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-
-                                    Text(evaluation.remediation.isEmpty ? evaluation.message : evaluation.remediation)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                }
-
-                                Spacer()
-                                Image(systemName: "arrow.right")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(12)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.055)))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.10)))
-                        }
-                        .buttonStyle(.plain)
+                    ForEach(grouping.issueGroups) { group in
+                        groupCard(group, showHowToTest: false)
                     }
-                }
-
-                if report.issueEvaluations.count > 6 {
-                    Text("\(report.issueEvaluations.count - 6) additional findings in Issue Explorer.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
         }
+    }
+
+    private func groupCard(_ group: GroupedFinding, showHowToTest: Bool) -> some View {
+        let names = group.occurrences
+            .prefix(3)
+            .map { $0.evaluation.targetDescription }
+            .joined(separator: ", ")
+        let remaining = group.count - min(group.count, 3)
+        let elementsLine = remaining > 0 ? "\(names) and \(remaining) more" : names
+        let detail = group.remediation.isEmpty ? group.sampleMessage : group.remediation
+
+        return Button {
+            if let first = group.occurrences.first {
+                selectEvaluation(first.evaluation)
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(group.ruleName)
+                        .font(.callout.bold())
+                        .lineLimit(2)
+                    Spacer()
+                    statusBadge(group.status)
+                }
+
+                HStack(spacing: 6) {
+                    tag("\(group.metadata.impact.displayName) impact")
+                    if let wcag = group.metadata.wcagLabel {
+                        tag(wcag)
+                    }
+                    tag("\(group.count) element\(group.count == 1 ? "" : "s") · \(group.screenCount) screen\(group.screenCount == 1 ? "" : "s")")
+                }
+
+                if !elementsLine.isEmpty {
+                    Text(elementsLine)
+                        .font(.caption.bold())
+                        .lineLimit(2)
+                }
+
+                if !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if showHowToTest {
+                    Label(group.metadata.howToTest, systemImage: "checklist")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.055)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.10)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func tag(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.secondary.opacity(0.12)))
     }
 
     private func selectEvaluation(_ evaluation: AccessibilityRuleEvaluation) {
@@ -1645,6 +1634,7 @@ struct ScanReportView: View {
         )
         .font(.caption)
         .fontWeight(.bold)
+        .foregroundStyle(statusColor(status))
         .padding(
             .horizontal,
             9
@@ -1656,7 +1646,7 @@ struct ScanReportView: View {
         .background(
             Capsule()
                 .fill(
-                    Color.secondary.opacity(0.15)
+                    statusColor(status).opacity(0.15)
                 )
         )
     }
