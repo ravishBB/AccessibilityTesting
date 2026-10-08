@@ -64,8 +64,8 @@ struct AccessibilityRules {
             DuplicateInteractiveNameRule(),
             InteractiveTargetOverlapRule(),
 
-            // Explicit validation rules. These are surfaced as VALIDATE,
-            // never as an invented pass/fail result.
+            // Evidence-driven rules. They may return PASS/FAIL when sufficient evidence
+            // is available; otherwise they remain VALIDATE or use a runtime probe.
             ContrastStandardTextRule(),
             ContrastLargeTextRule(),
             ContrastEnhancedStandardTextRule(),
@@ -1190,12 +1190,17 @@ struct LinkRoleRule: AccessibilityRule {
     let title = "Text functions as a link but is missing role link"
     let description = "Link-like text should expose link semantics."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.role == .staticText, node.visible, !node.label.isEmpty else { return nil }
+        guard node.visible, !node.label.isEmpty else { return nil }
+        if node.role == .link {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "Element exposes the link role.")
+        }
+        guard node.role == .staticText else { return nil }
         let hint = (node.label + " " + node.identifier).lowercased()
         guard hint.contains("http") || hint.contains("www") || hint.contains("link") else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Text appears link-like; verify it exposes a link role and is operable.",
-                                     remediation: "Expose link semantics if activating the text navigates somewhere.")
+        return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                               message: "Text appears link-like but is exposed as static text.",
+                               remediation: "Expose link semantics if activating the text navigates somewhere.")
     }
 }
 
@@ -1204,10 +1209,18 @@ struct ButtonRoleRule: AccessibilityRule {
     let title = "Text functions as a button but is missing role button"
     let description = "Actionable text should expose button semantics when appropriate."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.role == .staticText, node.visible else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "The hierarchy cannot determine whether a static text element has a tap gesture. Verify actionable text manually or through interaction testing.",
-                                     remediation: "If the text performs an action, expose an appropriate button role.")
+        guard node.visible else { return nil }
+        if node.role == .button {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "Element exposes button semantics.")
+        }
+        guard node.role == .staticText else { return nil }
+        let hint = (node.label + " " + node.identifier + " " + node.traits).lowercased()
+        let actionWords = ["button", "submit", "save", "cancel", "continue", "login", "sign in", "delete", "close"]
+        guard actionWords.contains(where: { hint.contains($0) }) else { return nil }
+        return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                               message: "Text appears action-oriented but is exposed as static text.",
+                               remediation: "Expose an appropriate button role when the text performs an action.")
     }
 }
 
@@ -1234,9 +1247,13 @@ struct ScreenReaderHiddenInteractiveRule: AccessibilityRule {
                                    message: "Control is hittable but not exposed as accessible.",
                                    remediation: "Expose the control to assistive technology unless it is intentionally excluded.")
         }
+        if node.accessible {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "Interactive control is exposed to assistive technology.")
+        }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Verify the control is intentionally exposed or intentionally hidden.",
-                                     remediation: "Confirm screen-reader users can operate every required interactive control.")
+                                     message: "The control is not exposed to assistive technology and intent cannot be established from the hierarchy.",
+                                     remediation: "Confirm the control is intentionally hidden or expose it to assistive technology.")
     }
 }
 
@@ -1258,9 +1275,27 @@ struct FocusOrderRule: AccessibilityRule {
     let description = "Accessibility focus should follow a meaningful reading/interaction order."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.role == .application else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Focus order requires observing actual accessibility focus traversal.",
-                                     remediation: "Traverse the screen with VoiceOver/keyboard focus and compare the order with the visual reading order.")
+        let controls = Self.flatten(node.children).filter { $0.visible && RuleHelper.controls.contains($0.role) }
+        guard controls.count > 1 else { return nil }
+        let visual = controls.sorted {
+            if abs($0.frame.minY - $1.frame.minY) > 4 { return $0.frame.minY < $1.frame.minY }
+            return $0.frame.minX < $1.frame.minX
+        }
+        let current = controls.map(Self.identity)
+        let expected = visual.map(Self.identity)
+        if current == expected {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "Accessibility hierarchy order matches the inferred visual reading order for interactive controls.")
+        }
+        return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                               message: "Interactive control order differs from the inferred visual reading order.",
+                               remediation: "Review accessibility traversal order and place interactive controls in the intended reading order.")
+    }
+    private static func flatten(_ nodes: [AccessibilityNode]) -> [AccessibilityNode] {
+        nodes.flatMap { [$0] + flatten($0.children) }
+    }
+    private static func identity(_ node: AccessibilityNode) -> String {
+        [node.identifier, node.type, String(format: "%.1f", node.frame.minX), String(format: "%.1f", node.frame.minY)].joined(separator: "|")
     }
 }
 
@@ -1281,11 +1316,27 @@ struct ScreenReaderContentRule: AccessibilityRule {
     let title = "Content can be accessed by screen reader user"
     let description = "Meaningful content should be exposed to assistive technology."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.visible, !node.accessible, !node.children.isEmpty else { return nil }
+        guard node.visible else { return nil }
+        if node.accessible {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "Element is exposed to assistive technology.")
+        }
+        let hasAccessibleDescendant = Self.flatten(node.children).contains { $0.visible && $0.accessible && (!RuleHelper.clean($0.label).isEmpty || RuleHelper.controls.contains($0.role)) }
+        guard !node.children.isEmpty else { return nil }
+        if hasAccessibleDescendant {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "Container itself is not accessible, but meaningful descendants are exposed.")
+        }
+        if RuleHelper.isText(node) || RuleHelper.controls.contains(node.role) {
+            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                                   message: "Meaningful content is visible but not exposed to assistive technology.",
+                                   remediation: "Expose the content to assistive technology or ensure an accessible descendant represents it.")
+        }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "This container is not accessible; verify that meaningful descendants are still exposed correctly.",
-                                     remediation: "Ensure content is not unintentionally removed from the accessibility tree.")
+                                     message: "The container is not accessible and its semantic intent cannot be established automatically.",
+                                     remediation: "Verify that meaningful content remains available to screen-reader users.")
     }
+    private static func flatten(_ nodes: [AccessibilityNode]) -> [AccessibilityNode] { nodes.flatMap { [$0] + flatten($0.children) } }
 }
 
 struct LanguageRule: AccessibilityRule {
@@ -1307,10 +1358,22 @@ struct ModalAccessibilityRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         let text = (node.type + " " + node.identifier + " " + node.label).lowercased()
         guard text.contains("modal") || text.contains("dialog") else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Possible modal/dialog detected; verify focus containment, announcement, and dismissal.",
-                                     remediation: "Open the modal and verify screen-reader access and a clear close/dismiss action.")
+        let descendants = Self.flatten(node.children)
+        let exposed = node.accessible || descendants.contains { $0.accessible && $0.visible }
+        let hasDismiss = descendants.contains {
+            guard $0.visible, RuleHelper.controls.contains($0.role) else { return false }
+            let t = ($0.label + " " + $0.identifier).lowercased()
+            return ["close", "dismiss", "cancel", "done"].contains { t.contains($0) }
+        }
+        if exposed && hasDismiss {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "Modal exposes accessible content and a likely dismissal control.")
+        }
+        return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                               message: !exposed ? "Possible modal/dialog content is not exposed to assistive technology." : "Possible modal/dialog has no identifiable dismissal control.",
+                               remediation: "Expose modal content and provide an accessible close, dismiss, cancel, or done action.")
     }
+    private static func flatten(_ nodes: [AccessibilityNode]) -> [AccessibilityNode] { nodes.flatMap { [$0] + flatten($0.children) } }
 }
 
 struct LoadingIndicatorContrastRule: AccessibilityRule {
@@ -1464,11 +1527,12 @@ struct KeyboardFocusRule: AccessibilityRule {
     let id = "keyboard-focus"
     let title = "Interactive control can receive keyboard focus"
     let description = "Keyboard users should be able to reach interactive controls where keyboard operation is supported."
+
+    /// Keyboard focus is a runtime interaction check. Returning a static
+    /// VALIDATE here would duplicate the runtime probe and could be mistaken
+    /// for a result of the actual Tab navigation.
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.role), node.visible else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Keyboard focusability is not exposed by the hierarchy node model.",
-                                     remediation: "Run keyboard navigation and verify every required control can receive focus.")
+        nil
     }
 }
 
@@ -1489,11 +1553,10 @@ struct LinkColorRule: AccessibilityRule {
     let title = "Link color differentiation check"
     let description = "Links should not rely on color alone to communicate their role."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        let text = (node.label + " " + node.identifier).lowercased()
-        guard text.contains("link") else { return nil }
+        guard node.role == .link, node.visible else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Rendered link color and non-color differentiation are not exposed by the accessibility hierarchy.",
-                                     remediation: "Verify links have sufficient contrast and a non-color cue where required.")
+                                     message: "Link role is confirmed, but rendered color and non-color differentiation require visual evidence.",
+                                     remediation: "Verify link contrast and a non-color cue in the rendered UI.")
     }
 }
 
@@ -1503,9 +1566,13 @@ struct VisualLabelRule: AccessibilityRule {
     let description = "Form controls should have a visible, persistent label."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard RuleHelper.textInputs.contains(node.role), node.visible else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Visual-label presence cannot be determined from the accessibility hierarchy alone.",
-                                     remediation: "Inspect the screenshot and verify a persistent visible label is associated with the field.")
+        if !RuleHelper.clean(node.label).isEmpty || !RuleHelper.clean(node.placeholderValue ?? "").isEmpty {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "Form control exposes a descriptive label or placeholder in the accessibility hierarchy.")
+        }
+        return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                               message: "Form control has no accessible label or placeholder that can be used as evidence of a visible label.",
+                               remediation: "Provide a persistent visible label and expose the same purpose to assistive technology.")
     }
 }
 

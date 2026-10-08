@@ -493,6 +493,47 @@ final class AppiumClient {
         )
     }
 
+
+    // MARK: - Keyboard input
+
+    /// Sends a single W3C Tab key action to the active Appium session.
+    /// On iOS XCUITest, this is used by the keyboard-focus probe to advance
+    /// the native keyboard focus without tapping a particular control.
+    func pressTab() async throws {
+        try await pressKey(value: "\u{E004}")
+    }
+
+    private func pressKey(value: String) async throws {
+        guard let sessionID else {
+            throw AppiumError.noActiveSession
+        }
+
+        let url = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("actions")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15
+
+        let payload: [String: Any] = [
+            "actions": [[
+                "type": "key",
+                "id": "accessibilityScannerKeyboard",
+                "actions": [
+                    ["type": "keyDown", "value": value],
+                    ["type": "keyUp", "value": value]
+                ]
+            ]]
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+    }
+
     func goBack() async throws {
 
         guard let sessionID = sessionID else {
@@ -800,10 +841,14 @@ final class AppiumClient {
                 "appium:udid": configuration.udid,
                 "appium:bundleId": configuration.bundleID,
                 "appium:noReset": true,
+                "appium:autoLaunch": configuration.autoLaunch,
                 "appium:newCommandTimeout": 300,
                 "appium:xcodeOrgId": configuration.xcodeOrgID,
                 "appium:xcodeSigningId": configuration.xcodeSigningID,
-                "appium:showXcodeLog": showXcodeLog
+                "appium:showXcodeLog": showXcodeLog,
+                "appium:settings": [
+                    "includeHittableInPageSource": true
+                ]
             ]
 
         case .android:
@@ -816,12 +861,19 @@ final class AppiumClient {
                 "appium:appWaitActivity": "*",
                 "appium:noReset": true,
                 "appium:newCommandTimeout": 300,
-                // Launch the app as soon as the session starts, even when it
-                // is already running in the background (noReset alone can
-                // leave it untouched).
-                "appium:autoLaunch": true,
-                "appium:forceAppLaunch": true,
-                "appium:shouldTerminateApp": true
+                // Launch control is configurable so Current Page mode can attach
+                // without replacing the page the tester has already opened.
+                "appium:autoLaunch": configuration.autoLaunch,
+                // Launch the app as soon as the session starts, unless Current Page
+                // mode intentionally attaches to the page already on screen.
+                "appium:forceAppLaunch": configuration.autoLaunch,
+                "appium:shouldTerminateApp": true,
+                // Expose AccessibilityNodeInfo extras such as roleDescription
+                // used by React Native and other cross-platform semantics.
+                "appium:settings": [
+                    "includeExtrasInPageSource": true,
+                    "includeA11yActionsInPageSource": true
+                ]
             ]
 
             if let activity = configuration.appActivity, !activity.isEmpty {

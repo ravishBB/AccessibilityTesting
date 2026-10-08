@@ -22,7 +22,7 @@ enum RuleResultStatus: String, Codable, CaseIterable {
         case .warning:
             return "WARNING"
         case .validate:
-            return "VALIDATE"
+            return "MANUAL REVIEW"
         }
     }
 }

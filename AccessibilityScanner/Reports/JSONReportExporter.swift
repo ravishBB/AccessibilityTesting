@@ -93,7 +93,7 @@ private struct JSONReportPayload: Codable {
     let intelligence: AccessibilityIntelligence?
 
     init(report: AccessibilityScanResult) {
-        self.schemaVersion = "1.2"
+        self.schemaVersion = "1.3"
         self.scan = JSONScanMetadata(report: report)
         self.summary = JSONSummary(report: report)
         self.screens = report.screens.map(JSONScreen.init)
@@ -163,6 +163,7 @@ private struct JSONScreen: Codable {
     let affectedElements: Int
     let screenshot: JSONScreenshot?
     let annotations: [JSONAnnotation]
+    let viewportScreenshots: [JSONViewportScreenshot]
     let evaluations: [JSONEvaluation]
     let transitions: [JSONTransition]
 
@@ -178,11 +179,26 @@ private struct JSONScreen: Codable {
         self.affectedElements = screen.affectedElements
         self.screenshot = screen.screenshot.map(JSONScreenshot.init)
         self.annotations = screen.annotations.map(JSONAnnotation.init)
+        self.viewportScreenshots = screen.viewportScreenshots.map(JSONViewportScreenshot.init)
         self.evaluations = screen.evaluations.map(JSONEvaluation.init)
         self.transitions = screen.transitions.map(JSONTransition.init)
     }
 }
 
+
+private struct JSONViewportScreenshot: Codable {
+    let id: UUID
+    let index: Int
+    let screenshot: JSONScreenshot
+    let annotations: [JSONAnnotation]
+
+    init(viewport: ScreenshotViewport) {
+        self.id = viewport.id
+        self.index = viewport.index
+        self.screenshot = JSONScreenshot(screenshot: viewport.screenshot)
+        self.annotations = viewport.annotations.map(JSONAnnotation.init)
+    }
+}
 
 private struct JSONTransition: Codable {
     let id: UUID

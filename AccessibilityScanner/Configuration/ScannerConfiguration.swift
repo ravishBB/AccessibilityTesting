@@ -23,6 +23,10 @@ struct ScannerConfiguration {
 
     /// Android display density in dpi. Fallback when Appium does not report it.
     let displayDensity: Int?
+    /// Whether Appium should launch the application when creating the session.
+    /// False is used for Current Page mode so the scanner can attach to the page
+    /// the tester has already opened.
+    let autoLaunch: Bool
 
     /// iOS physical-device signing for WebDriverAgent.
     let xcodeOrgID: String
@@ -38,6 +42,7 @@ struct ScannerConfiguration {
         platform: MobilePlatform = .ios,
         appActivity: String? = nil,
         displayDensity: Int? = nil,
+        autoLaunch: Bool = true,
         xcodeOrgID: String = "EJ5R49N3EY",
         xcodeSigningID: String = "Apple Development"
     ) {
@@ -48,6 +53,7 @@ struct ScannerConfiguration {
         self.platform = platform
         self.appActivity = appActivity
         self.displayDensity = displayDensity
+        self.autoLaunch = autoLaunch
         self.xcodeOrgID = xcodeOrgID
         self.xcodeSigningID = xcodeSigningID
     }

@@ -58,6 +58,7 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
         let selected: Bool
         let password: Bool
         let displayed: Bool
+        let roleDescription: String
 
         var children: [MutableNode] = []
 
@@ -78,7 +79,8 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
             scrollable: Bool,
             selected: Bool,
             password: Bool,
-            displayed: Bool
+            displayed: Bool,
+            roleDescription: String
         ) {
             self.className = className
             self.resourceID = resourceID
@@ -97,6 +99,7 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
             self.selected = selected
             self.password = password
             self.displayed = displayed
+            self.roleDescription = roleDescription
         }
     }
 
@@ -173,7 +176,8 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
             selected: bool(attributeDict["selected"]),
             password: bool(attributeDict["password"]),
             // Older UiAutomator2 servers do not emit `displayed`; treat as visible.
-            displayed: attributeDict["displayed"] == nil ? true : bool(attributeDict["displayed"])
+            displayed: attributeDict["displayed"] == nil ? true : bool(attributeDict["displayed"]),
+            roleDescription: parseRoleDescription(attributeDict["extras"])
         )
 
         if let parent = stack.last {
@@ -281,6 +285,7 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
             enabled: node.enabled,
             visible: visible,
             accessible: accessible,
+            focused: node.focused,
             children: children
         )
 
@@ -309,6 +314,17 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
 
         let isLeaf = node.children.isEmpty
 
+        // React Native and other cross-platform frameworks can expose an
+        // accessibility role through AccessibilityNodeInfo.roleDescription
+        // while retaining a generic Android class. Prefer that semantic role.
+        if let role = roleFromDescription(node.roleDescription) {
+            return role
+        }
+
+        if node.checkable {
+            return .checkBox
+        }
+
         if node.clickable {
             // A clickable leaf with a name behaves like a button.
             // A clickable container (row/card) is a cell: its name comes from
@@ -321,6 +337,37 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
         }
 
         return .other
+    }
+
+
+    private func roleFromDescription(_ description: String) -> AccessibilityRole? {
+        switch description.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "button", "imagebutton": return .button
+        case "link": return .link
+        case "checkbox": return .checkBox
+        case "radio", "radiobutton": return .radioButton
+        case "switch", "toggle": return .toggle
+        case "slider", "adjustable": return .slider
+        case "textfield", "text field", "search": return .textField
+        case "image": return .image
+        case "tab": return .tabBar
+        case "list", "grid": return .table
+        default: return nil
+        }
+    }
+
+    private func parseRoleDescription(_ extras: String?) -> String {
+        guard let extras else { return "" }
+        for part in extras.split(separator: ";") {
+            let value = String(part)
+            let lower = value.lowercased()
+            if lower.contains("roledescription=") || lower.contains("role_description=") {
+                if let separator = value.firstIndex(of: "=") {
+                    return String(value[value.index(after: separator)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+        }
+        return ""
     }
 
     // MARK: - Helpers

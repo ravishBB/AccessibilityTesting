@@ -25,6 +25,9 @@ struct AccessibilityNode {
     let enabled: Bool
     let visible: Bool
     let accessible: Bool
+    /// Whether XCTest/WDA currently reports keyboard focus on this element.
+    /// Older/non-iOS parsers default this to false.
+    let focused: Bool
 
     var children: [AccessibilityNode]
 
@@ -51,6 +54,13 @@ struct AccessibilityNode {
 
     var isInteractive: Bool {
         AccessibilityRole.controls.contains(role)
+    }
+
+    /// Native/platform focusability exposed by Appium. This is especially
+    /// important for Flutter Semantics nodes and React Native `accessible`
+    /// views, where the raw Android class may remain a generic View.
+    var isKeyboardFocusable: Bool {
+        traits.localizedCaseInsensitiveContains("focusable")
     }
 
     var hasAccessibleName: Bool {

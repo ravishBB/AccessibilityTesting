@@ -9,6 +9,11 @@ import Foundation
 import CoreGraphics
 import AppKit
 
+struct ScrollableViewportCapture {
+    let snapshot: StableScanSnapshot
+    let evaluations: [AccessibilityRuleEvaluation]
+}
+
 struct CrawledScreen {
     let signature: String
     let rootNode: AccessibilityNode
@@ -22,6 +27,8 @@ struct CrawledScreen {
     let screenshotData: Data
     let screenshotWidth: Double
     let screenshotHeight: Double
+    let viewportCaptures: [ScrollableViewportCapture]
+    let keyboardFocusEvaluations: [AccessibilityRuleEvaluation]
 }
 
 struct ScrollableScreenScanResult {
@@ -29,6 +36,7 @@ struct ScrollableScreenScanResult {
     let topSnapshot: StableScanSnapshot
     let evaluations: [AccessibilityRuleEvaluation]
     let topEvaluations: [AccessibilityRuleEvaluation]
+    let viewportCaptures: [ScrollableViewportCapture]
     let viewportCount: Int
 }
 
@@ -74,7 +82,8 @@ final class AppCrawler {
 
     func crawl(
         initialSnapshot: StableScanSnapshot,
-        statusHandler: @escaping (String) -> Void
+        statusHandler: @escaping (String) -> Void,
+        screenHandler: ((CrawledScreen) -> Void)? = nil
     ) async throws -> [CrawledScreen] {
 
         visitedScreens.removeAll()
@@ -87,7 +96,8 @@ final class AppCrawler {
         try await explore(
             snapshot: initialSnapshot,
             depth: 0,
-            statusHandler: statusHandler
+            statusHandler: statusHandler,
+            screenHandler: screenHandler
         )
 
         return discoveredScreens
@@ -96,7 +106,8 @@ final class AppCrawler {
     private func explore(
         snapshot: StableScanSnapshot,
         depth: Int,
-        statusHandler: @escaping (String) -> Void
+        statusHandler: @escaping (String) -> Void,
+        screenHandler: ((CrawledScreen) -> Void)? = nil
     ) async throws {
 
         if discoveredScreens.count >=
@@ -150,6 +161,22 @@ final class AppCrawler {
         let screenshotEvaluations =
             scrollResult.topEvaluations
 
+        statusHandler("Testing keyboard focus on screen \(discoveredScreens.count + 1)...")
+        let keyboardFocusEvaluations: [AccessibilityRuleEvaluation]
+        do {
+            keyboardFocusEvaluations = try await KeyboardFocusTester(appium: appium).test(rootNode: topSnapshot.rootNode).evaluations
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            keyboardFocusEvaluations = [
+                KeyboardFocusTester(appium: appium).unavailableEvaluation(
+                    rootNode: topSnapshot.rootNode,
+                    error: error
+                )
+            ]
+            print("Keyboard focus probe unavailable: \(error.localizedDescription)")
+        }
+
         let actions =
             navigationActions(
                 from: topSnapshot.rootNode
@@ -187,9 +214,12 @@ final class AppCrawler {
             transitions: [],
             screenshotData: topSnapshot.screenshotData,
             screenshotWidth: topSnapshot.screenshotWidth,
-            screenshotHeight: topSnapshot.screenshotHeight
+            screenshotHeight: topSnapshot.screenshotHeight,
+            viewportCaptures: scrollResult.viewportCaptures,
+            keyboardFocusEvaluations: keyboardFocusEvaluations
         )
         discoveredScreens.append(screen)
+        screenHandler?(screen)
 
         statusHandler(
             "Screen \(discoveredScreens.count) scanned — " +
@@ -343,7 +373,8 @@ final class AppCrawler {
                     try await explore(
                         snapshot: nextSnapshot,
                         depth: depth + 1,
-                        statusHandler: statusHandler
+                        statusHandler: statusHandler,
+                        screenHandler: screenHandler
                     )
 
                 } else {
@@ -459,6 +490,12 @@ final class AppCrawler {
         var seenEvaluationKeys:
             Set<String> = []
 
+        // Keep the actual screenshots captured for each unique viewport.
+        // The previous implementation only retained the first screenshot,
+        // which made every report view show the top of a scrollable screen.
+        var viewportCaptures: [ScrollableViewportCapture] = []
+        var seenScreenshotData: Set<Data> = []
+
         let maximumScrolls = 20
 
         var previousViewportSignature =
@@ -502,6 +539,19 @@ final class AppCrawler {
                         evaluation
                     )
                 }
+            }
+
+            // Store only visually unique screenshots. This prevents the same
+            // viewport from being shown repeatedly while still preserving
+            // screenshots for newly revealed scroll content.
+            if !seenScreenshotData.contains(currentSnapshot.screenshotData) {
+                seenScreenshotData.insert(currentSnapshot.screenshotData)
+                viewportCaptures.append(
+                    ScrollableViewportCapture(
+                        snapshot: currentSnapshot,
+                        evaluations: evaluations
+                    )
+                )
             }
             
             if scrollIndex == maximumScrolls {
@@ -640,6 +690,7 @@ final class AppCrawler {
             topSnapshot: initialSnapshot,
             evaluations: collectedEvaluations,
             topEvaluations: topEvaluations,
+            viewportCaptures: viewportCaptures,
             viewportCount: viewportCount
         )
     }

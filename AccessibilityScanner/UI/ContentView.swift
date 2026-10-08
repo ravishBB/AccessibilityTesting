@@ -324,13 +324,58 @@ struct ContentView: View {
                 }
             }
 
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Scan Scope")
+                    .font(.headline)
+
+                Picker("Scan Scope", selection: $viewModel.scanMode) {
+                    ForEach(ScanMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .disabled(viewModel.isScanning)
+
+                if viewModel.scanMode == .limited {
+                    HStack {
+                        Text("Stop after")
+                        Picker("Pages", selection: $viewModel.maximumScreens) {
+                            ForEach([1, 5, 10, 25, 50], id: \.self) { count in
+                                Text("\(count) pages").tag(count)
+                            }
+                        }
+                        .frame(width: 130)
+                        Spacer()
+                    }
+                }
+
+                Text(
+                    viewModel.scanMode == .currentPage
+                    ? "Open the desired page in the selected app before starting. AccessibilityScanner will capture and report only that page."
+                    : viewModel.scanMode == .limited
+                    ? "The scanner stops automatically after the selected number of discovered pages. A report is available for the completed pages."
+                    : "The scanner explores the application until the configured crawl limit or until you stop it."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             HStack {
 
                 Spacer()
 
-                Button {
-
-                    viewModel.startScan()
+                if viewModel.isScanning {
+                    Button {
+                        viewModel.stopScan()
+                    } label: {
+                        Image(systemName: "stop.fill")
+                        Text("Stop Scan & Report")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                } else {
+                    Button {
+                        viewModel.startScan()
 
                 } label: {
 
@@ -363,6 +408,7 @@ struct ContentView: View {
                     viewModel.selectedDevice == nil ||
                     viewModel.selectedApplication == nil
                 )
+                }
 
                 Spacer()
             }
@@ -540,7 +586,7 @@ struct ContentView: View {
             ProgressView()
                 .controlSize(.large)
 
-            Text("Scanning application...")
+            Text(viewModel.scanMode == .currentPage ? "Testing current page..." : "Scanning application...")
                 .font(.headline)
 
             Text(
@@ -550,7 +596,9 @@ struct ContentView: View {
             .foregroundStyle(.secondary)
 
             Text(
-                "Reading the application's accessibility hierarchy and running accessibility rules."
+                viewModel.scanMode == .currentPage
+                ? "The selected page is being tested. Stop is not required for a single-page scan."
+                : "Reading the application's accessibility hierarchy and running accessibility rules. You can stop at any time; completed pages remain available in the report."
             )
             .font(.caption)
             .foregroundStyle(.secondary)

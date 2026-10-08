@@ -29,6 +29,7 @@ final class WDAElementParser: NSObject, XMLParserDelegate {
         let enabled: Bool
         let visible: Bool
         let accessible: Bool
+        let focused: Bool
 
         var children: [MutableNode] = []
 
@@ -44,7 +45,8 @@ final class WDAElementParser: NSObject, XMLParserDelegate {
             hittable: Bool,
             enabled: Bool,
             visible: Bool,
-            accessible: Bool
+            accessible: Bool,
+            focused: Bool
         ) {
             self.type = type
             self.identifier = identifier
@@ -61,11 +63,12 @@ final class WDAElementParser: NSObject, XMLParserDelegate {
             self.enabled = enabled
             self.visible = visible
             self.accessible = accessible
+            self.focused = focused
         }
 
         func toAccessibilityNode() -> AccessibilityNode {
 
-            AccessibilityNode(
+            var result = AccessibilityNode(
                 type: type,
                 identifier: identifier,
                 label: label,
@@ -78,10 +81,27 @@ final class WDAElementParser: NSObject, XMLParserDelegate {
                 enabled: enabled,
                 visible: visible,
                 accessible: accessible,
+                focused: focused,
                 children: children.map {
                     $0.toAccessibilityNode()
                 }
             )
+
+            // Cross-platform frameworks can expose a generic XCUI element
+            // while preserving the semantic role in accessibility traits.
+            if result.role == .other, let role = roleFromTraits(traits) {
+                result.roleOverride = role
+            }
+
+            return result
+        }
+
+        private func roleFromTraits(_ traits: String) -> AccessibilityRole? {
+            let value = traits.lowercased()
+            if value.contains("button") { return .button }
+            if value.contains("link") { return .link }
+            if value.contains("adjustable") { return .slider }
+            return nil
         }
     }
 
@@ -209,6 +229,11 @@ final class WDAElementParser: NSObject, XMLParserDelegate {
                 attributeDict["accessible"]
             )
 
+        let focused =
+            parseBool(
+                attributeDict["focused"]
+            )
+
         let hittable =
             parseBool(
                 attributeDict["hittable"]
@@ -226,7 +251,8 @@ final class WDAElementParser: NSObject, XMLParserDelegate {
             hittable: hittable,
             enabled: enabled,
             visible: visible,
-            accessible: accessible
+            accessible: accessible,
+            focused: focused
         )
 
         if let parent = stack.last {

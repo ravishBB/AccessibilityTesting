@@ -32,3 +32,22 @@ struct ScanScreenshot: Codable {
         self.hierarchyHeight = hierarchyHeight
     }
 }
+
+
+struct ScreenshotViewport: Identifiable, Codable {
+    let id: UUID
+    let index: Int
+    let screenshot: ScanScreenshot
+    let annotations: [ScreenshotAnnotation]
+
+    init(
+        index: Int,
+        screenshot: ScanScreenshot,
+        annotations: [ScreenshotAnnotation] = []
+    ) {
+        self.id = UUID()
+        self.index = index
+        self.screenshot = screenshot
+        self.annotations = annotations
+    }
+}

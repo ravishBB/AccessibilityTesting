@@ -14,6 +14,7 @@ struct ScanReportView: View {
     let report: AccessibilityScanResult
 
     @State private var selectedAnnotationID: UUID?
+    @State private var selectedViewportID: UUID?
     @State private var selectedScreenID: UUID?
     @State private var showDetailedResults = false
     @State private var showDiff = false
@@ -25,6 +26,7 @@ struct ScanReportView: View {
             LazyVStack(alignment: .leading, spacing: 24) {
                 header
                 summarySection
+                testerActionCenterSection
 
                 AccessibilityQualityGateView(
                     gate: report.resolvedIntelligence.qualityGate
@@ -125,7 +127,10 @@ struct ScanReportView: View {
         .navigationTitle("Quality Report")
         .onAppear {
             if selectedScreenID == nil {
-                selectedScreenID = report.screens.first?.id
+                let firstScreen = report.screens.first
+                selectedScreenID = firstScreen?.id
+                selectedAnnotationID = firstScreen?.annotations.first?.id
+                selectedViewportID = firstScreen?.viewportScreenshots.first?.id
             }
         }
     }
@@ -202,31 +207,105 @@ struct ScanReportView: View {
                     symbol: "checkmark.circle.fill"
                 )
                 headlineMetric(
+                    title: "Manual review",
+                    value: report.totalValidations,
+                    subtitle: "checks needing tester verification",
+                    symbol: "checklist"
+                )
+                headlineMetric(
                     title: "Screens",
                     value: report.screens.count,
                     subtitle: "screens reviewed",
                     symbol: "rectangle.on.rectangle"
                 )
-                headlineMetric(
-                    title: "Elements",
-                    value: report.totalElementsTested,
-                    subtitle: "elements reviewed",
-                    symbol: "square.grid.2x2"
-                )
             }
 
             Text(
                 report.totalFailures > 0
-                    ? "Failures require attention. Use Issue Explorer to review each finding and its location."
+                    ? "Fix the automated failures first, then complete the manual checks listed in Tester Action Center."
                     : report.totalWarnings > 0
-                        ? "No failures recorded. Review the remaining warnings."
+                        ? "Review the warnings and complete the manual checks before sign-off."
                         : report.totalValidations > 0
-                            ? "Manual review is required for the remaining validation items."
+                            ? "Automated checks did not prove every requirement. Complete the manual checks before sign-off."
                             : "No accessibility findings were recorded in the scanned screens."
             )
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var testerActionCenterSection: some View {
+        let actionable = report.issueEvaluations
+            .sorted {
+                let rank: [AccessibilityFinding.Severity: Int] = [.error: 0, .warning: 1, .info: 2]
+                let lhs = rank[$0.severity] ?? 9
+                let rhs = rank[$1.severity] ?? 9
+                if lhs != rhs { return lhs < rhs }
+                if $0.status != $1.status { return $0.status == .fail }
+                return $0.ruleName.localizedCaseInsensitiveCompare($1.ruleName) == .orderedAscending
+            }
+            .prefix(8)
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                sectionTitle("Tester Action Center")
+                Spacer()
+                Text("What to verify before sign-off")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if actionable.isEmpty {
+                Label("No tester action is currently required", systemImage: "checkmark.seal.fill")
+                    .font(.headline)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.07)))
+            } else {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(actionable.enumerated()), id: \.element.id) { index, evaluation in
+                        Button {
+                            selectEvaluation(evaluation)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text("\(index + 1)")
+                                        .font(.caption2.bold())
+                                        .frame(width: 22, height: 22)
+                                        .background(statusColor(evaluation.status))
+                                        .foregroundStyle(.white)
+                                        .clipShape(Circle())
+
+                                    Text(evaluation.ruleName)
+                                        .font(.callout.bold())
+                                        .lineLimit(2)
+
+                                    Spacer()
+                                    statusBadge(evaluation.status)
+                                }
+
+                                Text(evaluation.targetDescription)
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.primary)
+
+                                Text(evaluation.evidenceSummary)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                Label(evaluation.testerAction, systemImage: "checklist")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.055)))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.10)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
     }
 
@@ -300,13 +379,19 @@ struct ScanReportView: View {
     private func selectEvaluation(_ evaluation: AccessibilityRuleEvaluation) {
         if let screen = report.screens.first(where: { $0.evaluations.contains(where: { $0.id == evaluation.id }) }) {
             selectedScreenID = screen.id
-            selectedAnnotationID = screen.annotations.first(where: {
+            if let annotation = screen.annotations.first(where: {
                 $0.ruleID == evaluation.ruleID &&
                 $0.elementType == evaluation.elementType &&
                 abs($0.frameX - evaluation.frameX) < 0.5 &&
                 abs($0.frameY - evaluation.frameY) < 0.5 &&
                 $0.message == evaluation.message
-            })?.id
+            }) {
+                selectedAnnotationID = annotation.id
+                selectedViewportID = viewportContaining(
+                    annotationID: annotation.id,
+                    in: screen
+                )?.id
+            }
         }
     }
 
@@ -323,7 +408,7 @@ struct ScanReportView: View {
                 }
                 Spacer()
                 if let screen = selectedScreen {
-                    Text("\(screen.annotations.count) findings")
+                    Text("\(screen.annotations.count) failures")
                         .font(.callout)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
@@ -346,7 +431,8 @@ struct ScanReportView: View {
                 ForEach(report.screens) { screen in
                     Button {
                         selectedScreenID = screen.id
-                        selectedAnnotationID = nil
+                        selectedAnnotationID = screen.annotations.first?.id
+                        selectedViewportID = screen.viewportScreenshots.first?.id
                     } label: {
                         HStack(spacing: 8) {
                             Text(screen.name)
@@ -409,18 +495,32 @@ struct ScanReportView: View {
                 }
                 Spacer()
                 if screen.annotations.isEmpty {
-                    Label("No findings on this screen", systemImage: "checkmark.circle.fill")
+                    Label("No failed checks on this screen", systemImage: "checkmark.circle.fill")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            if let screenshot = screen.screenshot,
-               let screenshotImage = thumbnailImage(from: screenshot.imageData, maxPixelSize: 900) {
+            if let viewport = selectedViewport(in: screen),
+               let screenshotImage = thumbnailImage(from: viewport.screenshot.imageData, maxPixelSize: 900) {
                 HStack(alignment: .top, spacing: 20) {
                     screenshotPanel(
                         screen: screen,
-                        screenshot: screenshot,
+                        viewport: viewport,
+                        image: screenshotImage
+                    )
+                    issueListPanel(screen: screen)
+                }
+
+                if screen.viewportScreenshots.count > 1 {
+                    scrollViewportSection(screen: screen)
+                }
+            } else if let screenshot = screen.screenshot,
+                      let screenshotImage = thumbnailImage(from: screenshot.imageData, maxPixelSize: 900) {
+                HStack(alignment: .top, spacing: 20) {
+                    screenshotPanel(
+                        screen: screen,
+                        viewport: nil,
                         image: screenshotImage
                     )
                     issueListPanel(screen: screen)
@@ -430,6 +530,17 @@ struct ScanReportView: View {
             }
         }
         .padding(18)
+        .onAppear {
+            if selectedAnnotationID == nil {
+                selectedAnnotationID = screen.annotations.first?.id
+            }
+            if selectedViewportID == nil {
+                selectedViewportID = viewportContaining(
+                    annotationID: selectedAnnotationID,
+                    in: screen
+                )?.id ?? screen.viewportScreenshots.first?.id
+            }
+        }
         .background(
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color.secondary.opacity(0.06))
@@ -440,40 +551,114 @@ struct ScanReportView: View {
         )
     }
 
-    private func screenshotPanel(
-        screen: ScreenScanResult,
-        screenshot: ScanScreenshot,
-        image: NSImage
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func scrollViewportSection(screen: ScreenScanResult) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Label("Screen", systemImage: "rectangle.on.rectangle")
+                Label("Scrollable Content", systemImage: "arrow.up.and.down")
                     .font(.headline)
                 Spacer()
-                Text("Select a marker")
+                Text("\(screen.viewportScreenshots.count) unique viewport screenshots")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            InteractiveScreenshotView(
-                image: image,
-                screenshotWidth: screenshot.width,
-                screenshotHeight: screenshot.height,
-                hierarchyWidth: screenshot.hierarchyWidth,
-                hierarchyHeight: screenshot.hierarchyHeight,
-                annotations: screen.annotations,
-                selectedAnnotationID: $selectedAnnotationID
-            )
-            .frame(width: 390, height: 620)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.black.opacity(0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
-            )
+            Text("Each screenshot represents a distinct viewport captured while scrolling this screen. Duplicate screenshots are removed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            LazyVStack(alignment: .leading, spacing: 18) {
+                ForEach(screen.viewportScreenshots.dropFirst()) { viewport in
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Viewport \(viewport.index)")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            Spacer()
+                            if !viewport.annotations.isEmpty {
+                                Text("\(viewport.annotations.count) failures")
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                            } else {
+                                Text("No failed checks")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        if let image = thumbnailImage(
+                            from: viewport.screenshot.imageData,
+                            maxPixelSize: 900
+                        ) {
+                            InteractiveScreenshotView(
+                                image: image,
+                                screenshotWidth: viewport.screenshot.width,
+                                screenshotHeight: viewport.screenshot.height,
+                                hierarchyWidth: viewport.screenshot.hierarchyWidth,
+                                hierarchyHeight: viewport.screenshot.hierarchyHeight,
+                                annotations: viewport.annotations,
+                                selectedAnnotationID: selectedViewportID == viewport.id ? selectedAnnotationID : nil
+                            )
+                            .frame(width: 390, height: 620)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+                            )
+                        }
+                    }
+                    .padding(14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.secondary.opacity(0.04))
+                    )
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private func screenshotPanel(
+        screen: ScreenScanResult,
+        viewport: ScreenshotViewport?,
+        image: NSImage
+    ) -> some View {
+        let screenshot = viewport?.screenshot ?? screen.screenshot
+        let viewportAnnotations = viewport?.annotations ?? screen.annotations
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(
+                    viewport.map { "Viewport \($0.index)" } ?? "Screen",
+                    systemImage: "rectangle.on.rectangle"
+                )
+                .font(.headline)
+                Spacer()
+                Text("Only the selected failure is highlighted")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let screenshot {
+                InteractiveScreenshotView(
+                    image: image,
+                    screenshotWidth: screenshot.width,
+                    screenshotHeight: screenshot.height,
+                    hierarchyWidth: screenshot.hierarchyWidth,
+                    hierarchyHeight: screenshot.hierarchyHeight,
+                    annotations: viewportAnnotations,
+                    selectedAnnotationID: viewport?.id == selectedViewportID ? selectedAnnotationID : nil
+                )
+                .frame(width: 390, height: 620)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.black.opacity(0.05))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+                )
+            }
         }
         .frame(minWidth: 410, alignment: .topLeading)
     }
@@ -481,24 +666,21 @@ struct ScanReportView: View {
     private func issueListPanel(screen: ScreenScanResult) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("Findings", systemImage: "exclamationmark.triangle")
+                Label("Failures", systemImage: "exclamationmark.triangle.fill")
                     .font(.headline)
                 Spacer()
-                if selectedAnnotationID != nil {
-                    Button("Clear selection") {
-                        selectedAnnotationID = nil
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
+
+                if !screen.annotations.isEmpty {
+                    navigationControls(for: screen)
                 }
             }
 
             if screen.annotations.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("No findings", systemImage: "checkmark.circle")
+                    Label("No failed checks", systemImage: "checkmark.circle")
                         .font(.callout)
                         .fontWeight(.semibold)
-                    Text("No failures, warnings or review items were recorded for this screen.")
+                    Text("Warnings and manual-review items are shown elsewhere in the report and are not highlighted on the screenshot.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -506,6 +688,10 @@ struct ScanReportView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.06)))
             } else {
+                if let selected = selectedAnnotation(in: screen) {
+                    selectedFailureDetail(selected, in: screen)
+                }
+
                 ScrollViewReader { proxy in
                     ScrollView(.vertical) {
                         LazyVStack(alignment: .leading, spacing: 8) {
@@ -517,7 +703,7 @@ struct ScanReportView: View {
                         .padding(.trailing, 4)
                     }
                     .frame(minWidth: 360, maxWidth: 500)
-                    .frame(height: 620)
+                    .frame(height: 420)
                     .onChange(of: selectedAnnotationID) { _, newID in
                         guard let newID else { return }
                         withAnimation(.easeInOut(duration: 0.2)) {
@@ -530,11 +716,173 @@ struct ScanReportView: View {
         .frame(minWidth: 360, maxWidth: 500, alignment: .topLeading)
     }
 
+    private func viewportContaining(
+        annotationID: UUID?,
+        in screen: ScreenScanResult
+    ) -> ScreenshotViewport? {
+        guard let annotationID else { return nil }
+        return screen.viewportScreenshots.first { viewport in
+            viewport.annotations.contains { $0.id == annotationID }
+        }
+    }
+
+    private func selectedViewport(in screen: ScreenScanResult) -> ScreenshotViewport? {
+        if let selectedViewportID,
+           let viewport = screen.viewportScreenshots.first(where: { $0.id == selectedViewportID }) {
+            return viewport
+        }
+
+        if let selectedAnnotationID,
+           let viewport = viewportContaining(annotationID: selectedAnnotationID, in: screen) {
+            return viewport
+        }
+
+        return screen.viewportScreenshots.first
+    }
+
+    private func selectedAnnotation(in screen: ScreenScanResult) -> ScreenshotAnnotation? {
+        guard let selectedAnnotationID else {
+            return screen.annotations.first
+        }
+        return screen.annotations.first { $0.id == selectedAnnotationID }
+            ?? screen.annotations.first
+    }
+
+    private func navigationControls(for screen: ScreenScanResult) -> some View {
+        let currentIndex = screen.annotations.firstIndex { $0.id == selectedAnnotationID } ?? 0
+        let count = screen.annotations.count
+
+        return HStack(spacing: 8) {
+            Text("\(currentIndex + 1) of \(count)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Button {
+                selectPreviousFailure(in: screen)
+            } label: {
+                Image(systemName: "chevron.left")
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.bordered)
+            .disabled(count < 2 || currentIndex == 0)
+
+            Button {
+                selectNextFailure(in: screen)
+            } label: {
+                Image(systemName: "chevron.right")
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.bordered)
+            .disabled(count < 2 || currentIndex >= count - 1)
+        }
+    }
+
+    private func selectPreviousFailure(in screen: ScreenScanResult) {
+        guard !screen.annotations.isEmpty else { return }
+        let currentIndex = screen.annotations.firstIndex { $0.id == selectedAnnotationID } ?? 0
+        let nextIndex = max(currentIndex - 1, 0)
+        selectedAnnotationID = screen.annotations[nextIndex].id
+        selectedViewportID = viewportContaining(
+            annotationID: selectedAnnotationID,
+            in: screen
+        )?.id
+    }
+
+    private func selectNextFailure(in screen: ScreenScanResult) {
+        guard !screen.annotations.isEmpty else { return }
+        let currentIndex = screen.annotations.firstIndex { $0.id == selectedAnnotationID } ?? -1
+        let nextIndex = min(currentIndex + 1, screen.annotations.count - 1)
+        selectedAnnotationID = screen.annotations[nextIndex].id
+        selectedViewportID = viewportContaining(
+            annotationID: selectedAnnotationID,
+            in: screen
+        )?.id
+    }
+
+    private func selectedFailureDetail(
+        _ annotation: ScreenshotAnnotation,
+        in screen: ScreenScanResult
+    ) -> some View {
+        let currentIndex = screen.annotations.firstIndex { $0.id == annotation.id } ?? 0
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(annotation.ruleName)
+                        .font(.title3)
+                        .fontWeight(.bold)
+                    Text("Issue \(currentIndex + 1) of \(screen.annotations.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Text("FAIL")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.red.opacity(0.12)))
+            }
+
+            detailRow(title: "ID", value: String(format: "%02d", annotation.number))
+            detailRow(
+                title: "Element",
+                value: annotation.elementLabel.isEmpty
+                    ? annotation.elementType
+                    : annotation.elementLabel
+            )
+            detailRow(title: "Type", value: annotation.elementType)
+            detailRow(title: "Issue", value: annotation.message)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Recommendation")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                Text(annotation.remediation)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(nsColor: .textBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.red.opacity(0.22), lineWidth: 1)
+        )
+    }
+
+    private func detailRow(title: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(title)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .frame(width: 92, alignment: .leading)
+            Text(value.isEmpty ? "—" : value)
+                .font(.callout)
+                .textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
+    }
+
     private func issueExplorerRow(_ annotation: ScreenshotAnnotation) -> some View {
         let selected = selectedAnnotationID == annotation.id
 
         return Button {
             selectedAnnotationID = annotation.id
+            if let screen = selectedScreen {
+                selectedViewportID = viewportContaining(
+                    annotationID: annotation.id,
+                    in: screen
+                )?.id
+            }
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 Text("\(annotation.number)")
@@ -644,6 +992,12 @@ struct ScanReportView: View {
 
         Button {
             selectedAnnotationID = annotation.id
+            if let screen = selectedScreen {
+                selectedViewportID = viewportContaining(
+                    annotationID: annotation.id,
+                    in: screen
+                )?.id
+            }
         } label: {
             HStack(
                 alignment: .top,
@@ -783,7 +1137,7 @@ struct ScanReportView: View {
                         )
 
                         resultPill(
-                            title: "VALIDATE",
+                            title: "MANUAL",
                             value: screen.validations
                         )
 
@@ -861,7 +1215,7 @@ struct ScanReportView: View {
                         )
 
                         metric(
-                            "Validate",
+                            "Manual",
                             rule.validations
                         )
 
@@ -971,7 +1325,7 @@ struct ScanReportView: View {
 
                     ruleSummaryHeader("Failures", width: statusColumnWidth)
                     ruleSummaryHeader("Warnings", width: statusColumnWidth)
-                    ruleSummaryHeader("Validate", width: statusColumnWidth)
+                    ruleSummaryHeader("Manual", width: statusColumnWidth)
                     ruleSummaryHeader("Pass", width: statusColumnWidth)
                 }
                 .padding(.horizontal, 12)
@@ -1345,9 +1699,7 @@ struct ScanReportView: View {
         let hierarchyWidth: Double
         let hierarchyHeight: Double
         let annotations: [ScreenshotAnnotation]
-        @Binding var selectedAnnotationID: UUID?
-
-        private let markerSize: CGFloat = 30
+        let selectedAnnotationID: UUID?
 
         var body: some View {
             GeometryReader { proxy in
@@ -1371,26 +1723,31 @@ struct ScanReportView: View {
 
                     ForEach(annotations) { annotation in
                         let frame = annotation.frame
-                        let x = frame.minX * scaleX
-                        let y = frame.minY * scaleY
-                        let width = max(frame.width * scaleX, 1)
-                        let height = max(frame.height * scaleY, 1)
-                        let markerX = min(
-                            max(x, 0),
-                            max(displayWidth - markerSize, 0)
+                        let screenshotBounds = CGRect(
+                            x: 0,
+                            y: 0,
+                            width: max(hierarchyWidth, 1),
+                            height: max(hierarchyHeight, 1)
                         )
-                        let markerY = min(
-                            max(y, 0),
-                            max(displayHeight - markerSize, 0)
-                        )
+                        let visibleFrame = frame.intersection(screenshotBounds)
                         let isSelected = selectedAnnotationID == annotation.id
 
-                        if isSelected {
+                        if isSelected &&
+                            !visibleFrame.isNull &&
+                            visibleFrame.width > 0 &&
+                            visibleFrame.height > 0 {
+                            let x = visibleFrame.minX * scaleX
+                            let y = visibleFrame.minY * scaleY
+                            let width = max(visibleFrame.width * scaleX, 1)
+                            let height = max(visibleFrame.height * scaleY, 1)
+                            // Keep the screenshot visually clean: only the
+                            // currently selected failed component is highlighted.
+                            // Validation and warning items are never rendered here.
                             RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.accentColor.opacity(0.18))
+                                .fill(Color.red.opacity(0.12))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 4)
-                                        .stroke(Color.accentColor, lineWidth: 4)
+                                        .stroke(Color.red, lineWidth: 4)
                                 )
                                 .frame(width: width, height: height)
                                 .position(
@@ -1398,32 +1755,8 @@ struct ScanReportView: View {
                                     y: y + height / 2
                                 )
                                 .allowsHitTesting(false)
+                                .zIndex(100)
                         }
-
-                        Button {
-                            selectedAnnotationID = annotation.id
-                        } label: {
-                            Text("\(annotation.number)")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(.white)
-                                .frame(width: markerSize, height: markerSize)
-                                .background(Self.annotationColor(annotation.severity))
-                                .clipShape(Circle())
-                                .overlay(
-                                    Circle()
-                                        .stroke(
-                                            isSelected ? Color.white : Color.clear,
-                                            lineWidth: 3
-                                        )
-                                )
-                                .shadow(radius: isSelected ? 5 : 2)
-                        }
-                        .buttonStyle(.plain)
-                        .position(
-                            x: markerX + markerSize / 2,
-                            y: markerY + markerSize / 2
-                        )
-                        .zIndex(isSelected ? 100 : Double(annotation.number))
                     }
                 }
                 .frame(width: displayWidth, height: displayHeight)
@@ -1438,18 +1771,6 @@ struct ScanReportView: View {
             )
         }
 
-        private static func annotationColor(
-            _ severity: AccessibilityFinding.Severity
-        ) -> Color {
-            switch severity {
-            case .error:
-                return .red
-            case .warning:
-                return .orange
-            case .info:
-                return .blue
-            }
-        }
     }
 
     private func annotationColor(

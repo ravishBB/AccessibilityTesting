@@ -46,3 +46,33 @@ driver, alongside the existing iOS (XCUITest / WebDriverAgent) path.
    warning instead, frames are still in pixels and size rules will be wrong.
 3. A scan of a screen with a 24dp icon button reports a target-size failure.
 4. Tap/scroll during the crawl move the app (checks scale and scrollGesture).
+
+## Flutter and React Native support
+
+The scanner is black-box and does not require the Flutter or React Native
+source project. It scans the native accessibility semantics exposed to Appium.
+
+### Flutter
+- Flutter's Android Semantics tree is exposed through Android accessibility
+  nodes, which UiAutomator2 can read.
+- Semantic identifiers can appear as Android `resource-id` values.
+- Generic `android.view.View` semantics are interpreted using accessibility
+  state such as clickable, checkable, focusable and content description.
+- Keyboard-focus testing includes focusable semantic nodes, not only native
+  Android Button/EditText classes.
+
+### React Native
+- React Native accessibility properties are consumed from the native Android
+  and iOS accessibility hierarchy.
+- Android `roleDescription` values exposed through `AccessibilityNodeInfo`
+  extras are read when available.
+- Generic accessible/focusable React Native views can participate in keyboard
+  focus testing even when their native class is not a Button/EditText.
+- iOS generic accessibility elements can recover button/link/adjustable roles
+  from their accessibility traits when XCUITest reports a generic element type.
+
+### Keyboard focus
+The scanner performs runtime Tab navigation through the Appium session and
+reads the platform-reported focused element. This is evidence-based:
+PASS means the control was reached, FAIL means it was not reached, and
+VALIDATE is used when the platform/session cannot expose reliable focus data.

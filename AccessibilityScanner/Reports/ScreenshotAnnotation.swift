@@ -51,6 +51,54 @@ struct ScreenshotAnnotation: Identifiable, Codable {
         )
     }
 
+    func renumbered(_ newNumber: Int) -> ScreenshotAnnotation {
+        return ScreenshotAnnotation(
+            id: id,
+            number: newNumber,
+            ruleID: ruleID,
+            ruleName: ruleName,
+            severity: severity,
+            message: message,
+            remediation: remediation,
+            elementType: elementType,
+            elementLabel: elementLabel,
+            frameX: frameX,
+            frameY: frameY,
+            frameWidth: frameWidth,
+            frameHeight: frameHeight
+        )
+    }
+
+    private init(
+        id: UUID,
+        number: Int,
+        ruleID: String,
+        ruleName: String,
+        severity: AccessibilityFinding.Severity,
+        message: String,
+        remediation: String,
+        elementType: String,
+        elementLabel: String,
+        frameX: Double,
+        frameY: Double,
+        frameWidth: Double,
+        frameHeight: Double
+    ) {
+        self.id = id
+        self.number = number
+        self.ruleID = ruleID
+        self.ruleName = ruleName
+        self.severity = severity
+        self.message = message
+        self.remediation = remediation
+        self.elementType = elementType
+        self.elementLabel = elementLabel
+        self.frameX = frameX
+        self.frameY = frameY
+        self.frameWidth = frameWidth
+        self.frameHeight = frameHeight
+    }
+
     // MARK: - Stable Screenshot Ordering
 
     /// Creates annotations in deterministic visual order for one screenshot.
@@ -63,10 +111,12 @@ struct ScreenshotAnnotation: Identifiable, Codable {
     static func makeAnnotations(
         from evaluations: [AccessibilityRuleEvaluation]
     ) -> [ScreenshotAnnotation] {
+        // Screenshot highlighting is reserved for actual failed checks.
+        // Warnings and manual-validation items remain available in the
+        // report, but they do not place a marker/highlight on the screenshot.
+        // This keeps the visual evidence focused on confirmed failures.
         let relevant = evaluations.filter {
-            $0.status == .fail ||
-            $0.status == .warning ||
-            $0.status == .validate
+            $0.status == .fail
         }
 
         let sorted = relevant.sorted { lhs, rhs in
