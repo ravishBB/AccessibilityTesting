@@ -101,6 +101,8 @@ private struct JSONReportPayload: Codable {
     let findings: [JSONGroupedFinding]
     let screens: [JSONScreen]
     let rules: [JSONRuleSummary]
+    /// Per-rule outcomes and the full WCAG A/AA coverage matrix (schema 1.5).
+    let coverage: ReportCoverage
     let intelligence: AccessibilityIntelligence?
 
     init(report: AccessibilityScanResult, options: JSONReportExporter.Options) {
@@ -108,7 +110,8 @@ private struct JSONReportPayload: Codable {
 
         // 1.4 is additive over 1.3: generator, reportID, findings, per-evaluation
         // fingerprint/wcag/impact, rule metadata and embedded screenshots.
-        self.schemaVersion = "1.4"
+        // 1.5 is additive over 1.4: coverage block and summary.uniquePasses.
+        self.schemaVersion = "1.5"
         self.reportID = report.id
         self.generator = JSONGenerator()
         self.scan = JSONScanMetadata(report: report)
@@ -118,6 +121,7 @@ private struct JSONReportPayload: Codable {
             JSONScreen(screen: $0, grouping: grouping, options: options)
         }
         self.rules = report.ruleSummaries.map(JSONRuleSummary.init)
+        self.coverage = ReportCoverage(report: report, grouping: grouping)
         self.intelligence = report.intelligence
     }
 }
@@ -157,6 +161,8 @@ private struct JSONGroupedFinding: Codable {
     let id: String
     let ruleID: String
     let ruleName: String
+    let bbIssueID: String?
+    let bbIssueTitle: String?
     let status: String
     let severity: String
     let impact: String
@@ -172,6 +178,8 @@ private struct JSONGroupedFinding: Codable {
         self.id = group.id
         self.ruleID = group.ruleID
         self.ruleName = group.ruleName
+        self.bbIssueID = group.bbIssue?.id
+        self.bbIssueTitle = group.bbIssue?.title
         self.status = group.status.rawValue
         self.severity = group.severity.rawValue
         self.impact = group.metadata.impact.rawValue
@@ -194,6 +202,8 @@ private struct JSONScanMetadata: Codable {
     let finishedAt: Date
     let durationSeconds: Double
     let screensScanned: Int
+    /// Rules attempted on this scan. Not every rule produces a result; see
+    /// `coverage` for how many gave automated verdicts.
     let rulesExecuted: Int
 
     init(report: AccessibilityScanResult) {
@@ -225,8 +235,11 @@ private struct JSONSummary: Codable {
     let uniqueFailures: Int
     let uniqueWarnings: Int
     let uniqueManualReview: Int
+    /// Passed results in the same unit as the unique counts above.
+    let uniquePasses: Int
 
     init(report: AccessibilityScanResult, grouping: FindingGrouping) {
+        self.uniquePasses = grouping.passCount
         self.uniqueFailures = grouping.failureCount
         self.uniqueWarnings = grouping.warningCount
         self.uniqueManualReview = grouping.manualReviewCount
@@ -405,6 +418,7 @@ private struct JSONEvaluation: Codable {
     let ruleID: String
     let ruleName: String
     let ruleDescription: String
+    let bbIssueID: String?
     let status: String
     let severity: String
     let message: String
@@ -424,6 +438,7 @@ private struct JSONEvaluation: Codable {
         self.ruleID = evaluation.ruleID
         self.ruleName = evaluation.ruleName
         self.ruleDescription = evaluation.ruleDescription
+        self.bbIssueID = BBIssueCatalog.issue(for: evaluation)?.id
         self.status = evaluation.status.rawValue
         self.severity = evaluation.severity.rawValue
         self.message = evaluation.message

@@ -788,7 +788,7 @@ struct ContentView: View {
                 viewModel.scanResult {
 
                 Text(
-                    "\(report.totalElementsTested) elements • \(report.rulesExecuted) rules"
+                    "\(report.totalElementsTested) elements • \(report.automatedVerdictRuleCount)/\(report.rulesExecuted) rules with results"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

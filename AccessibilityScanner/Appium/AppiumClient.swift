@@ -503,6 +503,12 @@ final class AppiumClient {
         try await pressKey(value: "\u{E004}")
     }
 
+    /// Activates the keyboard-focused control: Space on iOS (Full Keyboard
+    /// Access), Enter on Android.
+    func pressActivate() async throws {
+        try await pressKey(value: platform == .ios ? "\u{E00D}" : "\u{E007}")
+    }
+
     private func pressKey(value: String) async throws {
         guard let sessionID else {
             throw AppiumError.noActiveSession
@@ -811,6 +817,50 @@ final class AppiumClient {
         } catch {
             print("Warning: could not activate app \(bundleID): \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - App lifecycle (runtime probes)
+
+    /// Terminates the app (`mobile: terminateApp`). Throws on failure.
+    func terminateApp(bundleID: String) async throws {
+        let key = platform == .ios ? "bundleId" : "appId"
+        try await executeMobile("mobile: terminateApp", arguments: [key: bundleID])
+    }
+
+    /// Launches the app with launch arguments (`mobile: launchApp`, iOS only).
+    /// On Android the app is started without arguments.
+    func launchApp(bundleID: String, arguments: [String]) async throws {
+        switch platform {
+        case .ios:
+            var argument: [String: Any] = ["bundleId": bundleID]
+            if !arguments.isEmpty { argument["arguments"] = arguments }
+            try await executeMobile("mobile: launchApp", arguments: argument)
+        case .android:
+            await activateApp(bundleID: bundleID)
+        }
+    }
+
+    private func executeMobile(_ script: String, arguments: [String: Any]) async throws {
+        guard let sessionID else {
+            throw AppiumError.noActiveSession
+        }
+
+        let url = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("execute")
+            .appendingPathComponent("sync")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: ["script": script, "args": [arguments]]
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
     }
 
     // MARK: - Platform support

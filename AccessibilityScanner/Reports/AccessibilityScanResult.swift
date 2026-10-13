@@ -100,6 +100,10 @@ struct AccessibilityScanResult: Identifiable, Codable {
         }
     }
 
+    var totalNotTested: Int {
+        screens.reduce(0) { $0 + $1.evaluations.filter { $0.status == .notTested }.count }
+    }
+
     var totalPasses: Int {
         screens.reduce(0) {
             $0 + $1.passes
@@ -122,6 +126,10 @@ struct AccessibilityScanResult: Identifiable, Codable {
 
         if totalValidations > 0 {
             return .validate
+        }
+
+        if totalNotTested > 0 {
+            return .notTested
         }
 
         return .pass

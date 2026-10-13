@@ -76,6 +76,8 @@ struct GroupedFinding: Identifiable {
     let status: RuleResultStatus
     let severity: AccessibilityFinding.Severity
     let metadata: AccessibilityRuleMetadata
+    /// BarrierBreak issue this group maps to, if any.
+    let bbIssue: BBIssue?
     let occurrences: [FindingOccurrence]
 
     var count: Int { occurrences.count }
@@ -106,6 +108,12 @@ struct FindingGrouping {
     /// that were merged), keyed by evaluation id.
     let fingerprintByEvaluationID: [UUID: String]
 
+    /// Unique passed results per rule, deduplicated the same way as failures
+    /// (one rule on one element on one screen counts once).
+    let passesByRule: [String: Int]
+
+    var passCount: Int { passesByRule.values.reduce(0, +) }
+
     var issueGroups: [GroupedFinding] {
         groups.filter { $0.status == .fail || $0.status == .warning }
     }
@@ -132,10 +140,26 @@ struct FindingGrouping {
         var fingerprintByID: [UUID: String] = [:]
         var occurrencesByKey: [String: [FindingOccurrence]] = [:]
         var seen = Set<String>()
+        var passesByRuleBuilder: [String: Int] = [:]
+        var seenPasses = Set<String>()
 
         for screen in report.screens {
 
-            let actionable = screen.evaluations.filter { $0.status != .pass }
+            // Passed results use the same identity as failures so every count
+            // in the report is in the same unit.
+            for evaluation in screen.evaluations where evaluation.status == .pass {
+                let base = FindingFingerprint.baseFingerprint(
+                    ruleID: evaluation.ruleID,
+                    screen: screen,
+                    evaluation: evaluation
+                )
+                let passKey = "\(evaluation.ruleID)|\(base)|\(FindingGrouping.frameKey(evaluation))"
+                if seenPasses.insert(passKey).inserted {
+                    passesByRuleBuilder[evaluation.ruleID, default: 0] += 1
+                }
+            }
+
+            let actionable = screen.evaluations.filter { $0.status != .pass && $0.status != .notTested }
 
             // Base fingerprint and a frame key per evaluation.
             let bases = actionable.map {
@@ -174,7 +198,9 @@ struct FindingGrouping {
                 let dedupeKey = "\(evaluation.ruleID)|\(evaluation.status.rawValue)|\(fingerprint)"
                 guard seen.insert(dedupeKey).inserted else { continue }
 
-                let groupKey = "\(evaluation.ruleID)|\(evaluation.status.rawValue)"
+                // One group per BB issue: a rule's results can map to several.
+                let bbID = BBIssueCatalog.issue(for: evaluation)?.id ?? ""
+                let groupKey = "\(evaluation.ruleID)|\(evaluation.status.rawValue)|\(bbID)"
                 occurrencesByKey[groupKey, default: []].append(
                     FindingOccurrence(
                         fingerprint: fingerprint,
@@ -204,6 +230,7 @@ struct FindingGrouping {
                 status: first.status,
                 severity: worstSeverity,
                 metadata: AccessibilityRuleCatalog.metadata(for: first.ruleID),
+                bbIssue: BBIssueCatalog.issue(for: first),
                 occurrences: occurrences
             )
         }
@@ -219,6 +246,7 @@ struct FindingGrouping {
             return $0.ruleName.localizedCaseInsensitiveCompare($1.ruleName) == .orderedAscending
         }
         self.fingerprintByEvaluationID = fingerprintByID
+        self.passesByRule = passesByRuleBuilder
     }
 
     private static func frameKey(_ evaluation: AccessibilityRuleEvaluation) -> String {

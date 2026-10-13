@@ -12,6 +12,7 @@ enum RuleResultStatus: String, Codable, CaseIterable {
     case fail
     case warning
     case validate
+    case notTested
 
     var displayName: String {
         switch self {
@@ -23,6 +24,8 @@ enum RuleResultStatus: String, Codable, CaseIterable {
             return "WARNING"
         case .validate:
             return "MANUAL REVIEW"
+        case .notTested:
+            return "NOT TESTED"
         }
     }
 }

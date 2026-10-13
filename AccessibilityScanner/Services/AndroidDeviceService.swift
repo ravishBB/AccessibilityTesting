@@ -198,6 +198,26 @@ final class AndroidDeviceService {
 
     // MARK: - Process
 
+    // MARK: - Font scale (large-text probe)
+
+    /// Current system font scale, or nil when it has never been changed.
+    func fontScale(serial: String) throws -> String? {
+        guard let adb = adbPath() else { throw AndroidServiceError.adbNotFound }
+        let output = try run(adb, ["-s", serial, "shell", "settings", "get", "system", "font_scale"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (output.isEmpty || output == "null") ? nil : output
+    }
+
+    /// Sets the system font scale; nil restores the default.
+    func setFontScale(serial: String, value: String?) throws {
+        guard let adb = adbPath() else { throw AndroidServiceError.adbNotFound }
+        if let value {
+            _ = try run(adb, ["-s", serial, "shell", "settings", "put", "system", "font_scale", value])
+        } else {
+            _ = try run(adb, ["-s", serial, "shell", "settings", "delete", "system", "font_scale"])
+        }
+    }
+
     private func run(_ executable: String, _ arguments: [String]) throws -> String {
 
         let process = Process()

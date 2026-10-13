@@ -112,6 +112,7 @@ struct AccessibilityImpactCenter: Codable, Hashable {
             case .fail: statusWeight = 5
             case .warning: statusWeight = 3
             case .validate: statusWeight = 2
+            case .notTested: statusWeight = 0
             case .pass: statusWeight = 0
             }
 
@@ -381,6 +382,7 @@ struct AccessibilityImpactCenterView: View {
         case .fail: return .red
         case .warning: return .orange
         case .validate: return .yellow
+        case .notTested: return .gray
         case .pass: return .green
         case .notTested: return .gray
         }
@@ -391,6 +393,7 @@ struct AccessibilityImpactCenterView: View {
         case .fail: return .red
         case .warning: return .orange
         case .validate: return .yellow
+        case .notTested: return .gray
         case .pass: return .green
         }
     }

@@ -61,6 +61,7 @@ final class AppCrawler {
     private let appium: AppiumClient
     private let scanner: AccessibilityScanner
     private let configuration: AppCrawlerConfiguration
+    private let probeEnvironment: RuntimeProbeEnvironment?
 
     private var visitedScreens:
         Set<String> = []
@@ -68,16 +69,25 @@ final class AppCrawler {
     private var discoveredScreens:
         [CrawledScreen] = []
 
+    /// Controls already exercised by a runtime probe on an earlier screen.
+    private var probedControlKeys = Set<String>()
+
+    /// Orientation support is normally app-wide, and every rotation costs a
+    /// re-layout plus a hierarchy fetch, so it is probed once per scan.
+    private var orientationProbed = false
+
     init(
         appium: AppiumClient,
         scanner: AccessibilityScanner = AccessibilityScanner(),
         configuration: AppCrawlerConfiguration =
-            .default
+            .default,
+        probeEnvironment: RuntimeProbeEnvironment? = nil
     ) {
 
         self.appium = appium
         self.scanner = scanner
         self.configuration = configuration
+        self.probeEnvironment = probeEnvironment
     }
 
     func crawl(
@@ -88,6 +98,8 @@ final class AppCrawler {
 
         visitedScreens.removeAll()
         discoveredScreens.removeAll()
+        probedControlKeys.removeAll()
+        orientationProbed = false
 
         statusHandler(
             "Scanning initial screen..."
@@ -101,6 +113,89 @@ final class AppCrawler {
         )
 
         return discoveredScreens
+    }
+
+    /// Runtime probes that exercise the app on the device. They run after the
+    /// keyboard focus traversal and reuse it; each reports Not tested with a
+    /// reason if it cannot run. Controls exercised on an earlier screen are
+    /// skipped. Orientation runs once per scan, and the text-size probe
+    /// (which relaunches the app) runs only on the first screen.
+    private func runtimeProbeEvaluations(
+        rootNode: AccessibilityNode,
+        isFirstScreen: Bool,
+        focusResult: KeyboardFocusTester.Result?
+    ) async throws -> [AccessibilityRuleEvaluation] {
+
+        var results: [AccessibilityRuleEvaluation] = []
+
+        let stateProbe = StateUpdateProbe(appium: appium, alreadyTested: probedControlKeys)
+        results += try await timedProbe("State update", ruleIDs: ["state-updates-after-interaction"], rootNode: rootNode) {
+            try await stateProbe.test(rootNode: rootNode)
+        }
+        probedControlKeys.formUnion(stateProbe.testedKeys)
+
+        let activationProbe = KeyboardActivationProbe(
+            appium: appium,
+            focusResult: focusResult,
+            alreadyTested: probedControlKeys
+        )
+        results += try await timedProbe("Keyboard activation", ruleIDs: ["keyboard-activation"], rootNode: rootNode) {
+            try await activationProbe.test(rootNode: rootNode)
+        }
+        probedControlKeys.formUnion(activationProbe.testedKeys)
+
+        let errorProbe = ErrorMessageProbe(appium: appium, alreadyTested: probedControlKeys)
+        results += try await timedProbe("Form errors", ruleIDs: ["error-message-suggestion"], rootNode: rootNode) {
+            try await errorProbe.test(rootNode: rootNode)
+        }
+        probedControlKeys.formUnion(errorProbe.testedKeys)
+
+        if !orientationProbed {
+            orientationProbed = true
+            results += try await timedProbe("Orientation", ruleIDs: ["orientation-support"], rootNode: rootNode) {
+                try await OrientationProbe(appium: appium).test(rootNode: rootNode)
+            }
+        }
+
+        if isFirstScreen, let environment = probeEnvironment {
+            results += try await timedProbe("Larger text", ruleIDs: ["text-resize", "text-clipping"], rootNode: rootNode) {
+                try await TextSizeProbe(
+                    appium: appium,
+                    environment: environment,
+                    scanner: scanner
+                ).test(rootNode: rootNode)
+            }
+        }
+
+        return results
+    }
+
+    /// Runs one probe, logs how long it took, and turns a failure into Not
+    /// tested results so one probe cannot stop the others.
+    private func timedProbe(
+        _ name: String,
+        ruleIDs: [String],
+        rootNode: AccessibilityNode,
+        _ body: () async throws -> [AccessibilityRuleEvaluation]
+    ) async throws -> [AccessibilityRuleEvaluation] {
+        let started = Date()
+        defer {
+            print("Runtime probe \(name): \(String(format: "%.1f", Date().timeIntervalSince(started)))s")
+        }
+        do {
+            return try await body()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return ruleIDs.map { ruleID in
+                ProbeEvaluation.make(
+                    ruleID: ruleID,
+                    status: .notTested,
+                    message: "\(name) was not tested: \(error.localizedDescription)",
+                    node: rootNode
+                )
+            }
+        }
     }
 
     private func explore(
@@ -163,8 +258,11 @@ final class AppCrawler {
 
         statusHandler("Testing keyboard focus on screen \(discoveredScreens.count + 1)...")
         let keyboardFocusEvaluations: [AccessibilityRuleEvaluation]
+        var focusResult: KeyboardFocusTester.Result?
+        let focusStarted = Date()
         do {
-            keyboardFocusEvaluations = try await KeyboardFocusTester(appium: appium).test(rootNode: topSnapshot.rootNode).evaluations
+            focusResult = try await KeyboardFocusTester(appium: appium).test(rootNode: topSnapshot.rootNode)
+            keyboardFocusEvaluations = focusResult?.evaluations ?? []
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -176,6 +274,15 @@ final class AppCrawler {
             ]
             print("Keyboard focus probe unavailable: \(error.localizedDescription)")
         }
+
+        print("Runtime probe Keyboard focus: \(String(format: "%.1f", Date().timeIntervalSince(focusStarted)))s")
+
+        statusHandler("Running runtime checks on screen \(discoveredScreens.count + 1)...")
+        let runtimeEvaluations = try await runtimeProbeEvaluations(
+            rootNode: topSnapshot.rootNode,
+            isFirstScreen: discoveredScreens.isEmpty,
+            focusResult: focusResult
+        )
 
         let actions =
             navigationActions(
@@ -216,7 +323,7 @@ final class AppCrawler {
             screenshotWidth: topSnapshot.screenshotWidth,
             screenshotHeight: topSnapshot.screenshotHeight,
             viewportCaptures: scrollResult.viewportCaptures,
-            keyboardFocusEvaluations: keyboardFocusEvaluations
+            keyboardFocusEvaluations: keyboardFocusEvaluations + runtimeEvaluations
         )
         discoveredScreens.append(screen)
         screenHandler?(screen)

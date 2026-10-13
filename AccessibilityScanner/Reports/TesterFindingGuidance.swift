@@ -41,6 +41,8 @@ extension AccessibilityRuleEvaluation {
             return "The scanner detected a condition that may require tester confirmation."
         case .validate:
             return "The scanner could not prove PASS or FAIL from the available black-box evidence. Manual verification is required."
+        case .notTested:
+            return "This check was not executed because the required runtime capability or evidence was unavailable."
         case .pass:
             return "The captured evidence satisfies this automated check."
         }

@@ -20,6 +20,7 @@ struct RuleSummary: Identifiable, Codable {
     let warnings: Int
     let validations: Int
     let passes: Int
+    let notTested: Int
 
     init(
         ruleID: String,
@@ -48,9 +49,13 @@ struct RuleSummary: Identifiable, Codable {
         self.passes = evaluations.filter {
             $0.status == .pass
         }.count
+
+        self.notTested = evaluations.filter {
+            $0.status == .notTested
+        }.count
     }
 
     var totalEvaluations: Int {
-        failures + warnings + validations + passes
+        failures + warnings + validations + passes + notTested
     }
 }

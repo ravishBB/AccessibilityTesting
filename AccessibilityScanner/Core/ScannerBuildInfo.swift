@@ -2,9 +2,6 @@
 //  ScannerBuildInfo.swift
 //  AccessibilityScanner
 //
-//  Identifies which scanner build and rule set produced a report, so results
-//  can be reproduced and compared across versions.
-//
 
 import Foundation
 

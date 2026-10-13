@@ -3,7 +3,6 @@
 //  AccessibilityScannerDemo
 //
 //  Created by Ravish Kumar on 21/09/26.
-//
 
 import Foundation
 
@@ -67,6 +66,10 @@ final class AccessibilityScanner {
         // Evaluate hierarchy-wide rules once. These rules need sibling or
         // geometric context and cannot be implemented correctly per element.
         for rule in rules {
+            if let context, let contextualRule = rule as? ContextualScreenAccessibilityRule {
+                evaluations.append(contentsOf: contextualRule.evaluate(rootNode: rootNode, context: context))
+                continue
+            }
             guard let screenRule = rule as? ScreenAccessibilityRule else { continue }
             evaluations.append(contentsOf: screenRule.evaluate(rootNode: rootNode))
         }

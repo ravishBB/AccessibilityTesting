@@ -1,17 +1,10 @@
 //
 //  AccessibilityRuleCatalog.swift
 //  AccessibilityScanner
-//
-//  Single source of truth for rule metadata: WCAG 2.2 mapping, user impact,
-//  who is affected, and how a tester verifies the result by hand.
-//  Keyed by `AccessibilityRule.id` / `AccessibilityRuleEvaluation.ruleID`.
-//
+
 
 import Foundation
 
-/// How badly a confirmed failure of a rule affects users. This is independent
-/// of the per-evaluation `AccessibilityFinding.Severity`, which describes the
-/// scanner's confidence/priority for one concrete element.
 enum AccessibilityImpact: String, Codable, CaseIterable {
     case critical   // blocks a task for some users
     case serious    // causes major difficulty
@@ -54,7 +47,7 @@ struct AccessibilityRuleMetadata: Codable, Hashable {
 enum AccessibilityRuleCatalog {
 
     /// Bump whenever a rule is added, removed, re-mapped or its logic changes.
-    static let version = "2026.10.1"
+    static let version = "2026.10.7"
 
     static func metadata(for ruleID: String) -> AccessibilityRuleMetadata {
         if let known = table[ruleID] { return known }
@@ -155,22 +148,33 @@ enum AccessibilityRuleCatalog {
 
         // Keyboard / focus / gestures
         e("keyboard-focus", "2.1.1", "Keyboard", "A", .critical, "Keyboard and switch-control users", "Use a hardware keyboard Tab/Shift-Tab and confirm the control can receive focus and be activated."),
+        e("accessibility-interface-operable", "2.1.1", "Keyboard", "A", .critical, "Screen reader and switch-control users", "Confirm interactive controls can be activated through the platform accessibility interface."),
+        e("screen-reader-focus-order", "2.4.3", "Focus Order", "A", .serious, "Screen reader users", "Use VoiceOver/TalkBack sequential navigation and confirm focus follows the intended order."),
+        e("screen-reader-modal-focus", "2.4.3", "Focus Order", "A", .serious, "Screen reader users", "Open each modal with VoiceOver/TalkBack and verify focus enters, remains within, and returns correctly."),
+        e("screen-reader-trap", "2.1.2", "No Keyboard Trap", "A", .serious, "Screen reader users", "Verify VoiceOver/TalkBack focus can leave every component and modal when appropriate."),
+        e("screen-reader-focus-context-change", "3.2.1", "On Focus", "A", .moderate, "Screen reader users", "Verify receiving screen-reader focus does not unexpectedly change context."),
+        e("keyboard-focus-context-change", "3.2.1", "On Focus", "A", .moderate, "Keyboard users", "Verify receiving external-keyboard focus does not unexpectedly change context."),
+        e("keyboard-activation", "2.1.1", "Keyboard", "A", .critical, "Keyboard and switch-control users", "Tab to each button and link with a hardware keyboard and press Space/Enter; confirm it activates."),
+        e("keyboard-focus-hidden-content", "2.4.3", "Focus Order", "A", .serious, "Keyboard users", "Tab through the screen and confirm focus never lands on hidden or off-screen content."),
+        e("keyboard-focus-noninteractive", "2.4.3", "Focus Order", "A", .moderate, "Keyboard users", "Tab through the screen and confirm focus only lands on controls the user can act on."),
+        e("cancel-undo-mechanism", "3.3.4", "Error Prevention (Legal, Financial, Data)", "AA", .moderate, "Users who need to recover from mistakes", "Exercise consequential actions and confirm an appropriate cancel or undo mechanism is available."),
+        e("input-context-change", "3.2.2", "On Input", "A", .moderate, "Users with cognitive and motor disabilities", "Enter or change representative input and confirm context changes occur only when expected."),
         e("gesture-keyboard-operable", "2.1.1", "Keyboard", "A", .critical, "Keyboard and switch-control users", "Confirm the gesture action can also be performed with the keyboard or a simple control."),
         e("modal-accessibility", "2.1.2", "No Keyboard Trap", "A", .serious, "\(sr), keyboard users", "Open the dialog, confirm focus moves into it and can leave it, and returns correctly on dismissal."),
         e("modal-focus-containment", "2.4.3", "Focus Order", "A", .serious, "\(sr), keyboard users", "Open the dialog and confirm focus stays inside until it is dismissed."),
         e("focus-order", "2.4.3", "Focus Order", "A", .serious, "\(sr), keyboard users", "Move focus sequentially and confirm the order is logical."),
         e("focus-indicator", "2.4.7", "Focus Visible", "AA", .serious, "Keyboard users", "Tab through the screen and confirm the focused element has a visible indicator."),
         e("complex-gesture-alternative", "2.5.1", "Pointer Gestures", "A", .serious, "Users with motor disabilities", "Confirm multi-finger or path gestures have a single-tap alternative."),
+        e("multi-point-gesture-alternative", "2.5.1", "Pointer Gestures", "A", .serious, "Users with motor disabilities", "Confirm multi-point gestures have an equivalent simple alternative."),
+        e("path-based-gesture-alternative", "2.5.1", "Pointer Gestures", "A", .serious, "Users with motor disabilities", "Confirm path-based gestures have an equivalent simple alternative."),
         e("touch-up-cancellation", "2.5.2", "Pointer Cancellation", "A", .moderate, "Users with motor disabilities", "Press on the control, slide away and release; confirm the action does not fire."),
         e("motion-alternative", "2.5.4", "Motion Actuation", "A", .moderate, "Users with motor disabilities", "Perform the motion interaction and confirm an equivalent non-motion control exists."),
         e("visual-label", "2.5.3", "Label in Name", "A", .serious, "Voice control users", "Say the visible label aloud with Voice Control and confirm the control activates."),
         e("form-visual-label", "3.3.2", "Labels or Instructions", "A", .serious, "\(sr), users with cognitive disabilities", "Focus the field and confirm the announced name matches the visible label."),
 
         // Target size
-        e("target-size-minimum-24", "2.5.8", "Target Size (Minimum)", "AA", .moderate, "Users with motor disabilities", targetTest),
         e("touch-target-size-24", "2.5.8", "Target Size (Minimum)", "AA", .moderate, "Users with motor disabilities", targetTest),
         e("interactive-target-overlap", "2.5.8", "Target Size (Minimum)", "AA", .serious, "Users with motor disabilities", "Try activating each overlapping control and confirm the intended one responds."),
-        e("target-size-enhanced-44", "2.5.5", "Target Size (Enhanced)", "AAA", .minor, "Users with motor disabilities", targetTest),
         e("touch-target-size-44", "2.5.5", "Target Size (Enhanced)", "AAA", .minor, "Users with motor disabilities", targetTest),
 
         // Navigation / labels
@@ -183,6 +187,7 @@ enum AccessibilityRuleCatalog {
         e("time-limited-ui", "2.2.1", "Timing Adjustable", "A", .serious, "Users who need more time", "Let the timer approach expiry and confirm the user can extend or disable the limit."),
 
         // Errors and status
+        e("error-message-suggestion", "3.3.3", "Error Suggestion", "AA", .serious, "\(sr), users with cognitive disabilities", "Trigger each validation error and confirm the message says how to correct the input."),
         e("error-message-accessibility", "3.3.1", "Error Identification", "A", .serious, "\(sr), users with cognitive disabilities", "Trigger the validation error and confirm it is announced and explains how to recover."),
         e("live-region", "4.1.3", "Status Messages", "AA", .moderate, sr, "Trigger the dynamic update and confirm assistive technology announces it."),
         e("state-updates-after-interaction", "4.1.3", "Status Messages", "AA", .moderate, sr, "Interact with the control and confirm the resulting state change is announced.")

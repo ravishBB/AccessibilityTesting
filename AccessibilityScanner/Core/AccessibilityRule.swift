@@ -30,3 +30,12 @@ protocol ScreenAccessibilityRule: AccessibilityRule {
         rootNode: AccessibilityNode
     ) -> [AccessibilityRuleEvaluation]
 }
+
+/// A screen-level rule that also needs the rendered screenshot.
+protocol ContextualScreenAccessibilityRule {
+
+    func evaluate(
+        rootNode: AccessibilityNode,
+        context: AccessibilityRuleContext
+    ) -> [AccessibilityRuleEvaluation]
+}

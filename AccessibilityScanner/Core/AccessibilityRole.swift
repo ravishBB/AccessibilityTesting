@@ -2,9 +2,6 @@
 //  AccessibilityRole.swift
 //  AccessibilityScanner
 //
-//  Platform-neutral element roles. Rules, the crawler and the report layers
-//  work with roles instead of raw `XCUIElementType*` / Android class names.
-//
 
 import Foundation
 

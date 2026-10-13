@@ -1,11 +1,7 @@
 import Foundation
 import CoreGraphics
+import AppKit
 
-/// Runtime keyboard-focus probe for Appium sessions.
-///
-/// This is intentionally separate from the static KeyboardFocusRule. The rule
-/// catalog still owns the rule ID, while this tester supplies the evidence that
-/// a static accessibility hierarchy cannot prove by itself.
 final class KeyboardFocusTester {
 
     struct Result {
@@ -14,98 +10,162 @@ final class KeyboardFocusTester {
         let reachedControlCount: Int
         let requiredControlCount: Int
         let evidenceAvailable: Bool
+        /// Controls keyboard focus reached, in the order it reached them.
+        var reachedNodes: [AccessibilityNode] = []
     }
 
     private let appium: AppiumClient
     private let maxAdditionalTabs: Int
+    private let settleMilliseconds: UInt64
 
-    init(appium: AppiumClient, maxAdditionalTabs: Int = 80) {
+    /// Tabs to try before concluding the session does not expose keyboard
+    /// focus at all. Each Tab costs a full hierarchy fetch.
+    private let tabsBeforeGivingUp = 3
+
+    init(
+        appium: AppiumClient,
+        maxAdditionalTabs: Int = 24,
+        settleMilliseconds: UInt64 = 60
+    ) {
         self.appium = appium
         self.maxAdditionalTabs = maxAdditionalTabs
+        self.settleMilliseconds = settleMilliseconds
     }
 
     func unavailableEvaluation(rootNode: AccessibilityNode, error: Error) -> AccessibilityRuleEvaluation {
-        validationEvaluation(
+        baseEvaluation(
+            ruleID: "keyboard-focus",
+            name: "Interactive elements focusable using a keyboard interface",
+            description: "Interactive controls should be reachable through the supported keyboard focus mechanism.",
             node: rootNode,
-            message: "Keyboard focus test could not be executed: \(error.localizedDescription)",
-            remediation: "Verify the Appium session accepts W3C keyboard actions and rerun the scan."
+            status: .notTested,
+            severity: .warning,
+            message: "Keyboard focus could not be tested because the runtime keyboard capability was unavailable.",
+            remediation: "Verify that the Appium session exposes keyboard actions and focused state, then rerun the scan."
         )
     }
 
     func test(rootNode: AccessibilityNode) async throws -> Result {
-        let controls = interactiveControls(in: rootNode)
-
+        let activeModal = modalNode(in: rootNode)
+        let controlsRoot = activeModal ?? rootNode
+        let controls = interactiveControls(in: controlsRoot)
         guard !controls.isEmpty else {
-            return Result(
-                evaluations: [],
-                focusedSequence: [],
-                reachedControlCount: 0,
-                requiredControlCount: 0,
-                evidenceAvailable: true
-            )
+            return Result(evaluations: [], focusedSequence: [], reachedControlCount: 0, requiredControlCount: 0, evidenceAvailable: true)
         }
 
-        // WDA exposes XCTest's hasFocus value as the `focused` element
-        // attribute. The screen does not necessarily start with a focused
-        // control, so the probe intentionally sends the first Tab before
-        // deciding whether focus evidence is available.
         var reachedKeys = Set<String>()
         var sequence: [String] = []
-        var seenStates = Set<String>()
+        var seenFocusedKeys = Set<String>()
         var observedFocusedElement = false
+        var trapDetected = false
+        var visualEvidence: [String: Bool] = [:]
+        var traversalCompleted = false
+        var hiddenFocused: [String: AccessibilityNode] = [:]
+        var nonInteractiveFocused: [String: AccessibilityNode] = [:]
+        let baselineLabels = ProbeNodes.contentLabels(in: rootNode)
+        var contextChanged = false
+        var stepsObserved = 0
 
-        // Do not force a minimum of 80 Appium round-trips on every screen.
-        // The previous `max(...)` made even a screen with 2 controls perform
-        // 80 Tab -> page-source cycles. Cap the probe by the number of
-        // controls actually present, while retaining a configurable safety
-        // ceiling for larger screens.
-        let maxTabs = min(maxAdditionalTabs, controls.count * 3 + 3)
+        let maxTabs = min(maxAdditionalTabs, max(1, controls.count + 2))
+        let baselineScreenshot = try? await appium.getScreenshot()
 
-        for _ in 0..<maxTabs {
+        for tabIndex in 0..<maxTabs {
             try Task.checkCancellation()
+            if !observedFocusedElement && hiddenFocused.isEmpty && tabIndex >= tabsBeforeGivingUp {
+                break
+            }
             try await appium.pressTab()
 
-            // Give XCTest/WDA a short opportunity to settle its focus state.
-            try await Task.sleep(for: .milliseconds(120))
+            if settleMilliseconds > 0 {
+                try await Task.sleep(for: .milliseconds(settleMilliseconds))
+            }
 
             let source = try await appium.getSource()
             let root = try appium.makeParser().parse(source)
+
+            // Focus that lands on hidden content is reported even though the
+            // visible-focus lookup below ignores it.
+            if let anyFocused = anyFocusedNode(in: root), !(anyFocused.visible && anyFocused.accessible) {
+                hiddenFocused[stableKey(for: anyFocused)] = anyFocused
+            }
+
+            // Focus alone must not navigate away or rebuild the screen.
+            if !baselineLabels.isEmpty {
+                let currentLabels = ProbeNodes.contentLabels(in: root)
+                let missing = Double(baselineLabels.subtracting(currentLabels).count) / Double(baselineLabels.count)
+                if missing > 0.6 {
+                    contextChanged = true
+                    try? await appium.goBack()
+                    break
+                }
+            }
 
             guard let focused = firstFocusedNode(in: root) else {
                 continue
             }
 
+            stepsObserved += 1
+            if !(focused.isInteractive || focused.isKeyboardFocusable) {
+                nonInteractiveFocused[stableKey(for: focused)] = focused
+            }
+
             observedFocusedElement = true
             let key = stableKey(for: focused)
+            let isNewFocus = seenFocusedKeys.insert(key).inserted
+
             if sequence.last != key {
                 sequence.append(key)
             }
 
-            recordFocused(
-                in: root,
-                controls: controls,
-                reachedKeys: &reachedKeys,
-                sequence: &sequence
-            )
+            if let matching = controls.first(where: { stableKey(for: $0) == key }) {
+                reachedKeys.insert(stableKey(for: matching))
 
-            let stateKey = key + "|" + reachedKeys.sorted().joined(separator: ",")
-            if !seenStates.insert(stateKey).inserted {
+                if isNewFocus, let baselineScreenshot {
+                    let focusedScreenshot = try? await appium.getScreenshot()
+                    visualEvidence[key] = focusRegionChanged(
+                        before: baselineScreenshot,
+                        after: focusedScreenshot,
+                        node: matching,
+                        hierarchySize: rootNode.frame.size
+                    )
+                }
+            }
+
+            if !isNewFocus && reachedKeys.count < controls.count {
+                trapDetected = true
                 break
             }
 
             if reachedKeys.count == controls.count {
+                traversalCompleted = true
                 break
             }
         }
 
-        if !observedFocusedElement {
-            let evaluation = validationEvaluation(
-                node: rootNode,
-                message: "Keyboard focus could not be observed after Tab navigation.",
-                remediation: "Ensure the XCUITest/Appium source exposes the focused attribute and that the app supports keyboard focus navigation on this screen."
-            )
+        guard observedFocusedElement else {
             return Result(
-                evaluations: [evaluation],
+                evaluations: [
+                    baseEvaluation(
+                        ruleID: "keyboard-focus",
+                        name: "Interactive elements focusable using a keyboard interface",
+                        description: "Interactive controls should be reachable through the supported keyboard focus mechanism.",
+                        node: rootNode,
+                        status: .notTested,
+                        severity: .warning,
+                        message: "The scanner could not observe a focused element after keyboard navigation.",
+                        remediation: "Verify keyboard navigation is enabled on the device and that Appium exposes the focused/focusable state for this platform."
+                    ),
+                    baseEvaluation(
+                        ruleID: "focus-indicator",
+                        name: "Customized keyboard focus visible",
+                        description: "Keyboard focus must have a visible indication in the rendered UI.",
+                        node: rootNode,
+                        status: .notTested,
+                        severity: .warning,
+                        message: "Focus-visible evidence was unavailable because the runtime session did not expose a focused element.",
+                        remediation: "Run the scan with keyboard navigation enabled and verify the rendered focus indicator."
+                    )
+                ],
                 focusedSequence: sequence,
                 reachedControlCount: 0,
                 requiredControlCount: controls.count,
@@ -115,24 +175,238 @@ final class KeyboardFocusTester {
 
         var evaluations: [AccessibilityRuleEvaluation] = []
 
+        // 1. Interactive elements focusable using a keyboard interface.
         for control in controls {
             let key = stableKey(for: control)
             if reachedKeys.contains(key) {
-                evaluations.append(
-                    passEvaluation(
-                        node: control,
-                        message: "Keyboard focus reached this interactive control during Tab navigation."
-                    )
-                )
+                evaluations.append(baseEvaluation(
+                    ruleID: "keyboard-focus",
+                    name: "Interactive elements focusable using a keyboard interface",
+                    description: "Interactive controls should be reachable through the supported keyboard focus mechanism.",
+                    node: control,
+                    status: .pass,
+                    severity: .info,
+                    message: "Keyboard focus reached this interactive element during runtime Tab navigation.",
+                    remediation: ""
+                ))
+            } else if trapDetected {
+                evaluations.append(baseEvaluation(
+                    ruleID: "keyboard-focus",
+                    name: "Interactive elements focusable using a keyboard interface",
+                    description: "Interactive controls should be reachable through the supported keyboard focus mechanism.",
+                    node: control,
+                    status: .fail,
+                    severity: .error,
+                    message: "Keyboard focus became trapped before this interactive element was reached.",
+                    remediation: "Make the control keyboard focusable and ensure keyboard focus can reach it without becoming trapped."
+                ))
             } else {
-                evaluations.append(
-                    failEvaluation(
-                        node: control,
-                        message: "Keyboard focus did not reach this interactive control during Tab navigation.",
-                        remediation: "Make the control keyboard focusable and ensure it participates in the intended keyboard focus order."
-                    )
-                )
+                evaluations.append(baseEvaluation(
+                    ruleID: "keyboard-focus",
+                    name: "Interactive elements focusable using a keyboard interface",
+                    description: "Interactive controls should be reachable through the supported keyboard focus mechanism.",
+                    node: control,
+                    status: .notTested,
+                    severity: .warning,
+                    message: "Keyboard focus did not reach this control before the runtime probe limit, so a failure cannot be proven.",
+                    remediation: "Rerun with keyboard navigation enabled or increase the runtime focus probe limit before treating this control as a defect."
+                ))
             }
+        }
+
+        // 2. No keyboard trap: only report FAIL when a focus cycle is observed
+        // before the scanner can reach all controls on the screen.
+        if trapDetected {
+            evaluations.append(baseEvaluation(
+                ruleID: "modal-accessibility",
+                name: "No keyboard trap present",
+                description: "Keyboard focus must be able to move away from a focused component.",
+                node: rootNode,
+                status: .fail,
+                severity: .error,
+                message: "Keyboard focus repeated before all reachable interactive elements were visited, indicating a possible keyboard trap.",
+                remediation: "Verify that keyboard focus can leave the component using standard keyboard navigation or an exposed exit mechanism."
+            ))
+        } else if traversalCompleted {
+            evaluations.append(baseEvaluation(
+                ruleID: "modal-accessibility",
+                name: "No keyboard trap present",
+                description: "Keyboard focus must be able to move away from a focused component.",
+                node: rootNode,
+                status: .pass,
+                severity: .info,
+                message: "All controls in the active keyboard-focus scope were reached without a focus cycle.",
+                remediation: ""
+            ))
+        } else {
+            evaluations.append(baseEvaluation(
+                ruleID: "modal-accessibility",
+                name: "No keyboard trap present",
+                description: "Keyboard focus must be able to move away from a focused component.",
+                node: rootNode,
+                status: .notTested,
+                severity: .warning,
+                message: "The keyboard probe ended before it could prove that focus was not trapped.",
+                remediation: "Rerun the scan with a sufficient keyboard traversal limit and verify focus can leave the component or modal."
+            ))
+        }
+
+        // 3. Focus-visible requires rendered evidence. Do not infer it from
+        // the focused attribute alone.
+        let reachedControls = controls.filter { reachedKeys.contains(stableKey(for: $0)) }
+        if visualEvidence.count == reachedControls.count && !visualEvidence.isEmpty {
+            for control in reachedControls {
+                let visible = visualEvidence[stableKey(for: control)] ?? false
+                evaluations.append(baseEvaluation(
+                    ruleID: "focus-indicator",
+                    name: "Customized keyboard focus visible",
+                    description: "Keyboard focus must have a visible indication in the rendered UI.",
+                    node: control,
+                    status: visible ? .pass : .fail,
+                    severity: visible ? .info : .error,
+                    message: visible
+                        ? "A rendered visual change was detected around the focused control."
+                        : "Keyboard focus changed in the accessibility hierarchy, but no rendered visual change was detected around the focused control.",
+                    remediation: visible ? "" : "Provide a persistent, clearly visible focus indicator for keyboard focus."
+                ))
+            }
+        } else if !reachedControls.isEmpty {
+            evaluations.append(baseEvaluation(
+                ruleID: "focus-indicator",
+                name: "Customized keyboard focus visible",
+                description: "Keyboard focus must have a visible indication in the rendered UI.",
+                node: reachedControls.first ?? rootNode,
+                status: .notTested,
+                severity: .warning,
+                message: "Rendered focus evidence was incomplete, so focus visibility was not classified as a failure.",
+                remediation: "Rerun the runtime focus probe with screenshot capture available for each reached control."
+            ))
+        }
+
+        // 4. Keyboard focus order is only marked PASS when the runtime sequence
+        // covers every interactive control exactly once in the accessibility
+        // tree order. We intentionally do not FAIL on a mismatch because a
+        // static tree/visual sort cannot prove that the alternative order is
+        // semantically wrong.
+        let expectedKeys = controls.map(stableKey(for:))
+        let observedControlKeys = sequence.filter { expectedKeys.contains($0) }
+        let orderTitle = "Screen reader/keyboard focus order correct"
+        let orderDescription = "Focus should traverse meaningful interactive elements in an intended order."
+        if reachedKeys.count == controls.count && observedControlKeys == expectedKeys {
+            evaluations.append(baseEvaluation(
+                ruleID: "focus-order",
+                name: orderTitle,
+                description: orderDescription,
+                node: rootNode,
+                status: .pass,
+                severity: .info,
+                message: "Runtime keyboard focus traversed all interactive controls in the accessibility-tree order.",
+                remediation: ""
+            ))
+        } else {
+            // Compare the order focus really moved in with the visual reading order.
+            let observedFrames = observedControlKeys.compactMap { key in
+                controls.first { stableKey(for: $0) == key }?.frame
+            }
+            if let assessment = VisualOrder.assess(frames: observedFrames) {
+                if assessment.ratio >= VisualOrder.passThreshold {
+                    evaluations.append(baseEvaluation(
+                        ruleID: "focus-order",
+                        name: orderTitle,
+                        description: orderDescription,
+                        node: rootNode,
+                        status: .pass,
+                        severity: .info,
+                        message: "Runtime keyboard focus moved through \(assessment.count) controls in visual reading order.",
+                        remediation: ""
+                    ))
+                } else {
+                    evaluations.append(baseEvaluation(
+                        ruleID: "focus-order",
+                        name: orderTitle,
+                        description: orderDescription,
+                        node: rootNode,
+                        status: .warning,
+                        severity: .warning,
+                        message: "Runtime keyboard focus visited \(assessment.outOfOrder) of \(assessment.count) controls out of visual reading order.",
+                        remediation: "Make keyboard focus follow a meaningful order, normally the visual reading order."
+                    ))
+                }
+            }
+        }
+
+        // 4b. Hidden / non-interactive content receiving focus, and context
+        // changes caused by focus alone.
+        for node in hiddenFocused.values {
+            evaluations.append(ProbeEvaluation.make(
+                ruleID: "keyboard-focus-hidden-content",
+                status: .fail,
+                message: "Keyboard focus landed on hidden or non-accessible content.",
+                remediation: "Remove hidden content from the keyboard focus order.",
+                node: node
+            ))
+        }
+        for node in nonInteractiveFocused.values {
+            evaluations.append(ProbeEvaluation.make(
+                ruleID: "keyboard-focus-noninteractive",
+                status: .warning,
+                message: "Keyboard focus stopped on a non-interactive element.",
+                remediation: "Only make elements keyboard focusable when the user can act on them.",
+                node: node
+            ))
+        }
+        if hiddenFocused.isEmpty {
+            evaluations.append(ProbeEvaluation.make(
+                ruleID: "keyboard-focus-hidden-content",
+                status: .pass,
+                message: "Keyboard focus never landed on hidden content during traversal.",
+                node: rootNode
+            ))
+        }
+        if nonInteractiveFocused.isEmpty && stepsObserved > 0 {
+            evaluations.append(ProbeEvaluation.make(
+                ruleID: "keyboard-focus-noninteractive",
+                status: .pass,
+                message: "Keyboard focus only stopped on interactive elements during traversal.",
+                node: rootNode
+            ))
+        }
+        if contextChanged {
+            evaluations.append(ProbeEvaluation.make(
+                ruleID: "keyboard-focus-context-change",
+                status: .fail,
+                message: "Moving keyboard focus changed the screen content without any activation.",
+                remediation: "Do not navigate or rebuild the screen when an element only receives focus.",
+                node: rootNode
+            ))
+        } else if stepsObserved >= 2 {
+            evaluations.append(ProbeEvaluation.make(
+                ruleID: "keyboard-focus-context-change",
+                status: .pass,
+                message: "Moving keyboard focus through \(stepsObserved) elements did not change the screen content.",
+                node: rootNode
+            ))
+        }
+
+        // 5. If a modal/dialog is exposed in the current hierarchy, prove that
+        // keyboard focus does not escape its bounds while it is present.
+        if let modal = modalNode(in: rootNode) {
+            let focusedNodes = sequence.compactMap { key in
+                controls.first { stableKey(for: $0) == key }
+            }
+            let outside = focusedNodes.first { !modal.frame.contains($0.frame.center) }
+            evaluations.append(baseEvaluation(
+                ruleID: "modal-focus-containment",
+                name: "Keyboard focus within modals correct",
+                description: "When a modal is active, keyboard focus should remain within it until dismissal.",
+                node: modal,
+                status: outside == nil ? .pass : .fail,
+                severity: outside == nil ? .info : .error,
+                message: outside == nil
+                    ? "All observed keyboard focus remained within the detected modal bounds."
+                    : "Keyboard focus moved outside the detected modal while it was active.",
+                remediation: outside == nil ? "" : "Contain keyboard focus within the modal until it is dismissed, then restore focus appropriately."
+            ))
         }
 
         return Result(
@@ -140,54 +414,57 @@ final class KeyboardFocusTester {
             focusedSequence: sequence,
             reachedControlCount: reachedKeys.count,
             requiredControlCount: controls.count,
-            evidenceAvailable: true
+            evidenceAvailable: true,
+            reachedNodes: sequence.compactMap { key in
+                controls.first { stableKey(for: $0) == key }
+            }
         )
     }
 
     private func interactiveControls(in root: AccessibilityNode) -> [AccessibilityNode] {
         var result: [AccessibilityNode] = []
+        var seen = Set<String>()
 
         func walk(_ node: AccessibilityNode) {
-            if node.visible && node.enabled && node.exists &&
-                (node.isInteractive || node.isKeyboardFocusable) {
-                result.append(node)
+            if node.visible && node.enabled && node.exists && (node.isInteractive || node.isKeyboardFocusable) {
+                let key = stableKey(for: node)
+                if seen.insert(key).inserted { result.append(node) }
             }
-            for child in node.children {
-                walk(child)
-            }
+            for child in node.children { walk(child) }
         }
-
         walk(root)
         return result
     }
 
     private func firstFocusedNode(in root: AccessibilityNode) -> AccessibilityNode? {
-        if root.focused && root.visible && root.exists {
-            return root
-        }
+        if root.focused && root.visible && root.exists { return root }
         for child in root.children {
-            if let focused = firstFocusedNode(in: child) {
-                return focused
-            }
+            if let focused = firstFocusedNode(in: child) { return focused }
         }
         return nil
     }
 
-    private func recordFocused(
-        in root: AccessibilityNode,
-        controls: [AccessibilityNode],
-        reachedKeys: inout Set<String>,
-        sequence: inout [String]
-    ) {
-        guard let focused = firstFocusedNode(in: root) else { return }
-        let focusedKey = stableKey(for: focused)
-        if sequence.last != focusedKey {
-            sequence.append(focusedKey)
+    /// Like `firstFocusedNode` but also finds focus on hidden elements.
+    private func anyFocusedNode(in root: AccessibilityNode) -> AccessibilityNode? {
+        if root.focused && root.exists { return root }
+        for child in root.children {
+            if let focused = anyFocusedNode(in: child) { return focused }
         }
+        return nil
+    }
 
-        if let matching = controls.first(where: { stableKey(for: $0) == focusedKey }) {
-            reachedKeys.insert(stableKey(for: matching))
+    private func modalNode(in root: AccessibilityNode) -> AccessibilityNode? {
+        var candidate: AccessibilityNode?
+        func walk(_ node: AccessibilityNode) {
+            let text = (node.type + " " + node.identifier + " " + node.label).lowercased()
+            if text.contains("dialog") || text.contains("modal") || node.role.rawValue == "dialog" {
+                candidate = node
+                return
+            }
+            for child in node.children where candidate == nil { walk(child) }
         }
+        walk(root)
+        return candidate
     }
 
     private func stableKey(for node: AccessibilityNode) -> String {
@@ -197,34 +474,103 @@ final class KeyboardFocusTester {
         return [node.type, identifier, label, frame].joined(separator: "|")
     }
 
+    private func focusRegionChanged(before: Data, after: Data?, node: AccessibilityNode, hierarchySize: CGSize) -> Bool {
+        guard let after, let beforeImage = NSImage(data: before), let afterImage = NSImage(data: after),
+              let beforeCG = beforeImage.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let afterCG = afterImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return false }
+
+        let width = min(beforeCG.width, afterCG.width)
+        let height = min(beforeCG.height, afterCG.height)
+        guard width > 0, height > 0 else { return false }
+
+        let scaleX = CGFloat(width) / max(1, hierarchySize.width)
+        let scaleY = CGFloat(height) / max(1, hierarchySize.height)
+        let x = max(0, Int((node.frame.minX - 6) * scaleX))
+        let yFromTop = max(0, Int((node.frame.minY - 6) * scaleY))
+        let w = min(width - x, max(1, Int((node.frame.width + 12) * scaleX)))
+        let h = min(height - yFromTop, max(1, Int((node.frame.height + 12) * scaleY)))
+        guard w > 1, h > 1 else { return false }
+
+        let beforePixels = pixelBytes(beforeCG, x: x, y: yFromTop, width: w, height: h)
+        let afterPixels = pixelBytes(afterCG, x: x, y: yFromTop, width: w, height: h)
+        guard let beforePixels, let afterPixels, beforePixels.count == afterPixels.count else { return false }
+
+        var changed = 0
+        let stride = 4
+        for i in Swift.stride(from: 0, to: beforePixels.count, by: stride * 3) {
+            let distance = abs(Int(beforePixels[i]) - Int(afterPixels[i]))
+                + abs(Int(beforePixels[i + 1]) - Int(afterPixels[i + 1]))
+                + abs(Int(beforePixels[i + 2]) - Int(afterPixels[i + 2]))
+            if distance > 24 { changed += 1 }
+        }
+
+        let samples = max(1, beforePixels.count / (stride * 3))
+        return Double(changed) / Double(samples) >= 0.002
+    }
+
+    private func pixelBytes(
+        _ image: CGImage,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int
+    ) -> [UInt8]? {
+        guard let provider = image.dataProvider,
+              let data = provider.data else {
+            return nil
+        }
+
+        guard let base = CFDataGetBytePtr(data) else {
+            return nil
+        }
+
+        let bytesPerRow = image.bytesPerRow
+        let bytesPerPixel = 4
+        let rowByteCount = width * bytesPerPixel
+
+        var result = [UInt8](
+            repeating: 0,
+            count: width * height * bytesPerPixel
+        )
+
+        for row in 0..<height {
+            let srcOffset =
+                (y + row) * bytesPerRow +
+                x * bytesPerPixel
+
+            let dstOffset =
+                row * rowByteCount
+
+            for i in 0..<rowByteCount {
+                result[dstOffset + i] = base[srcOffset + i]
+            }
+        }
+        return result
+    }
+
     private func baseEvaluation(
+        ruleID: String,
+        name: String,
+        description: String,
         node: AccessibilityNode,
         status: RuleResultStatus,
         severity: AccessibilityFinding.Severity,
         message: String,
-        remediation: String?
+        remediation: String
     ) -> AccessibilityRuleEvaluation {
         AccessibilityRuleEvaluation(
-            ruleID: "keyboard-focus",
-            ruleName: "Interactive control can receive keyboard focus",
-            ruleDescription: "Keyboard users should be able to reach interactive controls where keyboard operation is supported.",
+            ruleID: ruleID,
+            ruleName: name,
+            ruleDescription: description,
             status: status,
             severity: severity,
             message: message,
-            remediation: remediation ?? "",
+            remediation: remediation,
             node: node
         )
     }
+}
 
-    private func passEvaluation(node: AccessibilityNode, message: String) -> AccessibilityRuleEvaluation {
-        baseEvaluation(node: node, status: .pass, severity: .info, message: message, remediation: nil)
-    }
-
-    private func failEvaluation(node: AccessibilityNode, message: String, remediation: String) -> AccessibilityRuleEvaluation {
-        baseEvaluation(node: node, status: .fail, severity: .error, message: message, remediation: remediation)
-    }
-
-    private func validationEvaluation(node: AccessibilityNode, message: String, remediation: String) -> AccessibilityRuleEvaluation {
-        baseEvaluation(node: node, status: .validate, severity: .warning, message: message, remediation: remediation)
-    }
+private extension CGRect {
+    var center: CGPoint { CGPoint(x: midX, y: midY) }
 }

@@ -22,7 +22,7 @@ enum IntelligenceStatus: String, Codable, CaseIterable {
         case .warning: return "Warning"
         case .fail: return "Fail"
         case .validate: return "Validate"
-        case .notTested: return "Not tested"
+        case .notTested: return "Not Tested"
         }
     }
 }
@@ -592,8 +592,6 @@ struct AccessibilityIntelligenceEngine {
             "text-resize",
             "non-text-contrast",
             "form-border-contrast",
-            "target-size-enhanced-44",
-            "target-size-minimum-24",
             "touch-target-size-44",
             "touch-target-size-24"
         ]
@@ -1573,7 +1571,7 @@ struct AccessibilityIntelligenceView: View {
                 Text("WCAG 2.2 Mapping")
                     .font(.headline)
                 Spacer()
-                Text("\(intelligence.wcag.criteria.count) criteria")
+                Text("\(WCAGReference.exercisedCount(in: intelligence.wcag.criteria)) of \(WCAGReference.criteria.count) A/AA criteria exercised")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

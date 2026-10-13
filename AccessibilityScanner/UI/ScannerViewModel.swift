@@ -380,6 +380,12 @@ final class ScannerViewModel: ObservableObject {
                     maximumDepth: 20,
                     maximumActionsPerScreen: 30,
                     settleDelayNanoseconds: 500_000_000
+                ),
+                probeEnvironment: RuntimeProbeEnvironment(
+                    bundleID: application.bundleID,
+                    platform: device.platform,
+                    udid: device.udid,
+                    allowAppRelaunch: mode != .currentPage
                 )
             )
 

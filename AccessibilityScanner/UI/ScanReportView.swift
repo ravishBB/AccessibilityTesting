@@ -168,7 +168,7 @@ struct ScanReportView: View {
                 HStack(spacing: 22) {
                     metadata(title: "Bundle ID", value: report.bundleID)
                     metadata(title: "Device", value: report.deviceName)
-                    metadata(title: "Checks", value: "\(report.rulesExecuted) rules")
+                    metadata(title: "Checks", value: "\(report.automatedVerdictRuleCount) of \(report.rulesExecuted) rules gave results")
                     metadata(title: "Duration", value: formattedDuration)
                     metadata(
                         title: "Started",
@@ -214,9 +214,9 @@ struct ScanReportView: View {
                     symbol: "checklist"
                 )
                 headlineMetric(
-                    title: "Passed checks",
-                    value: report.totalPasses,
-                    subtitle: "successful checks",
+                    title: "Passed",
+                    value: grouping.passCount,
+                    subtitle: "unique passed results",
                     symbol: "checkmark.circle.fill"
                 )
                 headlineMetric(
@@ -234,7 +234,7 @@ struct ScanReportView: View {
                         ? "Review the warnings and complete the manual checks before sign-off."
                         : grouping.manualReviewCount > 0
                             ? "Automated checks did not prove every requirement. Complete the manual checks before sign-off."
-                            : "No accessibility findings were recorded in the scanned screens."
+                            : "No findings were recorded by the \(report.automatedVerdictRuleCount) of \(AccessibilityRuleCatalog.ruleCount) rules that produced results. This is not a pass: the remaining rules need manual or assistive-technology testing."
             )
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -320,6 +320,9 @@ struct ScanReportView: View {
                 }
 
                 HStack(spacing: 6) {
+                    if let bb = group.bbIssue {
+                        tag(bb.id)
+                    }
                     tag("\(group.metadata.impact.displayName) impact")
                     if let wcag = group.metadata.wcagLabel {
                         tag(wcag)
@@ -1672,6 +1675,8 @@ struct ScanReportView: View {
             return .orange
         case .validate:
             return .blue
+        case .notTested:
+            return .gray
         case .pass:
             return .green
         }

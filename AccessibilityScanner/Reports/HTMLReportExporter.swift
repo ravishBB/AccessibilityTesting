@@ -88,6 +88,7 @@ private struct HTMLReportRenderer {
     let generatedAt: Date
 
     private let grouping: FindingGrouping
+    private let coverage: ReportCoverage
     private let intelligence: AccessibilityIntelligence
 
     init(
@@ -98,7 +99,9 @@ private struct HTMLReportRenderer {
         self.report = report
         self.options = options
         self.generatedAt = generatedAt
-        self.grouping = FindingGrouping(report: report)
+        let grouping = FindingGrouping(report: report)
+        self.grouping = grouping
+        self.coverage = ReportCoverage(report: report, grouping: grouping)
         self.intelligence = report.resolvedIntelligence
     }
 
@@ -111,6 +114,7 @@ private struct HTMLReportRenderer {
         out += executiveSummary()
         out += findingsSection()
         out += manualReviewSection()
+        out += coverageSection()
         out += screensSection()
         out += scopeSection()
         out += appendixSection()
@@ -161,7 +165,7 @@ private struct HTMLReportRenderer {
         out += metaItem("Duration", formattedDuration)
         out += metaItem("Report ID", report.id.uuidString)
         out += metaItem("Scanner", "\(ScannerBuildInfo.productName) \(ScannerBuildInfo.displayVersion)")
-        out += metaItem("Rule set", "\(ScannerBuildInfo.ruleSetVersion) · \(report.rulesExecuted) rules executed")
+        out += metaItem("Rule set", "\(ScannerBuildInfo.ruleSetVersion) · \(coverage.rulesInRuleSet) rules, \(coverage.rulesWithAutomatedVerdict) produced automated results")
         out += metaItem("Standard", "\(ScannerBuildInfo.wcagVersion), automated subset")
         out += "</dl>\n</header>\n"
         return out
@@ -200,6 +204,14 @@ private struct HTMLReportRenderer {
                 cssClass: "validate"
             )
         }
+        let unchecked = coverage.rulesNotTested + coverage.criteriaWithoutRule
+        if unchecked > 0 {
+            return Verdict(
+                title: "No findings in the checks that ran.",
+                detail: "This is not a pass: \(coverage.rulesNotTested) rule\(plural(coverage.rulesNotTested)) could not be tested and \(coverage.criteriaWithoutRule) of \(coverage.criteriaTotalAAndAA) WCAG A/AA criteria have no automated rule. See Coverage.",
+                cssClass: "validate"
+            )
+        }
         return Verdict(
             title: "No findings.",
             detail: "The automated checks recorded no failures, warnings or manual-review items on the scanned screens.",
@@ -221,6 +233,7 @@ private struct HTMLReportRenderer {
         <a href="#summary">Summary</a>
         <a href="#findings">Findings</a>
         <a href="#manual-review">Manual review</a>
+        <a href="#coverage">Coverage</a>
         <a href="#screens">Screens</a>
         <a href="#scope">Scope &amp; limitations</a>
         <a href="#appendix">Rule results</a>
@@ -238,12 +251,13 @@ private struct HTMLReportRenderer {
         out += kpi("Failures", grouping.failureCount, "fail")
         out += kpi("Warnings", grouping.warningCount, "warning")
         out += kpi("Manual review", grouping.manualReviewCount, "validate")
-        out += kpi("Passed checks", report.totalPasses, "pass")
+        out += kpi("Passed", grouping.passCount, "pass")
+        out += kpi("Rules not tested", coverage.rulesNotTested, "nottested")
         out += kpi("Screens", report.screens.count, "neutral")
         out += kpi("Elements tested", report.totalElementsTested, "neutral")
         out += "</div>\n"
 
-        out += "<p class=\"note\">Failure, warning and manual-review counts are unique affected elements. Passed checks counts every individual check that passed.</p>\n"
+        out += "<p class=\"note\">Failed, warning, manual-review and passed counts use one unit: a rule result for one element on one screen, with duplicates merged. Rules not tested counts rules, not elements.</p>\n"
 
         // Top priorities
         let top = Array(grouping.issueGroups.prefix(5))
@@ -261,8 +275,8 @@ private struct HTMLReportRenderer {
             out += "</tbody>\n</table>\n"
         }
 
+        out += coverageSummaryHTML()
         out += qualityGateHTML()
-        out += wcagHTML()
 
         out += "</section>\n"
         return out
@@ -286,20 +300,28 @@ private struct HTMLReportRenderer {
         return out
     }
 
-    private func wcagHTML() -> String {
-        let criteria = intelligence.wcag.criteria
-        guard !criteria.isEmpty else { return "" }
-
-        var out = "<h3>\(esc(ScannerBuildInfo.wcagVersion)) criteria exercised</h3>\n"
-        out += "<table class=\"data\">\n<thead><tr><th scope=\"col\">Criterion</th><th scope=\"col\">Level</th><th scope=\"col\">Status</th><th scope=\"col\" class=\"num\">Fail</th><th scope=\"col\" class=\"num\">Warn</th><th scope=\"col\" class=\"num\">Manual</th><th scope=\"col\" class=\"num\">Pass</th></tr></thead>\n<tbody>\n"
-        for criterion in criteria {
-            out += "<tr><td>\(esc(criterion.criterion)) \(esc(criterion.title))</td>"
-            out += "<td>\(esc(criterion.level))</td>"
-            out += "<td>\(intelligenceChip(criterion.status))</td>"
-            out += "<td class=\"num\">\(criterion.failures)</td><td class=\"num\">\(criterion.warnings)</td><td class=\"num\">\(criterion.validations)</td><td class=\"num\">\(criterion.passes)</td></tr>\n"
+    private func coverageSummaryHTML() -> String {
+        let c = coverage
+        var out = "<h3>How much was actually checked</h3>\n"
+        out += "<table class=\"data\">\n<thead><tr><th scope=\"col\">Measure</th><th scope=\"col\" class=\"num\">Count</th></tr></thead>\n<tbody>\n"
+        let rows: [(String, Int)] = [
+            ("Rules in the rule set", c.rulesInRuleSet),
+            ("Rules that produced pass or fail results", c.rulesWithAutomatedVerdict),
+            ("Rules that only produced manual-review items", c.rulesManualReviewOnly),
+            ("Rules that could not be tested (need assistive technology or a runtime probe)", c.rulesNotTested),
+            ("Rules with no applicable content on the scanned screens", c.rulesNoApplicableContent),
+            ("WCAG 2.2 A/AA criteria in total", c.criteriaTotalAAndAA),
+            ("A/AA criteria with an automated verdict", c.criteriaWithAutomatedVerdict),
+            ("A/AA criteria needing manual review only", c.criteriaManualReviewOnly),
+            ("A/AA criteria not tested", c.criteriaNotTested),
+            ("A/AA criteria with no applicable content", c.criteriaNoApplicableContent),
+            ("A/AA criteria with no rule yet", c.criteriaWithoutRule)
+        ]
+        for (label, value) in rows {
+            out += "<tr><td>\(esc(label))</td><td class=\"num\">\(value)</td></tr>\n"
         }
         out += "</tbody>\n</table>\n"
-        out += "<p class=\"note\">Only criteria that at least one automated rule maps to are listed. This is not a conformance statement.</p>\n"
+        out += "<p class=\"note\">A clean result only covers the criteria with an automated verdict. See <a href=\"#coverage\">Coverage</a> for every criterion.</p>\n"
         return out
     }
 
@@ -348,6 +370,9 @@ private struct HTMLReportRenderer {
 
         out += "<div class=\"finding-head\">\n<h3>\(esc(group.ruleName))</h3>\n<div class=\"chips\">"
         out += statusChip(group.status)
+        if let bb = group.bbIssue {
+            out += chip(bb.id, "neutral")
+        }
         out += chip("\(group.metadata.impact.displayName) impact", group.metadata.impact.rawValue)
         if let wcag = group.metadata.wcagLabel {
             out += chip(wcag, "neutral")
@@ -364,6 +389,9 @@ private struct HTMLReportRenderer {
         out += "<dl class=\"facts\">\n"
         if let title = group.metadata.wcagTitle, let criterion = group.metadata.wcagCriterion {
             out += "<dt>Standard</dt><dd>\(esc(ScannerBuildInfo.wcagVersion)) \(esc(criterion)) \(esc(title))</dd>\n"
+        }
+        if let bb = group.bbIssue {
+            out += "<dt>BB issue</dt><dd>\(esc(bb.id)) · \(esc(bb.title))</dd>\n"
         }
         out += "<dt>Who is affected</dt><dd>\(esc(group.metadata.affectedUsers))</dd>\n"
         if !group.sampleMessage.isEmpty {
@@ -489,6 +517,26 @@ private struct HTMLReportRenderer {
         return out
     }
 
+    // MARK: Coverage
+
+    private func coverageSection() -> String {
+        var out = "<section id=\"coverage\">\n<h2>Coverage: what was and was not checked</h2>\n"
+        out += "<p>Every \(esc(ScannerBuildInfo.wcagVersion)) Level A and AA success criterion is listed, including those no rule covers yet, followed by any AAA criteria a rule maps to. Counts use the same unit as the summary.</p>\n"
+        out += "<table class=\"data\">\n<thead><tr><th scope=\"col\">Criterion</th><th scope=\"col\">Level</th><th scope=\"col\">Coverage</th><th scope=\"col\" class=\"num\">Rules</th><th scope=\"col\" class=\"num\">Fail</th><th scope=\"col\" class=\"num\">Warn</th><th scope=\"col\" class=\"num\">Manual</th><th scope=\"col\" class=\"num\">Pass</th></tr></thead>\n<tbody>\n"
+        for criterion in coverage.criteria {
+            let rules = criterion.ruleIDs.isEmpty ? "—" : "\(criterion.ruleIDs.count)"
+            out += "<tr><td>\(esc(criterion.number)) \(esc(criterion.title))</td>"
+            out += "<td>\(esc(criterion.level))</td>"
+            out += "<td>\(chip(criterion.state.title, criterion.state.cssClass))</td>"
+            out += "<td class=\"num\">\(rules)</td>"
+            out += "<td class=\"num\">\(criterion.failures)</td><td class=\"num\">\(criterion.warnings)</td><td class=\"num\">\(criterion.validations)</td><td class=\"num\">\(criterion.passes)</td></tr>\n"
+        }
+        out += "</tbody>\n</table>\n"
+        out += "<p class=\"note\">Partly verified means some mapped rules passed while others still need manual review or could not be tested. Not a conformance statement.</p>\n"
+        out += "</section>\n\n"
+        return out
+    }
+
     // MARK: Scope
 
     private func scopeSection() -> String {
@@ -498,7 +546,7 @@ private struct HTMLReportRenderer {
         <h3>What this scan covered</h3>
         <ul>
         <li>\(report.screens.count) screen\(plural(report.screens.count)) and \(report.totalElementsTested) elements on <strong>\(esc(report.deviceName))</strong>, captured through Appium on \(esc(report.startedAt.formatted(date: .abbreviated, time: .omitted))).</li>
-        <li>\(report.rulesExecuted) automated rules from rule set \(esc(ScannerBuildInfo.ruleSetVersion)), mapped to \(esc(ScannerBuildInfo.wcagVersion)) where a criterion applies.</li>
+        <li>Rule set \(esc(ScannerBuildInfo.ruleSetVersion)) has \(coverage.rulesInRuleSet) rules, mapped to \(esc(ScannerBuildInfo.wcagVersion)). On this scan \(coverage.rulesWithAutomatedVerdict) produced pass or fail results, \(coverage.rulesManualReviewOnly) produced manual-review items only, \(coverage.rulesNotTested) could not be tested and \(coverage.rulesNoApplicableContent) found nothing applicable.</li>
         </ul>
         <h3>What it does not tell you</h3>
         <ul>
@@ -510,7 +558,7 @@ private struct HTMLReportRenderer {
         </ul>
         <h3>How to read the numbers</h3>
         <ul>
-        <li>Counts are unique affected elements; identical findings recorded twice on one screen are merged.</li>
+        <li>All result counts are unique rule results: one rule applied to one element on one screen. Identical results recorded twice are merged.</li>
         <li>A <em>fingerprint</em> identifies a rule failing on a specific element of a specific screen. It is stable across scans of the same build, so you can track fixes and regressions with it.</li>
         </ul>
         </section>
@@ -522,13 +570,21 @@ private struct HTMLReportRenderer {
 
     private func appendixSection() -> String {
         var out = "<section id=\"appendix\">\n<h2>Appendix: rule results</h2>\n"
-        out += "<table class=\"data\">\n<thead><tr><th scope=\"col\">Rule</th><th scope=\"col\">Standard</th><th scope=\"col\">Impact</th><th scope=\"col\" class=\"num\">Fail</th><th scope=\"col\" class=\"num\">Warn</th><th scope=\"col\" class=\"num\">Manual</th><th scope=\"col\" class=\"num\">Pass</th></tr></thead>\n<tbody>\n"
-        for summary in report.ruleSummaries {
-            let metadata = AccessibilityRuleCatalog.metadata(for: summary.ruleID)
-            out += "<tr><td>\(esc(summary.ruleName))<br><code>\(esc(summary.ruleID))</code></td>"
+        out += "<p>Every rule in the rule set, including rules that produced no result on this scan.</p>\n"
+        out += "<table class=\"data\">\n<thead><tr><th scope=\"col\">Rule</th><th scope=\"col\">Standard</th><th scope=\"col\">Impact</th><th scope=\"col\">Outcome</th><th scope=\"col\" class=\"num\">Fail</th><th scope=\"col\" class=\"num\">Warn</th><th scope=\"col\" class=\"num\">Manual</th><th scope=\"col\" class=\"num\">Pass</th></tr></thead>\n<tbody>\n"
+        let ordered = coverage.rules.sorted {
+            if $0.failures != $1.failures { return $0.failures > $1.failures }
+            if $0.warnings != $1.warnings { return $0.warnings > $1.warnings }
+            if $0.outcome.rank != $1.outcome.rank { return $0.outcome.rank < $1.outcome.rank }
+            return $0.ruleName.localizedCaseInsensitiveCompare($1.ruleName) == .orderedAscending
+        }
+        for entry in ordered {
+            let metadata = AccessibilityRuleCatalog.metadata(for: entry.ruleID)
+            out += "<tr><td>\(esc(entry.ruleName))<br><code>\(esc(entry.ruleID))</code></td>"
             out += "<td>\(esc(metadata.wcagLabel ?? "—"))</td>"
             out += "<td>\(esc(metadata.impact.displayName))</td>"
-            out += "<td class=\"num\">\(summary.failures)</td><td class=\"num\">\(summary.warnings)</td><td class=\"num\">\(summary.validations)</td><td class=\"num\">\(summary.passes)</td></tr>\n"
+            out += "<td>\(chip(entry.outcome.title, entry.outcome.cssClass))</td>"
+            out += "<td class=\"num\">\(entry.failures)</td><td class=\"num\">\(entry.warnings)</td><td class=\"num\">\(entry.validations)</td><td class=\"num\">\(entry.passes)</td></tr>\n"
         }
         out += "</tbody>\n</table>\n</section>\n"
         return out
@@ -611,6 +667,7 @@ private struct HTMLReportRenderer {
     .kpi { background:var(--card); border:1px solid var(--line); border-top:4px solid var(--line); border-radius:8px; padding:12px 14px; }
     .kpi.fail { border-top-color:var(--fail); } .kpi.warning { border-top-color:var(--warning); }
     .kpi.validate { border-top-color:var(--validate); } .kpi.pass { border-top-color:var(--pass); }
+    .kpi.nottested { border-top-color:#98a2b3; }
     .kpi-value { display:block; font-size:1.9rem; font-weight:700; line-height:1.1; }
     .kpi-label { color:var(--muted); font-size:.85rem; }
     table.data { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); font-size:.88rem; margin:8px 0 14px; }
@@ -622,6 +679,8 @@ private struct HTMLReportRenderer {
     .chip.warning,.chip.serious { background:var(--warning-bg); color:var(--warning); border-color:#fec84b; }
     .chip.validate,.chip.moderate { background:var(--validate-bg); color:var(--validate); border-color:#84caff; }
     .chip.pass { background:var(--pass-bg); color:var(--pass); border-color:#75e0a7; }
+    .chip.nottested { background:#f2f4f7; color:#475467; border-color:#98a2b3; }
+    .chip.norule { background:transparent; color:var(--muted); border-style:dashed; }
     .finding { background:var(--card); border:1px solid var(--line); border-left:5px solid var(--line); border-radius:8px; padding:16px 18px; margin:16px 0; }
     .finding.fail { border-left-color:var(--fail); } .finding.warning { border-left-color:var(--warning); }
     .finding.validate { border-left-color:var(--validate); }
