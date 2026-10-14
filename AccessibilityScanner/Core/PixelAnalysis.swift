@@ -4,23 +4,14 @@
 //
 //  Measures rendered colours from the screenshot. Shared by the text contrast
 //  rules, non-text contrast, form borders, loading indicators and link colour.
-//
-//  Design notes:
-//  - the screenshot is decoded once and reused for every element;
-//  - pixels are read from the raw bitmap, top row first;
-//  - text colour is the strongest ink pixels, not the median of everything that
-//    differs from the background, because anti-aliased edge pixels sit between
-//    the two colours and would understate the real contrast;
-//  - backgrounds are sampled just outside the element so text pixels do not
-//    pollute them, and a varied background (image, gradient) is judged by its
-//    worst-case contrast rather than an average.
-//
+
 
 import AppKit
+import Vision
 
 // MARK: - Colour
 
-struct PixelColor {
+nonisolated struct PixelColor {
     let r: Double
     let g: Double
     let b: Double
@@ -34,7 +25,7 @@ struct PixelColor {
     }
 }
 
-enum PixelMath {
+nonisolated enum PixelMath {
 
     static func contrast(_ a: Double, _ b: Double) -> Double {
         (max(a, b) + 0.05) / (min(a, b) + 0.05)
@@ -57,7 +48,7 @@ enum PixelMath {
 
 // MARK: - Sampler
 
-struct PixelRect {
+nonisolated struct PixelRect {
     let x0: Int
     let y0: Int
     let x1: Int
@@ -71,11 +62,11 @@ struct PixelRect {
     }
 }
 
-enum PixelEdge {
+nonisolated enum PixelEdge {
     case top, bottom, left, right
 }
 
-final class PixelSampler {
+nonisolated final class PixelSampler {
 
     private let bitmap: NSBitmapImageRep
     private let hierarchyWidth: Double
@@ -146,6 +137,12 @@ final class PixelSampler {
         let y1 = min(height - 1, Int((frame.maxY * scaleY).rounded(.up)) - 1)
         guard x1 - x0 >= 3, y1 - y0 >= 3 else { return nil }
         return PixelRect(x0: x0, y0: y0, x1: x1, y1: y1)
+    }
+
+    /// The screenshot region under a hierarchy frame, for text recognition.
+    func image(cropping frame: CGRect) -> CGImage? {
+        guard let rect = pixelRect(for: frame), let image = bitmap.cgImage else { return nil }
+        return image.cropping(to: CGRect(x: rect.x0, y: rect.y0, width: rect.width, height: rect.height))
     }
 
     // MARK: Pixels (y counts from the top row)
@@ -228,7 +225,7 @@ final class PixelSampler {
 
 // MARK: - Analyzer
 
-enum PixelAnalyzer {
+nonisolated enum PixelAnalyzer {
 
     // MARK: Ink against background (text, icons, indicators)
 
@@ -384,5 +381,87 @@ enum PixelAnalyzer {
             }
         }
         return false
+    }
+}
+
+// MARK: - Text recognition
+
+/// Reads the visible text of a control from the screenshot (Vision OCR).
+/// Used where the hierarchy does not expose the visible label separately
+/// from the accessible name: iOS, and Flutter/Compose on Android.
+nonisolated enum TextRecognizer {
+
+    private static let lock = NSLock()
+    private static var cache: [String: String?] = [:]
+
+    /// Text rendered inside `frame`, or nil when none is legible. Results are
+    /// cached per screenshot and frame: viewports repeat the same controls.
+    static func text(in frame: CGRect, context: AccessibilityRuleContext) -> String? {
+        guard let data = context.screenshotData,
+              frame.width >= 8, frame.height >= 8
+        else { return nil }
+
+        let key = "\(fingerprint(data))|\(Int(frame.minX)),\(Int(frame.minY)),\(Int(frame.width)),\(Int(frame.height))"
+        lock.lock()
+        if let cached = cache[key] { lock.unlock(); return cached }
+        lock.unlock()
+
+        let result = recognize(frame: frame, context: context)
+
+        lock.lock()
+        if cache.count > 2_000 { cache.removeAll() }
+        cache[key] = result
+        lock.unlock()
+        return result
+    }
+
+    /// Screenshots share identical PNG headers, so hash bytes sampled across
+    /// the whole file rather than relying on Data's hash of the first bytes.
+    private static func fingerprint(_ data: Data) -> Int {
+        var hasher = Hasher()
+        hasher.combine(data.count)
+        let step = max(1, data.count / 512)
+        data.withUnsafeBytes { bytes in
+            var index = 0
+            while index < bytes.count {
+                hasher.combine(bytes[index])
+                index += step
+            }
+        }
+        return hasher.finalize()
+    }
+
+    private static func recognize(frame: CGRect, context: AccessibilityRuleContext) -> String? {
+        guard let sampler = PixelSampler.make(context: context),
+              let image = sampler.image(cropping: frame)
+        else { return nil }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        // Run on the CPU. On some Macs the Neural Engine copy of the model is
+        // missing or stale (E5RT "Missing E5 bundle resource"), which logs an
+        // error on every call; the crops are small, so the CPU is fast enough.
+        if let devices = try? request.supportedComputeStageDevices {
+            for (stage, stageDevices) in devices {
+                if let cpu = stageDevices.first(where: { if case .cpu = $0 { return true }; return false }) {
+                    request.setComputeDevice(cpu, for: stage)
+                }
+            }
+        }
+
+        let handler = VNImageRequestHandler(cgImage: image)
+        do {
+            try handler.perform([request])
+        } catch {
+            return nil
+        }
+
+        let lines = (request.results ?? [])
+            .compactMap { $0.topCandidates(1).first }
+            .filter { $0.confidence >= 0.5 }
+            .map(\.string)
+        let text = lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 }

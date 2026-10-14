@@ -46,9 +46,8 @@ final class ScannerViewModel: ObservableObject {
 
     // MARK: - Appium
 
-    private let appiumURL = URL(
-        string: "http://127.0.0.1:4723"
-    )!
+    /// Read at the start of each scan, so a change in Settings applies to the next scan.
+    private var appiumURL: URL { ScannerSettings.appiumURL }
 
     // MARK: - Stable Snapshot Configuration
     private let maximumSnapshotAttempts = 3
@@ -101,13 +100,8 @@ final class ScannerViewModel: ObservableObject {
                 }
 
                 isLoadingDevices = false
-
-                if let device = selectedDevice {
-
-                    await loadApplications(
-                        for: device
-                    )
-                }
+                // Setting selectedDevice above already loads its apps
+                // through the picker's change handler (deviceChanged).
 
             } catch {
 
@@ -125,9 +119,9 @@ final class ScannerViewModel: ObservableObject {
         try await Task.detached {
 
             let service =
-                await DeviceDiscoveryService()
+                DeviceDiscoveryService()
 
-            return try await service.discoverDevices()
+            return try service.discoverDevices()
 
         }.value
     }
@@ -144,10 +138,11 @@ final class ScannerViewModel: ObservableObject {
             return
         }
 
-        applications = []
-        selectedApplication = nil
-
+        // Runs after the current view update: changing published state
+        // while SwiftUI is applying the picker change is not allowed.
         Task {
+            applications = []
+            selectedApplication = nil
 
             await loadApplications(
                 for: device
@@ -170,6 +165,10 @@ final class ScannerViewModel: ObservableObject {
                 try await discoverApplications(
                     for: device
                 )
+
+            // A slower load for a device that is no longer selected must
+            // not replace the current device's apps.
+            guard selectedDevice?.id == device.id else { return }
 
             applications = discoveredApps
 
@@ -199,9 +198,9 @@ final class ScannerViewModel: ObservableObject {
         try await Task.detached {
 
             let service =
-                await AppDiscoveryService()
+                AppDiscoveryService()
 
-            return try await service.discoverApps(
+            return try service.discoverApps(
                 for: device
             )
 
@@ -292,16 +291,9 @@ final class ScannerViewModel: ObservableObject {
             }
         let startedAt = Date()
         var activeAppium: AppiumClient?
+        let notes = ScanNotes()
+        var environment: ScanEnvironment?
 
-        // Always release an Appium session, including when crawling, parsing,
-        // reporting, or screenshot processing fails midway through a scan.
-        defer {
-            if let appium = activeAppium {
-                Task {
-                    try? await appium.deleteSession()
-                }
-            }
-        }
 
         do {
             try Task.checkCancellation()
@@ -333,6 +325,7 @@ final class ScannerViewModel: ObservableObject {
             )
 
             let appium = AppiumClient(baseURL: configuration.appiumURL)
+            try await appium.checkServer()
             activeAppium = appium
             status = "Creating Appium session..."
 
@@ -347,14 +340,31 @@ final class ScannerViewModel: ObservableObject {
                 await appium.activateApp(bundleID: application.bundleID)
                 try Task.checkCancellation()
                 try await Task.sleep(for: .milliseconds(1000))
+                if let foreground = await appium.foregroundAppID(),
+                   foreground != application.bundleID {
+                    notes.record(.launchFailed)
+                }
             } else {
                 status = "Capturing current page..."
                 try await Task.sleep(for: .milliseconds(300))
+                // Current Page scans whatever is on screen. Refuse to scan a
+                // different app (Settings, the Home screen, another app) and
+                // report it as the selected one.
+                if let foreground = await appium.foregroundAppID(),
+                   foreground != application.bundleID {
+                    throw ScannerViewModelError.wrongAppInForeground(
+                        expected: application.name,
+                        actual: foreground
+                    )
+                }
             }
+            environment = await makeEnvironment(appium: appium, device: device, application: application)
+
             status = "Reading initial accessibility hierarchy..."
 
             let initialSnapshot = try await captureStableSnapshot(
-                appium: appium
+                appium: appium,
+                notes: notes
             )
 
             let scanner = AccessibilityScanner()
@@ -381,11 +391,13 @@ final class ScannerViewModel: ObservableObject {
                     maximumActionsPerScreen: 30,
                     settleDelayNanoseconds: 500_000_000
                 ),
+                notes: notes,
                 probeEnvironment: RuntimeProbeEnvironment(
                     bundleID: application.bundleID,
                     platform: device.platform,
                     udid: device.udid,
-                    allowAppRelaunch: mode != .currentPage
+                    allowAppRelaunch: mode != .currentPage,
+                    allowAppInteraction: mode != .currentPage
                 )
             )
 
@@ -408,175 +420,32 @@ final class ScannerViewModel: ObservableObject {
                 appium: appium,
                 scanner: scanner
             )
+            if !responsiveResult.tested {
+                notes.record(.responsiveCheckFailed)
+            }
 
             status = "Building accessibility report..."
 
             var screenResults: [ScreenScanResult] = []
 
-            for crawledScreen in crawledScreens {
+            for (screenNumber, crawledScreen) in crawledScreens.enumerated() {
 
+                // Pixel analysis and annotation run off the main thread, one
+                // screen at a time, so the window stays responsive and Stop is
+                // handled between screens.
                 try Task.checkCancellation()
+                status = "Building accessibility report (screen \(screenNumber + 1) of \(crawledScreens.count))..."
 
-                let elementCount = countNodes(
-                    crawledScreen.rootNode
-                )
-                
-                let screenshotContext = AccessibilityRuleContext(
-                    screenshotData: crawledScreen.screenshotData,
-                    screenshotWidth: crawledScreen.screenshotWidth,
-                    screenshotHeight: crawledScreen.screenshotHeight,
-                    hierarchyWidth: crawledScreen.rootNode.frame.width,
-                    hierarchyHeight: crawledScreen.rootNode.frame.height
-                )
-
-                // Build screenshot evidence for every unique viewport discovered
-                // while scrolling this screen. This fixes two report problems: the
-                // top screenshot being repeated and newly revealed scroll content
-                // having no screenshot evidence.
-                var viewportScreenshots: [ScreenshotViewport] = []
-                var viewportEvaluations: [AccessibilityRuleEvaluation] = []
-
-                for (viewportIndex, capture) in crawledScreen.viewportCaptures.enumerated() {
-                    let viewportContext = AccessibilityRuleContext(
-                        screenshotData: capture.snapshot.screenshotData,
-                        screenshotWidth: capture.snapshot.screenshotWidth,
-                        screenshotHeight: capture.snapshot.screenshotHeight,
-                        hierarchyWidth: capture.snapshot.rootNode.frame.width,
-                        hierarchyHeight: capture.snapshot.rootNode.frame.height
-                    )
-
-                    let contextualEvaluations = scanner.evaluateForReport(
-                        rootNode: capture.snapshot.rootNode,
-                        context: viewportContext
-                    )
-
-                    let evaluations = mergeEvaluations(
-                        capture.evaluations,
-                        contextualEvaluations
-                    )
-                    viewportEvaluations.append(contentsOf: evaluations)
-
-                    let annotations = ScreenshotAnnotation.makeAnnotations(
-                        from: evaluations
-                    )
-
-                    let annotatedImageData = ScreenshotAnnotator().annotate(
-                        imageData: capture.snapshot.screenshotData,
-                        screenshotWidth: capture.snapshot.screenshotWidth,
-                        screenshotHeight: capture.snapshot.screenshotHeight,
-                        hierarchyWidth: capture.snapshot.rootNode.frame.width,
-                        hierarchyHeight: capture.snapshot.rootNode.frame.height,
-                        evaluations: evaluations
-                    )
-
-                    viewportScreenshots.append(
-                        ScreenshotViewport(
-                            index: viewportIndex + 1,
-                            screenshot: ScanScreenshot(
-                                imageData: capture.snapshot.screenshotData,
-                                annotatedImageData: annotatedImageData,
-                                width: capture.snapshot.screenshotWidth,
-                                height: capture.snapshot.screenshotHeight,
-                                hierarchyWidth: capture.snapshot.rootNode.frame.width,
-                                hierarchyHeight: capture.snapshot.rootNode.frame.height
-                            ),
-                            annotations: annotations
-                        )
-                    )
+                let number = screenResults.count + 1
+                let screenResult = try await ProcessRunner.offMain {
+                    ScreenResultBuilder.build(crawledScreen, number: number)
                 }
-
-                // Defensive fallback for screens that were captured before the
-                // viewport capture path existed.
-                if viewportScreenshots.isEmpty {
-                    let contextualEvaluations = scanner.evaluateForReport(
-                        rootNode: crawledScreen.rootNode,
-                        context: screenshotContext
-                    )
-                    viewportEvaluations.append(contentsOf: contextualEvaluations)
-
-                    let annotations = ScreenshotAnnotation.makeAnnotations(
-                        from: contextualEvaluations
-                    )
-                    let annotatedImageData = ScreenshotAnnotator().annotate(
-                        imageData: crawledScreen.screenshotData,
-                        screenshotWidth: crawledScreen.screenshotWidth,
-                        screenshotHeight: crawledScreen.screenshotHeight,
-                        hierarchyWidth: crawledScreen.rootNode.frame.width,
-                        hierarchyHeight: crawledScreen.rootNode.frame.height,
-                        evaluations: contextualEvaluations
-                    )
-
-                    viewportScreenshots.append(
-                        ScreenshotViewport(
-                            index: 1,
-                            screenshot: ScanScreenshot(
-                                imageData: crawledScreen.screenshotData,
-                                annotatedImageData: annotatedImageData,
-                                width: crawledScreen.screenshotWidth,
-                                height: crawledScreen.screenshotHeight,
-                                hierarchyWidth: crawledScreen.rootNode.frame.width,
-                                hierarchyHeight: crawledScreen.rootNode.frame.height
-                            ),
-                            annotations: annotations
-                        )
-                    )
-                }
-
-                var nextAnnotationNumber = 1
-                var normalizedViewports: [ScreenshotViewport] = []
-                var allAnnotations: [ScreenshotAnnotation] = []
-
-                for viewport in viewportScreenshots {
-                    let normalizedAnnotations = viewport.annotations.map { annotation -> ScreenshotAnnotation in
-                        let normalized = annotation.renumbered(nextAnnotationNumber)
-                        nextAnnotationNumber += 1
-                        allAnnotations.append(normalized)
-                        return normalized
-                    }
-
-                    normalizedViewports.append(
-                        ScreenshotViewport(
-                            index: viewport.index,
-                            screenshot: viewport.screenshot,
-                            annotations: normalizedAnnotations
-                        )
-                    )
-                }
-
-                let evaluations = mergeEvaluations(
-                    mergeEvaluations(
-                        crawledScreen.evaluations,
-                        viewportEvaluations
-                    ),
-                    crawledScreen.keyboardFocusEvaluations
-                )
-
-                let primaryScreenshot = normalizedViewports.first?.screenshot
-                    ?? ScanScreenshot(
-                        imageData: crawledScreen.screenshotData,
-                        width: crawledScreen.screenshotWidth,
-                        height: crawledScreen.screenshotHeight,
-                        hierarchyWidth: crawledScreen.rootNode.frame.width,
-                        hierarchyHeight: crawledScreen.rootNode.frame.height
-                    )
-
-                let screenResult = ScreenScanResult(
-                    name: "Screen \(screenResults.count + 1)",
-                    signature: crawledScreen.signature,
-                    elementCount: elementCount,
-                    evaluations: evaluations,
-                    transitions: crawledScreen.transitions,
-                    screenshot: primaryScreenshot,
-                    annotations: allAnnotations,
-                    viewportScreenshots: normalizedViewports
-                )
-
                 screenResults.append(screenResult)
             }
 
             let finishedAt = Date()
 
-            let draftResult = AccessibilityScanResult(
+            var draftResult = AccessibilityScanResult(
                 applicationName: application.name,
                 bundleID: application.bundleID,
                 deviceName: device.name,
@@ -586,6 +455,9 @@ final class ScannerViewModel: ObservableObject {
                 screens: screenResults,
                 rulesExecuted: AccessibilityRules.all.count
             )
+            draftResult.environment = environment
+            draftResult.scanNotes = notes.summaries
+                + AccessibilityReportIntegrity.consistencyNotes(draftResult)
 
             let integrityIssues = AccessibilityReportIntegrity.validate(draftResult)
             guard integrityIssues.isEmpty else {
@@ -637,25 +509,27 @@ final class ScannerViewModel: ObservableObject {
             Scan complete — \(screenResults.count) screens discovered
             """
             
-            print("Screens: \(screenResults.count)")
-            print("Elements: \(result.totalElementsTested)")
-            print("Failures: \(result.totalFailures)")
-            print("Warnings: \(result.totalWarnings)")
-            print("Validations: \(result.totalValidations)")
-            print("Passes: \(result.totalPasses)")
+            trace("Screens: \(screenResults.count)", Log.scan)
+            trace("Elements: \(result.totalElementsTested)", Log.scan)
+            trace("Failures: \(result.totalFailures)", Log.scan)
+            trace("Warnings: \(result.totalWarnings)", Log.scan)
+            trace("Validations: \(result.totalValidations)", Log.scan)
+            trace("Passes: \(result.totalPasses)", Log.scan)
 
 
         } catch {
             
             if Task.isCancelled {
                 if !partialCrawledScreens.isEmpty {
-                    let partial = makePartialReport(
+                    var partial = makePartialReport(
                         crawledScreens: partialCrawledScreens,
                         application: application,
                         device: device,
                         startedAt: startedAt,
                         scanner: AccessibilityScanner()
                     )
+                    partial.environment = environment
+                    partial.scanNotes = ["The scan was stopped before it finished; screens not reached are not included."] + notes.summaries
                     scanResult = partial
                     findings = partial.allEvaluations
                         .filter { $0.status == .fail || $0.status == .warning }
@@ -683,6 +557,18 @@ final class ScannerViewModel: ObservableObject {
                 errorMessage = userFacingScanError(error)
             }
         }
+
+        // Always release the Appium session, including after a failure or
+        // Stop, and before the UI allows the next scan to start.
+        if let appium = activeAppium, appium.sessionID != nil {
+            await DeviceRestore.run {
+                try? await appium.deleteSession()
+            }
+        }
+
+        // Only needed to build a partial report on Stop; the full-resolution
+        // screenshots it holds can take hundreds of megabytes.
+        partialCrawledScreens = []
     }
 
     private func makePartialReport(
@@ -715,8 +601,8 @@ final class ScannerViewModel: ObservableObject {
                 evaluations: evaluations
             )
             let screenshot = ScanScreenshot(
-                imageData: screen.screenshotData,
-                annotatedImageData: annotated,
+                imageData: Self.storedImage(screen.screenshotData),
+                annotatedImageData: annotated.map { Self.storedImage($0) },
                 width: screen.screenshotWidth,
                 height: screen.screenshotHeight,
                 hierarchyWidth: screen.rootNode.frame.width,
@@ -791,7 +677,7 @@ final class ScannerViewModel: ObservableObject {
             let screenshotData = try await appium.getScreenshot()
 
             guard let image = NSImage(data: screenshotData) else {
-                try? await appium.setOrientation(originalOrientation)
+                await DeviceRestore.run { try? await appium.setOrientation(originalOrientation) }
                 return ResponsiveAccessibilityResult(
                     tested: true,
                     originalOrientation: originalOrientation,
@@ -841,7 +727,7 @@ final class ScannerViewModel: ObservableObject {
                 status = .pass
             }
 
-            try? await appium.setOrientation(originalOrientation)
+            await DeviceRestore.run { try? await appium.setOrientation(originalOrientation) }
 
             return ResponsiveAccessibilityResult(
                 tested: true,
@@ -856,11 +742,11 @@ final class ScannerViewModel: ObservableObject {
                 dynamicTypeValidationCount: dynamicTypeValidations,
                 dynamicTypeFailureCount: dynamicTypeFailures,
                 status: status,
-                note: "Landscape was tested on the final crawled app state. Dynamic Type findings remain hierarchy-based; changing system text size is not performed automatically by the black-box scanner."
+                note: "Landscape was tested on the final crawled app state. Larger text is tested separately on the first screen by relaunching the app at the largest text size."
             )
         } catch {
             if let originalOrientation {
-                try? await appium.setOrientation(originalOrientation)
+                await DeviceRestore.run { try? await appium.setOrientation(originalOrientation) }
             }
             return ResponsiveAccessibilityResult(
                 tested: false,
@@ -882,9 +768,49 @@ final class ScannerViewModel: ObservableObject {
 
     // MARK: - Stable Snapshot Capture
 
+    private static func storedImage(_ data: Data) -> Data {
+        ScreenResultBuilder.storedImage(data)
+    }
+
+    /// Device, OS, app and scanner versions for the report.
+    private func makeEnvironment(
+        appium: AppiumClient,
+        device: Device,
+        application: InstalledApp
+    ) async -> ScanEnvironment {
+        var version = application.version
+        var build = application.build
+        if device.platform == .android {
+            let package = application.bundleID
+            let serial = device.udid
+            let android = try? await ProcessRunner.offMain {
+                AndroidDeviceService().appVersion(package: package, serial: serial)
+            }
+            version = android?.version ?? version
+            build = android?.build ?? build
+        }
+        return ScanEnvironment(
+            platform: device.platform.rawValue,
+            osVersion: appium.deviceOSVersion,
+            deviceModel: appium.deviceModel,
+            isSimulator: device.isSimulator,
+            appVersion: version,
+            appBuild: build,
+            automationName: appium.automationName,
+            appiumVersion: appium.serverVersion,
+            scannerVersion: ScannerBuildInfo.displayVersion,
+            ruleSetVersion: AccessibilityRuleCatalog.version,
+            bbMappingVersion: BBIssueCatalog.version,
+            wcagVersion: ScannerBuildInfo.wcagVersion
+        )
+    }
+
     private func captureStableSnapshot(
-        appium: AppiumClient
+        appium: AppiumClient,
+        notes: ScanNotes
     ) async throws -> StableScanSnapshot {
+
+        var lastCapture: StableScanSnapshot?
 
         for attempt in 1...maximumSnapshotAttempts {
 
@@ -959,9 +885,16 @@ final class ScannerViewModel: ObservableObject {
                     rootAfter
                 )
 
+            lastCapture = StableScanSnapshot(
+                rootNode: rootBefore,
+                screenshotData: screenshotData,
+                screenshotWidth: screenshotWidth,
+                screenshotHeight: screenshotHeight
+            )
+
             if beforeSignature == afterSignature {
 
-                print("""
+                trace("""
 
                 Attempt:
                     \(attempt)
@@ -974,7 +907,7 @@ final class ScannerViewModel: ObservableObject {
 
                 Result:
                     STABLE
-                """)
+                """, Log.scan)
 
                 return StableScanSnapshot(
                     rootNode: rootBefore,
@@ -984,7 +917,7 @@ final class ScannerViewModel: ObservableObject {
                 )
             }
 
-            print("""
+            trace("""
 
             Attempt:
                 \(attempt)
@@ -998,7 +931,7 @@ final class ScannerViewModel: ObservableObject {
 
             After hierarchy:
                 \(rootAfter.frame.width) × \(rootAfter.frame.height)
-            """)
+            """, Log.scan)
 
             if attempt < maximumSnapshotAttempts {
 
@@ -1010,6 +943,13 @@ final class ScannerViewModel: ObservableObject {
                         snapshotRetryDelayNanoseconds
                 )
             }
+        }
+
+        // Carousels, animations and live counters never hold still. Scan the
+        // last capture rather than failing the whole scan, and say so.
+        if let lastCapture {
+            notes.record(.unstableScreen, example: "first screen")
+            return lastCapture
         }
 
         throw ScannerViewModelError
@@ -1102,67 +1042,19 @@ final class ScannerViewModel: ObservableObject {
         _ base: [AccessibilityRuleEvaluation],
         _ additions: [AccessibilityRuleEvaluation]
     ) -> [AccessibilityRuleEvaluation] {
-        var replacementByKey: [String: AccessibilityRuleEvaluation] = [:]
-        for evaluation in additions {
-            replacementByKey[evaluationKey(evaluation)] = evaluation
-        }
-
-        var result: [AccessibilityRuleEvaluation] = []
-        var consumed = Set<String>()
-
-        for evaluation in base {
-            let key = evaluationKey(evaluation)
-            if let replacement = replacementByKey[key] {
-                result.append(replacement)
-                consumed.insert(key)
-            } else {
-                result.append(evaluation)
-            }
-        }
-
-        for evaluation in additions {
-            let key = evaluationKey(evaluation)
-            if !consumed.contains(key) && !base.contains(where: { evaluationKey($0) == key }) {
-                result.append(evaluation)
-                consumed.insert(key)
-            }
-        }
-
-        return result
+        ScreenResultBuilder.mergeEvaluations(base, additions)
     }
 
-    private func evaluationKey(
-        _ evaluation: AccessibilityRuleEvaluation
-    ) -> String {
-        [
-            evaluation.ruleID,
-            evaluation.elementType,
-            evaluation.identifier,
-            evaluation.elementLabel,
-            String(format: "%.1f", evaluation.frameX),
-            String(format: "%.1f", evaluation.frameY),
-            String(format: "%.1f", evaluation.frameWidth),
-            String(format: "%.1f", evaluation.frameHeight)
-        ].joined(separator: "|")
-    }
 
-    private func countNodes(
-        _ node: AccessibilityNode
-    ) -> Int {
 
-        if node.identifier == "A11YScannerIgnore" {
-            return 0
-        }
-
-        return 1 + node.children.reduce(0) {
-            $0 + countNodes($1)
-        }
+    private func countNodes(_ node: AccessibilityNode) -> Int {
+        ScreenResultBuilder.countNodes(node)
     }
 }
 
 // MARK: - Stable Scan Snapshot
 
-struct StableScanSnapshot {
+nonisolated struct StableScanSnapshot {
     let rootNode: AccessibilityNode
     let screenshotData: Data
     let screenshotWidth: Double
@@ -1177,6 +1069,7 @@ private enum ScannerViewModelError:
     case invalidScreenshot
     case unstableUI
     case reportIntegrityFailure(String)
+    case wrongAppInForeground(expected: String, actual: String)
 
     var errorDescription: String? {
 
@@ -1194,6 +1087,10 @@ private enum ScannerViewModelError:
 
         case .reportIntegrityFailure(let details):
             return "The scan completed, but the generated report failed an internal consistency check. No report was saved. \(details)"
+
+        case .wrongAppInForeground(let expected, let actual):
+            let shown = actual == "com.apple.springboard" ? "the Home screen" : actual == "com.apple.Preferences" ? "the Settings app" : actual
+            return "Current Page scans the screen that is open on the device, but the device is showing \(shown), not \(expected). Open the page you want to scan in \(expected), then start the scan again."
         }
     }
 }

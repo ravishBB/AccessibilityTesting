@@ -10,7 +10,7 @@
 import Foundation
 import CoreGraphics
 
-enum VisualOrder {
+nonisolated enum VisualOrder {
 
     struct Assessment {
         /// Elements compared.

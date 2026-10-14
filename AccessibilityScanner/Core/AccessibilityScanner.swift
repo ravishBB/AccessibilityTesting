@@ -6,7 +6,7 @@
 
 import Foundation
 
-final class AccessibilityScanner {
+nonisolated final class AccessibilityScanner {
     private let rules: [AccessibilityRule]
     
 

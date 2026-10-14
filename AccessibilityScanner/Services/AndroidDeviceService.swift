@@ -7,7 +7,8 @@
 
 import Foundation
 
-final class AndroidDeviceService {
+/// Nonisolated: its adb calls block, so callers run it off the main actor.
+nonisolated final class AndroidDeviceService {
 
     // MARK: - Errors
 
@@ -19,7 +20,7 @@ final class AndroidDeviceService {
         var errorDescription: String? {
             switch self {
             case .adbNotFound:
-                return "adb was not found. Install Android platform-tools or set ANDROID_HOME."
+                return "adb was not found. Install Android platform-tools, or set the Android SDK folder in Settings (⌘,)."
             case .commandFailed(let message):
                 return "adb command failed: \(message)"
             }
@@ -32,6 +33,12 @@ final class AndroidDeviceService {
 
         var candidates: [String] = []
         let environment = ProcessInfo.processInfo.environment
+
+        let configured = ScannerSettings.androidSDKPath
+        if !configured.isEmpty {
+            candidates.append("\(configured)/platform-tools/adb")
+            candidates.append(configured)  // the adb binary itself
+        }
 
         for key in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {
             if let root = environment[key], !root.isEmpty {
@@ -47,8 +54,19 @@ final class AndroidDeviceService {
 
         return candidates.first {
             FileManager.default.isExecutableFile(atPath: $0)
-        }
+        } ?? Self.adbFromLoginShell
     }
+
+    /// An app opened from Finder does not get the user's shell PATH, so adb
+    /// installed through asdf, sdkman or a custom SDK folder is not found
+    /// above. Ask a login shell once, the way Terminal would resolve it.
+    private static let adbFromLoginShell: String? = {
+        guard let output = try? ProcessRunner.run("/bin/zsh", ["-lc", "command -v adb"], timeout: 10),
+              output.status == 0
+        else { return nil }
+        let path = output.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return FileManager.default.isExecutableFile(atPath: path) ? path : nil
+    }()
 
     // MARK: - Devices
 
@@ -168,6 +186,21 @@ final class AndroidDeviceService {
 
     // MARK: - Launcher activity
 
+    /// versionName and versionCode of an installed package, for the report.
+    func appVersion(package: String, serial: String) -> (version: String?, build: String?) {
+        guard let adb = adbPath(),
+              let output = try? run(adb, ["-s", serial, "shell", "dumpsys", "package", package])
+        else { return (nil, nil) }
+
+        func value(after key: String) -> String? {
+            guard let range = output.range(of: key) else { return nil }
+            let rest = output[range.upperBound...]
+            let token = rest.prefix { !$0.isWhitespace }
+            return token.isEmpty ? nil : String(token)
+        }
+        return (value(after: "versionName="), value(after: "versionCode="))
+    }
+
     /// Resolves the launcher activity so Appium can start the app.
     /// Returns nil if it cannot be resolved (Appium will try its own detection).
     func launchableActivity(package: String, serial: String) -> String? {
@@ -219,31 +252,12 @@ final class AndroidDeviceService {
     }
 
     private func run(_ executable: String, _ arguments: [String]) throws -> String {
-
-        let process = Process()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-
-        try process.run()
-
-        // Read before waiting so a full pipe cannot deadlock the process.
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            let message = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+        let output = try ProcessRunner.run(executable, arguments, timeout: 30)
+        guard output.status == 0 else {
             throw AndroidServiceError.commandFailed(
-                message.trimmingCharacters(in: .whitespacesAndNewlines)
+                output.stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
             )
         }
-
-        return String(data: outputData, encoding: .utf8) ?? ""
+        return output.stdoutText
     }
 }

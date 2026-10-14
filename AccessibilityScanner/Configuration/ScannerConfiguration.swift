@@ -33,9 +33,7 @@ struct ScannerConfiguration {
     let xcodeSigningID: String
 
     init(
-        appiumURL: URL = URL(
-            string: "http://127.0.0.1:4723"
-        )!,
+        appiumURL: URL = ScannerSettings.appiumURL,
         bundleID: String,
         deviceName: String,
         udid: String,
@@ -43,8 +41,8 @@ struct ScannerConfiguration {
         appActivity: String? = nil,
         displayDensity: Int? = nil,
         autoLaunch: Bool = true,
-        xcodeOrgID: String = "EJ5R49N3EY",
-        xcodeSigningID: String = "Apple Development"
+        xcodeOrgID: String = ScannerSettings.teamID,
+        xcodeSigningID: String = ScannerSettings.signingID
     ) {
         self.appiumURL = appiumURL
         self.bundleID = bundleID

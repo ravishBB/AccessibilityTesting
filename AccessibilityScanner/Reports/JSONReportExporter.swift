@@ -6,7 +6,7 @@
 
 import Foundation
 
-struct JSONReportExporter {
+nonisolated struct JSONReportExporter {
 
     enum ExportError: LocalizedError {
         case couldNotCreateFile
@@ -23,6 +23,9 @@ struct JSONReportExporter {
         /// Embed downscaled screenshots as base64 JPEG. Turn off for lightweight CI artifacts.
         var includeScreenshots = true
         var maxScreenshotPixelSize = 900
+        /// Also embed the unannotated image when an annotated one exists.
+        /// Off by default: it doubles the file size for little extra value.
+        var includeOriginalWhenAnnotated = false
     }
 
     var options = Options()
@@ -91,7 +94,7 @@ struct JSONReportExporter {
 
 // MARK: - JSON Payload
 
-private struct JSONReportPayload: Codable {
+private nonisolated struct JSONReportPayload: Codable {
 
     let schemaVersion: String
     let reportID: UUID
@@ -103,6 +106,8 @@ private struct JSONReportPayload: Codable {
     let rules: [JSONRuleSummary]
     /// Per-rule outcomes and the full WCAG A/AA coverage matrix (schema 1.5).
     let coverage: ReportCoverage
+    /// Every BB ID in the ruleset and what this scan did with it (schema 1.7).
+    let bbCoverage: [BBCoverageEntry]
     let intelligence: AccessibilityIntelligence?
 
     init(report: AccessibilityScanResult, options: JSONReportExporter.Options) {
@@ -111,26 +116,31 @@ private struct JSONReportPayload: Codable {
         // 1.4 is additive over 1.3: generator, reportID, findings, per-evaluation
         // fingerprint/wcag/impact, rule metadata and embedded screenshots.
         // 1.5 is additive over 1.4: coverage block and summary.uniquePasses.
-        self.schemaVersion = "1.5"
+        // 1.6: scan.environment, scan.scanNotes, generator.bbMappingVersion,
+        // BB issue IDs on findings and evaluations; scan.deviceUDID removed.
+        // 1.7: bbCoverage (every BB ruleset row with its result on this scan).
+        self.schemaVersion = "1.7"
         self.reportID = report.id
         self.generator = JSONGenerator()
         self.scan = JSONScanMetadata(report: report)
         self.summary = JSONSummary(report: report, grouping: grouping)
-        self.findings = grouping.groups.map(JSONGroupedFinding.init)
+        self.findings = grouping.groups.map { JSONGroupedFinding(group: $0) }
         self.screens = report.screens.map {
             JSONScreen(screen: $0, grouping: grouping, options: options)
         }
-        self.rules = report.ruleSummaries.map(JSONRuleSummary.init)
+        self.rules = report.ruleSummaries.map { JSONRuleSummary(summary: $0) }
         self.coverage = ReportCoverage(report: report, grouping: grouping)
+        self.bbCoverage = BBCoverage.entries(for: report)
         self.intelligence = report.intelligence
     }
 }
 
-private struct JSONGenerator: Codable {
+private nonisolated struct JSONGenerator: Codable {
     let name: String
     let version: String
     let build: String
     let ruleSetVersion: String
+    let bbMappingVersion: String
     let standard: String
     let catalogRuleCount: Int
 
@@ -139,12 +149,13 @@ private struct JSONGenerator: Codable {
         self.version = ScannerBuildInfo.version
         self.build = ScannerBuildInfo.build
         self.ruleSetVersion = ScannerBuildInfo.ruleSetVersion
+        self.bbMappingVersion = BBIssueCatalog.version
         self.standard = ScannerBuildInfo.wcagVersion
         self.catalogRuleCount = AccessibilityRuleCatalog.ruleCount
     }
 }
 
-private struct JSONWCAG: Codable {
+private nonisolated struct JSONWCAG: Codable {
     let criterion: String
     let title: String?
     let level: String?
@@ -157,12 +168,14 @@ private struct JSONWCAG: Codable {
     }
 }
 
-private struct JSONGroupedFinding: Codable {
+private nonisolated struct JSONGroupedFinding: Codable {
     let id: String
     let ruleID: String
     let ruleName: String
     let bbIssueID: String?
     let bbIssueTitle: String?
+    /// WCAG criterion of the BB issue, from the BB sheet.
+    let bbIssueWCAG: String?
     let status: String
     let severity: String
     let impact: String
@@ -180,6 +193,7 @@ private struct JSONGroupedFinding: Codable {
         self.ruleName = group.ruleName
         self.bbIssueID = group.bbIssue?.id
         self.bbIssueTitle = group.bbIssue?.title
+        self.bbIssueWCAG = group.bbIssue?.wcag
         self.status = group.status.rawValue
         self.severity = group.severity.rawValue
         self.impact = group.metadata.impact.rawValue
@@ -193,11 +207,15 @@ private struct JSONGroupedFinding: Codable {
     }
 }
 
-private struct JSONScanMetadata: Codable {
+private nonisolated struct JSONScanMetadata: Codable {
     let applicationName: String
     let bundleID: String
     let deviceName: String
-    let deviceUDID: String
+    // The device UDID is a hardware identifier and is not included in a
+    // report that goes to clients.
+    let environment: ScanEnvironment?
+    /// What the scan could not do (failed taps, lost navigation, moving screens).
+    let scanNotes: [String]
     let startedAt: Date
     let finishedAt: Date
     let durationSeconds: Double
@@ -210,7 +228,8 @@ private struct JSONScanMetadata: Codable {
         self.applicationName = report.applicationName
         self.bundleID = report.bundleID
         self.deviceName = report.deviceName
-        self.deviceUDID = report.deviceUDID
+        self.environment = report.environment
+        self.scanNotes = report.scanNotes ?? []
         self.startedAt = report.startedAt
         self.finishedAt = report.finishedAt
         self.durationSeconds = max(
@@ -222,7 +241,7 @@ private struct JSONScanMetadata: Codable {
     }
 }
 
-private struct JSONSummary: Codable {
+private nonisolated struct JSONSummary: Codable {
     let totalElementsTested: Int
     let totalEvaluations: Int
     let totalFailures: Int
@@ -254,7 +273,7 @@ private struct JSONSummary: Codable {
     }
 }
 
-private struct JSONScreen: Codable {
+private nonisolated struct JSONScreen: Codable {
     let id: UUID
     let name: String
     let signature: String
@@ -284,10 +303,12 @@ private struct JSONScreen: Codable {
         self.validations = screen.validations
         self.passes = screen.passes
         self.affectedElements = screen.affectedElements
+        // The screen screenshot is also the first viewport: embed its image
+        // bytes only once, in the viewport list.
         self.screenshot = screen.screenshot.map {
-            JSONScreenshot(screenshot: $0, options: options)
+            JSONScreenshot(screenshot: $0, options: options, embedImages: screen.viewportScreenshots.isEmpty)
         }
-        self.annotations = screen.annotations.map(JSONAnnotation.init)
+        self.annotations = screen.annotations.map { JSONAnnotation(annotation: $0) }
         self.viewportScreenshots = screen.viewportScreenshots.map {
             JSONViewportScreenshot(viewport: $0, options: options)
         }
@@ -297,12 +318,12 @@ private struct JSONScreen: Codable {
                 fingerprint: grouping.fingerprintByEvaluationID[$0.id]
             )
         }
-        self.transitions = screen.transitions.map(JSONTransition.init)
+        self.transitions = screen.transitions.map { JSONTransition(transition: $0) }
     }
 }
 
 
-private struct JSONViewportScreenshot: Codable {
+private nonisolated struct JSONViewportScreenshot: Codable {
     let id: UUID
     let index: Int
     let screenshot: JSONScreenshot
@@ -312,11 +333,11 @@ private struct JSONViewportScreenshot: Codable {
         self.id = viewport.id
         self.index = viewport.index
         self.screenshot = JSONScreenshot(screenshot: viewport.screenshot, options: options)
-        self.annotations = viewport.annotations.map(JSONAnnotation.init)
+        self.annotations = viewport.annotations.map { JSONAnnotation(annotation: $0) }
     }
 }
 
-private struct JSONTransition: Codable {
+private nonisolated struct JSONTransition: Codable {
     let id: UUID
     let targetSignature: String
     let actionID: String
@@ -343,7 +364,7 @@ private struct JSONTransition: Codable {
     }
 }
 
-private struct JSONScreenshot: Codable {
+private nonisolated struct JSONScreenshot: Codable {
     let width: Double
     let height: Double
     let hierarchyWidth: Double
@@ -355,15 +376,14 @@ private struct JSONScreenshot: Codable {
     let imageBase64: String?
     let annotatedImageBase64: String?
 
-    init(screenshot: ScanScreenshot, options: JSONReportExporter.Options) {
-        if options.includeScreenshots {
-            let original = ReportImageEncoder.encode(
-                screenshot.imageData,
-                maxPixelSize: options.maxScreenshotPixelSize
-            )
+    init(screenshot: ScanScreenshot, options: JSONReportExporter.Options, embedImages: Bool = true) {
+        if options.includeScreenshots && embedImages {
             let annotated = screenshot.annotatedImageData.flatMap {
                 ReportImageEncoder.encode($0, maxPixelSize: options.maxScreenshotPixelSize)
             }
+            let original = (annotated == nil || options.includeOriginalWhenAnnotated)
+                ? ReportImageEncoder.encode(screenshot.imageData, maxPixelSize: options.maxScreenshotPixelSize)
+                : nil
             self.imageMimeType = original?.mimeType ?? annotated?.mimeType
             self.imageBase64 = original?.base64
             self.annotatedImageBase64 = annotated?.base64
@@ -382,7 +402,7 @@ private struct JSONScreenshot: Codable {
     }
 }
 
-private struct JSONAnnotation: Codable {
+private nonisolated struct JSONAnnotation: Codable {
     let id: UUID
     let number: Int
     let ruleID: String
@@ -413,7 +433,7 @@ private struct JSONAnnotation: Codable {
     }
 }
 
-private struct JSONEvaluation: Codable {
+private nonisolated struct JSONEvaluation: Codable {
     let id: UUID
     let ruleID: String
     let ruleName: String
@@ -447,7 +467,7 @@ private struct JSONEvaluation: Codable {
     }
 }
 
-private struct JSONElement: Codable {
+private nonisolated struct JSONElement: Codable {
     let type: String
     let identifier: String
     let label: String
@@ -468,14 +488,14 @@ private struct JSONElement: Codable {
     }
 }
 
-private struct JSONFrame: Codable {
+private nonisolated struct JSONFrame: Codable {
     let x: Double
     let y: Double
     let width: Double
     let height: Double
 }
 
-private struct JSONRuleSummary: Codable {
+private nonisolated struct JSONRuleSummary: Codable {
     let ruleID: String
     let ruleName: String
     let severity: String

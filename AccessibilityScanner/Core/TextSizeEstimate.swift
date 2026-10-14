@@ -2,27 +2,18 @@
 //  TextSizeEstimate.swift
 //  AccessibilityScanner
 //
-//  Neither XCUITest nor UiAutomator exposes font size or weight, so the
-//  contrast rules estimate the font size from the element frame and its text
-//  length to decide between the standard-text and large-text thresholds.
-//
-//  WCAG large text is at least 18pt, or 14pt bold. iOS points and Android sp
-//  are used directly as pt, as Accessibility Inspector and Android
-//  Accessibility Scanner do. Weight is unknown, so text between 14pt and 18pt
-//  is "possiblyLarge": it is held to the standard threshold, and a result that
-//  only passes the large-text threshold goes to manual review.
-//
+
 
 import Foundation
 import CoreGraphics
 
-enum TextSizeClass {
+nonisolated enum TextSizeClass {
     case standard
     case possiblyLarge
     case large
 }
 
-enum TextSizeEstimate {
+nonisolated enum TextSizeEstimate {
 
     static let largeTextPoints: CGFloat = 18
     static let largeBoldTextPoints: CGFloat = 14
@@ -32,12 +23,7 @@ enum TextSizeEstimate {
     /// Average glyph advance is roughly 0.5× the font size for Latin text.
     private static let averageCharacterWidthFactor: CGFloat = 0.5
 
-    /// Estimated font size in points/sp, or nil when it cannot be estimated.
-    ///
-    /// Single line: frame height / 1.2. Multi-line: from area, since
-    /// characters × 0.5 × size × 1.2 × size ≈ width × height. The smaller of
-    /// the two is used: the first overestimates wrapped text and the second
-    /// overestimates a short label in a wide frame.
+
     static func fontSize(frame: CGRect, text: String) -> CGFloat? {
         let characters = text.trimmingCharacters(in: .whitespacesAndNewlines).count
         guard characters > 0, frame.width > 0, frame.height > 0 else { return nil }
@@ -48,6 +34,12 @@ enum TextSizeEstimate {
             (CGFloat(characters) * averageCharacterWidthFactor * lineHeightFactor)
         )
         return min(singleLine, fromArea)
+    }
+
+    static func classify(points: Double) -> TextSizeClass {
+        if CGFloat(points) >= largeTextPoints { return .large }
+        if CGFloat(points) >= largeBoldTextPoints { return .possiblyLarge }
+        return .standard
     }
 
     static func classify(frame: CGRect, text: String, role: AccessibilityRole) -> TextSizeClass {
@@ -61,11 +53,14 @@ enum TextSizeEstimate {
         return .standard
     }
 
+    /// Uses the real font size when the platform exposes it (Android).
     static func classify(_ node: AccessibilityNode) -> TextSizeClass {
-        classify(frame: node.frame, text: node.label, role: node.role)
+        if let points = node.semantics.textSizePoints { return classify(points: points) }
+        return classify(frame: node.frame, text: node.label, role: node.role)
     }
 
     static func classify(_ evaluation: AccessibilityRuleEvaluation) -> TextSizeClass {
-        classify(frame: evaluation.frame, text: evaluation.elementLabel, role: evaluation.elementRole)
+        if let points = evaluation.textSizePoints { return classify(points: points) }
+        return classify(frame: evaluation.frame, text: evaluation.elementLabel, role: evaluation.elementRole)
     }
 }

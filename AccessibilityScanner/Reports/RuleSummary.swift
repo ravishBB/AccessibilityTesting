@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct RuleSummary: Identifiable, Codable {
+nonisolated struct RuleSummary: Identifiable, Codable {
 
     let id: String
 

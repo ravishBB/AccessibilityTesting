@@ -5,11 +5,12 @@
 //  Created by Ravish Kumar on 30/09/26.
 
 import Foundation
+import os
 import SwiftUI
 
 // MARK: - Common Models
 
-enum IntelligenceStatus: String, Codable, CaseIterable {
+nonisolated enum IntelligenceStatus: String, Codable, CaseIterable {
     case pass
     case warning
     case fail
@@ -27,7 +28,7 @@ enum IntelligenceStatus: String, Codable, CaseIterable {
     }
 }
 
-struct IntelligenceMetric: Identifiable, Codable, Hashable {
+nonisolated struct IntelligenceMetric: Identifiable, Codable, Hashable {
     let id: String
     let title: String
     let value: Int
@@ -35,7 +36,7 @@ struct IntelligenceMetric: Identifiable, Codable, Hashable {
     let detail: String
 }
 
-struct VisualEngineResult: Codable, Hashable {
+nonisolated struct VisualEngineResult: Codable, Hashable {
     let totalScreens: Int
     let screensWithScreenshots: Int
     let screensWithVisualFindings: Int
@@ -44,7 +45,7 @@ struct VisualEngineResult: Codable, Hashable {
     let status: IntelligenceStatus
 }
 
-struct StateEngineResult: Codable, Hashable {
+nonisolated struct StateEngineResult: Codable, Hashable {
     let stateRelatedEvaluations: Int
     let stateFailures: Int
     let stateWarnings: Int
@@ -53,7 +54,7 @@ struct StateEngineResult: Codable, Hashable {
     let note: String
 }
 
-struct VoiceOverFocusStop: Identifiable, Codable, Hashable {
+nonisolated struct VoiceOverFocusStop: Identifiable, Codable, Hashable {
     let id: UUID
     let position: Int
     let elementType: String
@@ -77,7 +78,7 @@ struct VoiceOverFocusStop: Identifiable, Codable, Hashable {
     }
 }
 
-struct VoiceOverJourneyScreen: Identifiable, Codable, Hashable {
+nonisolated struct VoiceOverJourneyScreen: Identifiable, Codable, Hashable {
     let id: UUID
     let screenName: String
     let screenSignature: String
@@ -92,7 +93,7 @@ struct VoiceOverJourneyScreen: Identifiable, Codable, Hashable {
     }
 }
 
-struct VoiceOverEngineResult: Codable, Hashable {
+nonisolated struct VoiceOverEngineResult: Codable, Hashable {
     let interactiveElementsObserved: Int
     let accessibleNameFailures: Int
     let hiddenInteractiveFailures: Int
@@ -106,7 +107,7 @@ struct VoiceOverEngineResult: Codable, Hashable {
     let note: String
 }
 
-struct ResponsiveAccessibilityResult: Codable, Hashable {
+nonisolated struct ResponsiveAccessibilityResult: Codable, Hashable {
     let tested: Bool
     let originalOrientation: String?
     let testedOrientation: String?
@@ -138,7 +139,7 @@ struct ResponsiveAccessibilityResult: Codable, Hashable {
     )
 }
 
-struct JourneyPath: Identifiable, Codable, Hashable {
+nonisolated struct JourneyPath: Identifiable, Codable, Hashable {
     let id: UUID
     let screenSignatures: [String]
     let screenNames: [String]
@@ -151,7 +152,7 @@ struct JourneyPath: Identifiable, Codable, Hashable {
     }
 }
 
-struct JourneyEngineResult: Codable, Hashable {
+nonisolated struct JourneyEngineResult: Codable, Hashable {
     let discoveredPaths: Int
     let blockedJourneys: Int
     let warningJourneys: Int
@@ -162,7 +163,7 @@ struct JourneyEngineResult: Codable, Hashable {
     let status: IntelligenceStatus
 }
 
-struct WCAGCriterionResult: Identifiable, Codable, Hashable {
+nonisolated struct WCAGCriterionResult: Identifiable, Codable, Hashable {
     let id: String
     let criterion: String
     let title: String
@@ -175,7 +176,7 @@ struct WCAGCriterionResult: Identifiable, Codable, Hashable {
     let ruleIDs: [String]
 }
 
-struct WCAGEngineResult: Codable, Hashable {
+nonisolated struct WCAGEngineResult: Codable, Hashable {
     let criteria: [WCAGCriterionResult]
     let criteriaWithFailures: Int
     let criteriaWithValidation: Int
@@ -184,7 +185,7 @@ struct WCAGEngineResult: Codable, Hashable {
     let unmappedRuleCount: Int
 }
 
-struct RegressionEngineResult: Codable, Hashable {
+nonisolated struct RegressionEngineResult: Codable, Hashable {
     let hasBaseline: Bool
     let newIssues: Int
     let fixedIssues: Int
@@ -194,7 +195,7 @@ struct RegressionEngineResult: Codable, Hashable {
     let status: IntelligenceStatus
 }
 
-struct AccessibilityRegressionIssueSnapshot: Codable, Hashable {
+nonisolated struct AccessibilityRegressionIssueSnapshot: Codable, Hashable {
     let key: String
     let screenName: String
     let screenSignature: String
@@ -214,20 +215,20 @@ struct AccessibilityRegressionIssueSnapshot: Codable, Hashable {
     let frameHeight: Double
 }
 
-struct AccessibilityDiffIssue: Identifiable, Codable, Hashable {
+nonisolated struct AccessibilityDiffIssue: Identifiable, Codable, Hashable {
     let id: String
     let change: String
     let issue: AccessibilityRegressionIssueSnapshot
 }
 
-struct AccessibilityDiffScreenChange: Identifiable, Codable, Hashable {
+nonisolated struct AccessibilityDiffScreenChange: Identifiable, Codable, Hashable {
     let id: String
     let change: String
     let screenName: String
     let signature: String
 }
 
-struct AccessibilityDiffResult: Codable, Hashable {
+nonisolated struct AccessibilityDiffResult: Codable, Hashable {
     let hasBaseline: Bool
     let newIssues: [AccessibilityDiffIssue]
     let fixedIssues: [AccessibilityDiffIssue]
@@ -245,7 +246,7 @@ struct AccessibilityDiffResult: Codable, Hashable {
 
 // MARK: - Accessibility Quality Gate
 
-struct AccessibilityQualityGatePolicy: Codable, Hashable {
+nonisolated struct AccessibilityQualityGatePolicy: Codable, Hashable {
     let failOnNewIssues: Bool
     let failOnCriticalFailures: Bool
     let failOnBlockedJourneys: Bool
@@ -259,7 +260,7 @@ struct AccessibilityQualityGatePolicy: Codable, Hashable {
     )
 }
 
-struct AccessibilityQualityGateCheck: Identifiable, Codable, Hashable {
+nonisolated struct AccessibilityQualityGateCheck: Identifiable, Codable, Hashable {
     let id: String
     let title: String
     let value: Int
@@ -268,7 +269,7 @@ struct AccessibilityQualityGateCheck: Identifiable, Codable, Hashable {
     let detail: String
 }
 
-struct AccessibilityQualityGateResult: Codable, Hashable {
+nonisolated struct AccessibilityQualityGateResult: Codable, Hashable {
     let policy: AccessibilityQualityGatePolicy
     let status: IntelligenceStatus
     let checks: [AccessibilityQualityGateCheck]
@@ -278,7 +279,7 @@ struct AccessibilityQualityGateResult: Codable, Hashable {
     }
 }
 
-struct AccessibilityIntelligence: Codable, Hashable {
+nonisolated struct AccessibilityIntelligence: Codable, Hashable {
     let generatedAt: Date
     let visual: VisualEngineResult
     let state: StateEngineResult
@@ -311,7 +312,7 @@ struct AccessibilityIntelligence: Codable, Hashable {
 
 // MARK: - Regression Snapshot
 
-struct AccessibilityRegressionSnapshot: Codable, Hashable {
+nonisolated struct AccessibilityRegressionSnapshot: Codable, Hashable {
     let applicationName: String
     let bundleID: String
     let screenSignatures: Set<String>
@@ -392,7 +393,10 @@ struct AccessibilityRegressionSnapshot: Codable, Hashable {
     }
 }
 
-final class AccessibilityRegressionStore {
+/// Keeps the last scan of each app as the baseline for the next one. Stored
+/// as files in Application Support: a baseline can be several megabytes,
+/// more than UserDefaults accepts (4 MB).
+nonisolated final class AccessibilityRegressionStore {
     static let shared = AccessibilityRegressionStore()
 
     private let defaults = UserDefaults.standard
@@ -400,27 +404,48 @@ final class AccessibilityRegressionStore {
 
     private init() {}
 
-    func load(bundleID: String) -> AccessibilityRegressionSnapshot? {
-        guard let data = defaults.data(forKey: keyPrefix + bundleID) else {
-            return nil
-        }
+    private var directory: URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        let bundle = Bundle.main.bundleIdentifier ?? "AccessibilityScanner"
+        return base.appendingPathComponent(bundle, isDirectory: true)
+            .appendingPathComponent("Baselines", isDirectory: true)
+    }
 
-        return try? JSONDecoder().decode(
-            AccessibilityRegressionSnapshot.self,
-            from: data
-        )
+    private func fileURL(for bundleID: String) -> URL? {
+        let safe = bundleID.map { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" ? $0 : "_" }
+        return directory?.appendingPathComponent(String(safe) + ".json")
+    }
+
+    func load(bundleID: String) -> AccessibilityRegressionSnapshot? {
+        let data: Data?
+        if let url = fileURL(for: bundleID), let fileData = try? Data(contentsOf: url) {
+            data = fileData
+        } else {
+            // Baselines saved by earlier versions are in UserDefaults.
+            data = defaults.data(forKey: keyPrefix + bundleID)
+        }
+        guard let data else { return nil }
+        return try? JSONDecoder().decode(AccessibilityRegressionSnapshot.self, from: data)
     }
 
     func save(report: AccessibilityScanResult) {
         let snapshot = AccessibilityRegressionSnapshot(report: report)
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        defaults.set(data, forKey: keyPrefix + report.bundleID)
+        guard let data = try? JSONEncoder().encode(snapshot),
+              let directory, let url = fileURL(for: report.bundleID)
+        else { return }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            defaults.removeObject(forKey: keyPrefix + report.bundleID)
+        } catch {
+            Log.reports.error("Could not save the regression baseline: \(error.localizedDescription, privacy: .public)")
+        }
     }
 }
 
 // MARK: - Engine
 
-struct AccessibilityIntelligenceEngine {
+nonisolated struct AccessibilityIntelligenceEngine {
 
     static func analyze(
         report: AccessibilityScanResult,
@@ -1168,11 +1193,11 @@ struct AccessibilityIntelligenceEngine {
 
 // MARK: - Report Integration Helpers
 
-extension AccessibilityScanResult {
+nonisolated extension AccessibilityScanResult {
     func settingIntelligence(
         _ intelligence: AccessibilityIntelligence
     ) -> AccessibilityScanResult {
-        AccessibilityScanResult(
+        var copy = AccessibilityScanResult(
             id: id,
             applicationName: applicationName,
             bundleID: bundleID,
@@ -1184,6 +1209,9 @@ extension AccessibilityScanResult {
             rulesExecuted: rulesExecuted,
             intelligence: intelligence
         )
+        copy.environment = environment
+        copy.scanNotes = scanNotes
+        return copy
     }
 }
 

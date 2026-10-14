@@ -8,7 +8,7 @@
 import Foundation
 import CoreGraphics
 
-struct ScreenshotAnnotation: Identifiable, Codable {
+nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
     let id: UUID
     let number: Int
     let ruleID: String

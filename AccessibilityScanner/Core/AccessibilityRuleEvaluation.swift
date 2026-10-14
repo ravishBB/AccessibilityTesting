@@ -7,7 +7,7 @@
 import Foundation
 import CoreGraphics
 
-struct AccessibilityRuleEvaluation: Identifiable, Codable {
+nonisolated struct AccessibilityRuleEvaluation: Identifiable, Codable {
 
     let id: UUID
 
@@ -31,6 +31,9 @@ struct AccessibilityRuleEvaluation: Identifiable, Codable {
     let frameY: Double
     let frameWidth: Double
     let frameHeight: Double
+
+    /// Rendered font size when the platform exposes it (Android).
+    let textSizePoints: Double?
 
     init(
         ruleID: String,
@@ -64,6 +67,7 @@ struct AccessibilityRuleEvaluation: Identifiable, Codable {
         self.frameY = node.frame.origin.y
         self.frameWidth = node.frame.width
         self.frameHeight = node.frame.height
+        self.textSizePoints = node.semantics.textSizePoints
     }
 
     /// Platform the evaluated element was captured on.

@@ -8,7 +8,7 @@
 
 import Foundation
 
-struct HTMLReportExporter {
+nonisolated struct HTMLReportExporter {
 
     enum ExportError: LocalizedError {
         case couldNotCreateFile
@@ -81,7 +81,7 @@ struct HTMLReportExporter {
 
 // MARK: - Renderer
 
-private struct HTMLReportRenderer {
+private nonisolated struct HTMLReportRenderer {
 
     let report: AccessibilityScanResult
     let options: HTMLReportExporter.Options
@@ -115,6 +115,7 @@ private struct HTMLReportRenderer {
         out += findingsSection()
         out += manualReviewSection()
         out += coverageSection()
+        out += bbCoverageSection()
         out += screensSection()
         out += scopeSection()
         out += appendixSection()
@@ -161,11 +162,28 @@ private struct HTMLReportRenderer {
         """
         out += metaItem("Bundle ID", report.bundleID)
         out += metaItem("Device", report.deviceName)
+        if let environment = report.environment {
+            var platform = environment.osDescription
+            if let model = environment.deviceModel { platform += " · \(model)" }
+            if environment.isSimulator { platform += " · simulator" }
+            out += metaItem("Platform", platform)
+            out += metaItem("App version", environment.appVersionDescription ?? "")
+        }
         out += "<div><dt>Scanned</dt><dd><time datetime=\"\(esc(iso))\">\(esc(started))</time></dd></div>\n"
         out += metaItem("Duration", formattedDuration)
         out += metaItem("Report ID", report.id.uuidString)
-        out += metaItem("Scanner", "\(ScannerBuildInfo.productName) \(ScannerBuildInfo.displayVersion)")
-        out += metaItem("Rule set", "\(ScannerBuildInfo.ruleSetVersion) · \(coverage.rulesInRuleSet) rules, \(coverage.rulesWithAutomatedVerdict) produced automated results")
+        var scanner = "\(ScannerBuildInfo.productName) \(ScannerBuildInfo.displayVersion)"
+        if let environment = report.environment {
+            let driver = [environment.automationName, environment.appiumVersion.map { "Appium \($0)" }]
+                .compactMap { $0 }.joined(separator: ", ")
+            if !driver.isEmpty { scanner += " · \(driver)" }
+        }
+        out += metaItem("Scanner", scanner)
+        out += metaItem("BB mapping", report.environment?.bbMappingVersion ?? BBIssueCatalog.version)
+
+        let platform = BBCoverage.platform(of: report)
+        let cannotRun = AccessibilityRuleCatalog.cannotRun(on: platform).count
+        out += metaItem("Rule set", "\(ScannerBuildInfo.ruleSetVersion) · \(report.automatedVerdictRuleCount) of \(report.verdictCapableRuleCount) \(report.platformName) rules gave results (\(cannotRun) cannot run on \(report.platformName) through Appium; \(AccessibilityRuleCatalog.reviewOnly.count) give manual-review items only)")
         out += metaItem("Standard", "\(ScannerBuildInfo.wcagVersion), automated subset")
         out += "</dl>\n</header>\n"
         return out
@@ -234,6 +252,7 @@ private struct HTMLReportRenderer {
         <a href="#findings">Findings</a>
         <a href="#manual-review">Manual review</a>
         <a href="#coverage">Coverage</a>
+        <a href="#bb-coverage">BB ruleset</a>
         <a href="#screens">Screens</a>
         <a href="#scope">Scope &amp; limitations</a>
         <a href="#appendix">Rule results</a>
@@ -391,7 +410,8 @@ private struct HTMLReportRenderer {
             out += "<dt>Standard</dt><dd>\(esc(ScannerBuildInfo.wcagVersion)) \(esc(criterion)) \(esc(title))</dd>\n"
         }
         if let bb = group.bbIssue {
-            out += "<dt>BB issue</dt><dd>\(esc(bb.id)) · \(esc(bb.title))</dd>\n"
+            let criterion = bb.wcag.map { " · WCAG \($0)" } ?? ""
+            out += "<dt>BB issue</dt><dd>\(esc(bb.id)) · \(esc(bb.title))\(esc(criterion))</dd>\n"
         }
         out += "<dt>Who is affected</dt><dd>\(esc(group.metadata.affectedUsers))</dd>\n"
         if !group.sampleMessage.isEmpty {
@@ -537,6 +557,27 @@ private struct HTMLReportRenderer {
         return out
     }
 
+    // MARK: BB ruleset coverage
+
+    /// Every BB ID in the ruleset and what this scan did with it.
+    private func bbCoverageSection() -> String {
+        let entries = BBCoverage.entries(for: report)
+        let platform = BBCoverage.platform(of: report) == .android ? "Android" : "iOS"
+        func count(_ outcomes: Set<BBCoverageEntry.Outcome>) -> Int { entries.filter { outcomes.contains($0.outcome) }.count }
+
+        var out = "<section id=\"bb-coverage\">\n<h2>BB ruleset coverage</h2>\n"
+        out += "<p>All \(entries.count) rows of the BB ruleset for this \(esc(platform)) scan: "
+        out += "\(count([.found, .passed, .review, .coveredBySibling])) produced results, \(count([.nothingApplicable])) were checked with nothing applicable, "
+        out += "\(count([.manual])) need a manual check, \(count([.unavailable])) cannot be tested on \(esc(platform)) through Appium and \(count([.onHold])) are on hold.</p>\n"
+        out += "<table class=\"data\">\n<thead><tr><th scope=\"col\">BB ID</th><th scope=\"col\">Issue</th><th scope=\"col\">Type</th><th scope=\"col\">WCAG</th><th scope=\"col\">Result</th><th scope=\"col\">Detail</th></tr></thead>\n<tbody>\n"
+        for entry in entries {
+            out += "<tr><td><code>\(esc(entry.id))</code></td><td>\(esc(entry.issue))</td><td>\(esc(entry.type))</td><td>\(esc(entry.wcag))</td>"
+            out += "<td>\(chip(entry.outcome.title, entry.outcome.cssClass))</td><td>\(esc(entry.detail))</td></tr>\n"
+        }
+        out += "</tbody>\n</table>\n</section>\n\n"
+        return out
+    }
+
     // MARK: Scope
 
     private func scopeSection() -> String {
@@ -565,6 +606,7 @@ private struct HTMLReportRenderer {
 
         """
     }
+
 
     // MARK: Appendix
 

@@ -5,7 +5,7 @@
 
 import Foundation
 
-enum AccessibilityRole: String, Codable, Hashable {
+nonisolated enum AccessibilityRole: String, Codable, Hashable {
 
     case application
     case statusBar

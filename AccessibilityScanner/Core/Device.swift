@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct Device: Identifiable, Hashable {
+nonisolated struct Device: Identifiable, Hashable {
 
     enum DeviceType: String {
         case simulator

@@ -6,8 +6,34 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		271835166AB44C036D04F0CC /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CEBCC758635CEA96C553F552 /* Cocoa.framework */; };
+		48B7B6AB5F9126F77E3478EF /* BBIssueCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBED6FFCD1E2FB510DA5555D /* BBIssueCatalogTests.swift */; };
+		5E66E290D5FC422BBDD6811E /* BBCoverageReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92F0EB241F64450481E54AC1 /* BBCoverageReport.swift */; };
+		98D5861114D875ECCDE2432C /* ScannerLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC3349AC6409B50D1BF854D0 /* ScannerLogicTests.swift */; };
+		A0F0AD68585F456C9CAA6183 /* PlatformSemanticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73D01AFF7C614B22B44D844C /* PlatformSemanticsTests.swift */; };
+		D04A6D216A6FF40371988D5F /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7DA6C8A31C09F1681BFAA45 /* TestSupport.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		7F55ACDE9F177E327A816ECE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 04FBDBDA3062A236004D03C8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 04FBDBE13062A236004D03C8;
+			remoteInfo = AccessibilityScanner;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		04FBDBE23062A236004D03C8 /* AccessibilityScanner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AccessibilityScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		73D01AFF7C614B22B44D844C /* PlatformSemanticsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlatformSemanticsTests.swift; sourceTree = "<group>"; };
+		92F0EB241F64450481E54AC1 /* BBCoverageReport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BBCoverageReport.swift; sourceTree = "<group>"; };
+		AC3CF519C8F723D0AB44E9D8 /* AccessibilityScannerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AccessibilityScannerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BBED6FFCD1E2FB510DA5555D /* BBIssueCatalogTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BBIssueCatalogTests.swift; sourceTree = "<group>"; };
+		CEBCC758635CEA96C553F552 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		E7DA6C8A31C09F1681BFAA45 /* TestSupport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TestSupport.swift; sourceTree = "<group>"; };
+		EC3349AC6409B50D1BF854D0 /* ScannerLogicTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScannerLogicTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -24,6 +50,12 @@
 			files = (
 			);
 		};
+		7AB3C608810B91626FE157F2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				271835166AB44C036D04F0CC /* Cocoa.framework in Frameworks */,
+			);
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -32,6 +64,8 @@
 			children = (
 				04FBDBE43062A236004D03C8 /* AccessibilityScanner */,
 				04FBDBE33062A236004D03C8 /* Products */,
+				7069ACDCBCF4CC7E778BA570 /* Frameworks */,
+				985AEDC511D4770361B5B669 /* AccessibilityScannerTests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -39,8 +73,37 @@
 			isa = PBXGroup;
 			children = (
 				04FBDBE23062A236004D03C8 /* AccessibilityScanner.app */,
+				AC3CF519C8F723D0AB44E9D8 /* AccessibilityScannerTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		186DFB4319B6C5C7150C54E0 /* OS X */ = {
+			isa = PBXGroup;
+			children = (
+				CEBCC758635CEA96C553F552 /* Cocoa.framework */,
+			);
+			name = "OS X";
+			sourceTree = "<group>";
+		};
+		7069ACDCBCF4CC7E778BA570 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				186DFB4319B6C5C7150C54E0 /* OS X */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		985AEDC511D4770361B5B669 /* AccessibilityScannerTests */ = {
+			isa = PBXGroup;
+			children = (
+				BBED6FFCD1E2FB510DA5555D /* BBIssueCatalogTests.swift */,
+				92F0EB241F64450481E54AC1 /* BBCoverageReport.swift */,
+				73D01AFF7C614B22B44D844C /* PlatformSemanticsTests.swift */,
+				EC3349AC6409B50D1BF854D0 /* ScannerLogicTests.swift */,
+				E7DA6C8A31C09F1681BFAA45 /* TestSupport.swift */,
+			);
+			path = AccessibilityScannerTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -63,6 +126,24 @@
 			productName = AccessibilityScanner;
 			productReference = 04FBDBE23062A236004D03C8 /* AccessibilityScanner.app */;
 			productType = "com.apple.product-type.application";
+		};
+		F41DC84E584E60A5F8D72C17 /* AccessibilityScannerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7A85F353A7176710EBE6D730 /* Build configuration list for PBXNativeTarget "AccessibilityScannerTests" */;
+			buildPhases = (
+				67B1803F35914993420C532D /* Sources */,
+				7AB3C608810B91626FE157F2 /* Frameworks */,
+				0F5A6205A714490E2D536FE6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				02BF70D1BBCC9EC88754F418 /* PBXTargetDependency */,
+			);
+			name = AccessibilityScannerTests;
+			productName = AccessibilityScannerTests;
+			productReference = AC3CF519C8F723D0AB44E9D8 /* AccessibilityScannerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -94,12 +175,18 @@
 			projectRoot = "";
 			targets = (
 				04FBDBE13062A236004D03C8 /* AccessibilityScanner */,
+				F41DC84E584E60A5F8D72C17 /* AccessibilityScannerTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		04FBDBE03062A236004D03C8 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		0F5A6205A714490E2D536FE6 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -112,7 +199,26 @@
 			files = (
 			);
 		};
+		67B1803F35914993420C532D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				48B7B6AB5F9126F77E3478EF /* BBIssueCatalogTests.swift in Sources */,
+				5E66E290D5FC422BBDD6811E /* BBCoverageReport.swift in Sources */,
+				A0F0AD68585F456C9CAA6183 /* PlatformSemanticsTests.swift in Sources */,
+				98D5861114D875ECCDE2432C /* ScannerLogicTests.swift in Sources */,
+				D04A6D216A6FF40371988D5F /* TestSupport.swift in Sources */,
+			);
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		02BF70D1BBCC9EC88754F418 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = AccessibilityScanner;
+			target = 04FBDBE13062A236004D03C8 /* AccessibilityScanner */;
+			targetProxy = 7F55ACDE9F177E327A816ECE /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		04FBDBEB3062A238004D03C8 /* Debug configuration for PBXProject "AccessibilityScanner" */ = {
@@ -299,6 +405,40 @@
 			};
 			name = Release;
 		};
+		43E43B5D5B63AD6034787C99 /* Release configuration for PBXNativeTarget "AccessibilityScannerTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = EJ5R49N3EY;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.6;
+				PRODUCT_BUNDLE_IDENTIFIER = com.barrierbreak.AccessibilityScannerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AccessibilityScanner.app/Contents/MacOS/AccessibilityScanner";
+			};
+			name = Release;
+		};
+		F0311CEA067D72F5940AE8A4 /* Debug configuration for PBXNativeTarget "AccessibilityScannerTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = EJ5R49N3EY;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.6;
+				PRODUCT_BUNDLE_IDENTIFIER = com.barrierbreak.AccessibilityScannerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AccessibilityScanner.app/Contents/MacOS/AccessibilityScanner";
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -315,6 +455,14 @@
 			buildConfigurations = (
 				04FBDBEE3062A238004D03C8 /* Debug configuration for PBXNativeTarget "AccessibilityScanner" */,
 				04FBDBEF3062A238004D03C8 /* Release configuration for PBXNativeTarget "AccessibilityScanner" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		7A85F353A7176710EBE6D730 /* Build configuration list for PBXNativeTarget "AccessibilityScannerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				43E43B5D5B63AD6034787C99 /* Release configuration for PBXNativeTarget "AccessibilityScannerTests" */,
+				F0311CEA067D72F5940AE8A4 /* Debug configuration for PBXNativeTarget "AccessibilityScannerTests" */,
 			);
 			defaultConfigurationName = Release;
 		};

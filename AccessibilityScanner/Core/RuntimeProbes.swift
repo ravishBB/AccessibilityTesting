@@ -25,6 +25,11 @@ struct RuntimeProbeEnvironment {
     /// mode). Relaunching the app would lose that page, so probes that need a
     /// relaunch report Not tested instead.
     let allowAppRelaunch: Bool
+
+    /// False in Current Page mode: the open page may be mid-task (a checkout,
+    /// a half-filled form), so probes that tap, toggle, submit or rotate are
+    /// skipped and reported Not tested.
+    let allowAppInteraction: Bool
 }
 
 // MARK: - Shared helpers
@@ -151,13 +156,12 @@ final class OrientationProbe {
                 rotatedSource = try? await appium.getSource()
             }
         } catch {
-            try? await appium.setOrientation(original)
+            await restore(original)
             throw error
         }
 
         // Always put the device back the way it was.
-        try? await appium.setOrientation(original)
-        try? await Task.sleep(nanoseconds: 600_000_000)
+        await restore(original)
 
         guard rotated != original else {
             return [
@@ -208,6 +212,17 @@ final class OrientationProbe {
         ]
     }
 
+    private func restore(_ original: String) async {
+        await DeviceRestore.run {
+            do {
+                try await self.appium.setOrientation(original)
+            } catch {
+                trace("Could not restore orientation \(original): \(error.localizedDescription)", Log.probes)
+            }
+            try? await Task.sleep(nanoseconds: 600_000_000)
+        }
+    }
+
     private func notTested(_ node: AccessibilityNode, _ reason: String) -> AccessibilityRuleEvaluation {
         ProbeEvaluation.make(
             ruleID: ruleID,
@@ -239,12 +254,16 @@ final class StateUpdateProbe {
 
     /// Only switches and checkboxes are activated: they are the controls whose
     /// state change is visible and that are safe to toggle and put back.
+    /// Every control is tapped a second time whatever the hierarchy showed: a
+    /// toggle that flipped without updating its accessibility state is flipped
+    /// back, and one that ignores taps is unaffected.
     func test(rootNode: AccessibilityNode) async throws -> [AccessibilityRuleEvaluation] {
 
         let candidates = ProbeNodes.all(in: rootNode)
             .filter {
                 ($0.role == .toggle || $0.role == .checkBox) &&
                 $0.visible && $0.enabled &&
+                ActionSafety.isSafeToActivate($0) &&
                 !alreadyTested.contains(ProbeNodes.probeKey($0)) &&
                 NavigationAction(node: $0).xpath != nil
             }
@@ -262,48 +281,6 @@ final class StateUpdateProbe {
 
             do {
                 try await appium.tapElement(usingXPath: xpath)
-                try await Task.sleep(nanoseconds: 500_000_000)
-                let source = try await appium.getSource()
-                let root = try appium.makeParser().parse(source)
-
-                guard let updated = ProbeNodes.find(control, in: root) else {
-                    results.append(
-                        ProbeEvaluation.make(
-                            ruleID: ruleID,
-                            status: .notTested,
-                            message: "\"\(name)\" could not be found again after it was activated, so its state could not be compared.",
-                            remediation: "Activate the control manually and confirm its state changes.",
-                            node: control
-                        )
-                    )
-                    continue
-                }
-
-                let after = ProbeNodes.stateSignature(updated)
-
-                if after != before {
-                    results.append(
-                        ProbeEvaluation.make(
-                            ruleID: ruleID,
-                            status: .pass,
-                            message: "The state of \"\(name)\" changed after it was activated.",
-                            node: control
-                        )
-                    )
-                    // Put the control back the way it was found.
-                    try? await appium.tapElement(usingXPath: xpath)
-                    try? await Task.sleep(nanoseconds: 400_000_000)
-                } else {
-                    results.append(
-                        ProbeEvaluation.make(
-                            ruleID: ruleID,
-                            status: .fail,
-                            message: "The state of \"\(name)\" did not change in the accessibility hierarchy after it was activated.",
-                            remediation: "Update the control's value/selected/checked state when the user activates it.",
-                            node: control
-                        )
-                    )
-                }
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -313,6 +290,61 @@ final class StateUpdateProbe {
                         status: .notTested,
                         message: "\"\(name)\" could not be activated: \(error.localizedDescription)",
                         remediation: "Activate the control manually and confirm its state changes.",
+                        node: control
+                    )
+                )
+                continue
+            }
+
+            // The control was tapped: read its new state, then always put it
+            // back, even if reading failed or the scan was stopped.
+            var updated: AccessibilityNode?
+            var readError: Error?
+            do {
+                try await Task.sleep(nanoseconds: 500_000_000)
+                let source = try await appium.getSource()
+                updated = ProbeNodes.find(control, in: try appium.makeParser().parse(source))
+            } catch {
+                readError = error
+            }
+
+            await DeviceRestore.run {
+                try? await self.appium.tapElement(usingXPath: xpath)
+                try? await Task.sleep(nanoseconds: 400_000_000)
+            }
+
+            if readError is CancellationError { throw CancellationError() }
+
+            guard let updated else {
+                results.append(
+                    ProbeEvaluation.make(
+                        ruleID: ruleID,
+                        status: .notTested,
+                        message: readError.map { "The state of \"\(name)\" could not be read after it was activated: \($0.localizedDescription)" }
+                            ?? "\"\(name)\" could not be found again after it was activated, so its state could not be compared.",
+                        remediation: "Activate the control manually and confirm its state changes.",
+                        node: control
+                    )
+                )
+                continue
+            }
+
+            if ProbeNodes.stateSignature(updated) != before {
+                results.append(
+                    ProbeEvaluation.make(
+                        ruleID: ruleID,
+                        status: .pass,
+                        message: "The state of \"\(name)\" changed after it was activated.",
+                        node: control
+                    )
+                )
+            } else {
+                results.append(
+                    ProbeEvaluation.make(
+                        ruleID: ruleID,
+                        status: .fail,
+                        message: "The state of \"\(name)\" did not change in the accessibility hierarchy after it was activated.",
+                        remediation: "Update the control's value/selected/checked state when the user activates it.",
                         node: control
                     )
                 )
@@ -353,13 +385,25 @@ final class TextSizeProbe {
             )
         }
 
-        let androidService = AndroidDeviceService()
+        let serial = environment.udid
         var originalAndroidScale: String?
 
         do {
             if environment.platform == .android {
-                originalAndroidScale = try androidService.fontScale(serial: environment.udid)
-                try androidService.setFontScale(serial: environment.udid, value: Self.androidScale)
+                // An earlier run that never restored this device left its
+                // font scale changed: its recorded original is the real one.
+                if let outstanding = AndroidFontScaleRecovery.outstanding(serial: environment.udid) {
+                    originalAndroidScale = outstanding
+                } else {
+                    originalAndroidScale = try await ProcessRunner.offMain {
+                        try AndroidDeviceService().fontScale(serial: serial)
+                    }
+                }
+                AndroidFontScaleRecovery.remember(serial: serial, original: originalAndroidScale)
+                let largeScale = Self.androidScale
+                try await ProcessRunner.offMain {
+                    try AndroidDeviceService().setFontScale(serial: serial, value: largeScale)
+                }
                 try? await appium.terminateApp(bundleID: environment.bundleID)
                 await appium.activateApp(bundleID: environment.bundleID)
             } else {
@@ -492,18 +536,30 @@ final class TextSizeProbe {
     // MARK: Restore
 
     private func restore(originalAndroidScale: String?) async {
-        if environment.platform == .android {
-            try? AndroidDeviceService().setFontScale(
-                serial: environment.udid,
-                value: originalAndroidScale
-            )
-            try? await appium.terminateApp(bundleID: environment.bundleID)
-            await appium.activateApp(bundleID: environment.bundleID)
-        } else {
-            try? await appium.terminateApp(bundleID: environment.bundleID)
-            try? await appium.launchApp(bundleID: environment.bundleID, arguments: [])
+        let environment = environment
+        let appium = appium
+        await DeviceRestore.run {
+            if environment.platform == .android {
+                do {
+                    try await ProcessRunner.offMain {
+                        try AndroidDeviceService().setFontScale(
+                            serial: environment.udid,
+                            value: originalAndroidScale
+                        )
+                    }
+                    AndroidFontScaleRecovery.markRestored(serial: environment.udid)
+                } catch {
+                    // Kept as outstanding: restored at the next launch or scan.
+                    trace("Could not restore Android font scale: \(error.localizedDescription)", Log.probes)
+                }
+                try? await appium.terminateApp(bundleID: environment.bundleID)
+                await appium.activateApp(bundleID: environment.bundleID)
+            } else {
+                try? await appium.terminateApp(bundleID: environment.bundleID)
+                try? await appium.launchApp(bundleID: environment.bundleID, arguments: [])
+            }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
         }
-        try? await Task.sleep(nanoseconds: 1_500_000_000)
     }
 
     private func notTested(
@@ -518,6 +574,98 @@ final class TextSizeProbe {
                 remediation: "Set the device to its largest text size and review the app manually.",
                 node: node
             )
+        }
+    }
+}
+
+// MARK: - Pointer cancellation (BB40136, BB40137)
+
+/// Presses a button, slides off it and releases. If that fires the action,
+/// the action runs on touch down and cannot be cancelled. A normal tap is
+/// then used to confirm the control responds at all, so "nothing happened"
+/// is only reported as a pass when the control does work.
+final class PointerCancellationProbe {
+
+    private let appium: AppiumClient
+    private let ruleID = "touch-up-cancellation"
+    private let alreadyTested: Set<String>
+
+    private(set) var testedKeys = Set<String>()
+
+    init(appium: AppiumClient, alreadyTested: Set<String> = []) {
+        self.appium = appium
+        self.alreadyTested = alreadyTested
+    }
+
+    func test(rootNode: AccessibilityNode) async throws -> [AccessibilityRuleEvaluation] {
+        let screen = rootNode.frame
+        guard let control = ProbeNodes.all(in: rootNode).first(where: { node in
+            node.role == .button && node.visible && node.enabled &&
+            // The stricter crawler list: this probe may leave the control
+            // activated, so it must not change the app's data (bookmarks…).
+            ActionSafety.isSafeToExplore(node) &&
+            !alreadyTested.contains(ProbeNodes.probeKey(node)) &&
+            node.frame.width >= 24 && node.frame.height >= 24 &&
+            NavigationAction(node: node).xpath != nil
+        }) else { return [] }
+
+        testedKeys.insert(ProbeNodes.probeKey(control))
+        let name = control.hasAccessibleName ? control.label : control.identifier
+        let start = CGPoint(x: control.frame.midX, y: control.frame.midY)
+        // Slide well outside the control, staying on screen.
+        let end = CGPoint(
+            x: start.x,
+            y: start.y > screen.midY ? max(screen.minY + 10, control.frame.minY - 160) : min(screen.maxY - 10, control.frame.maxY + 160)
+        )
+
+        guard let before = try? await currentRoot() else { return [] }
+        let beforeLabels = ProbeNodes.contentLabels(in: before)
+        let beforeSignature = ProbeNodes.contentSignature(in: before)
+
+        try await appium.pressAndSlideAway(from: start, to: end)
+        try await Task.sleep(nanoseconds: 700_000_000)
+        guard let afterSlide = try? await currentRoot() else { return [] }
+
+        if ProbeNodes.contentSignature(in: afterSlide) != beforeSignature {
+            await restore(from: afterSlide, baselineLabels: beforeLabels)
+            return [ProbeEvaluation.make(
+                ruleID: ruleID,
+                status: .fail,
+                message: "Pressing \"\(name)\" and sliding off before releasing still triggered it, so the action fires on touch down and cannot be cancelled.",
+                remediation: "Trigger the action on touch up inside the control (the platform default) so users can slide away to cancel.",
+                node: control
+            )]
+        }
+
+        // Nothing happened. Check that a normal tap does something.
+        guard let xpath = NavigationAction(node: control).xpath,
+              (try? await appium.tapElement(usingXPath: xpath)) != nil else { return [] }
+        try await Task.sleep(nanoseconds: 700_000_000)
+        guard let afterTap = try? await currentRoot() else { return [] }
+        guard ProbeNodes.contentSignature(in: afterTap) != beforeSignature else { return [] }
+        await restore(from: afterTap, baselineLabels: beforeLabels)
+
+        return [ProbeEvaluation.make(
+            ruleID: ruleID,
+            status: .pass,
+            message: "Sliding off \"\(name)\" before releasing cancelled it, and a normal tap activated it.",
+            node: control
+        )]
+    }
+
+    private func currentRoot() async throws -> AccessibilityNode {
+        try appium.makeParser().parse(try await appium.getSource())
+    }
+
+    /// Goes back if the activation opened another screen; otherwise taps
+    /// nothing (state changes from a button are left for the crawler).
+    private func restore(from root: AccessibilityNode, baselineLabels: Set<String>) async {
+        guard !baselineLabels.isEmpty else { return }
+        let missing = Double(baselineLabels.subtracting(ProbeNodes.contentLabels(in: root)).count) / Double(baselineLabels.count)
+        guard missing > 0.5 else { return }
+        await DeviceRestore.run {
+            try? await self.appium.goBack()
+            try? await Task.sleep(nanoseconds: 800_000_000)
         }
     }
 }

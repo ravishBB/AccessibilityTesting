@@ -5,7 +5,7 @@
 
 import Foundation
 
-enum MobilePlatform: String, Codable, Hashable, CaseIterable {
+nonisolated enum MobilePlatform: String, Codable, Hashable, CaseIterable {
 
     case ios
     case android

@@ -59,6 +59,11 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
         let password: Bool
         let displayed: Bool
         let roleDescription: String
+        /// Every attribute as UiAutomator2 wrote it, for the semantics that
+        /// only newer servers expose (a11y-important, heading, live-region…).
+        var attributes: [String: String] = [:]
+        /// Set when the role had to be guessed from behaviour.
+        var roleInferred = false
 
         var children: [MutableNode] = []
 
@@ -179,6 +184,7 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
             displayed: attributeDict["displayed"] == nil ? true : bool(attributeDict["displayed"]),
             roleDescription: parseRoleDescription(attributeDict["extras"])
         )
+        node.attributes = attributeDict
 
         if let parent = stack.last {
             parent.children.append(node)
@@ -257,12 +263,16 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
         if node.focused { traits.append("focused") }
         if node.scrollable { traits.append("scrollable") }
         if node.password { traits.append("password") }
+        if optionalBool(node.attributes["heading"]) == true { traits.append("heading") }
 
         let visible = node.displayed && frame.width > 0 && frame.height > 0
 
         let hasName = !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // UiAutomator2 6+ says directly whether TalkBack considers the view
+        // (`a11y-important`). Older servers: infer it from the view's content.
         // Containers are traversed by screen readers; they do not hide content.
-        let accessible = visible && (
+        let important = optionalBool(node.attributes["a11y-important"])
+        let inferredAccessible = visible && (
             !children.isEmpty
             || hasName
             || node.clickable
@@ -271,6 +281,7 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
             || node.scrollable
             || isTextInput
         )
+        let accessible = important.map { visible && $0 } ?? inferredAccessible
 
         var result = AccessibilityNode(
             type: node.className,
@@ -293,6 +304,7 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
         if role != resolved {
             result.roleOverride = role
         }
+        result.semantics = semantics(for: node, label: label, isTextInput: isTextInput)
 
         return result
     }
@@ -322,6 +334,7 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
         }
 
         if node.checkable {
+            node.roleInferred = true
             return .checkBox
         }
 
@@ -329,6 +342,9 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
             // A clickable leaf with a name behaves like a button.
             // A clickable container (row/card) is a cell: its name comes from
             // its children, so it is not subject to the button-name rules.
+            // A generic clickable leaf exposes no role: TalkBack says only
+            // "double-tap to activate". The rules report that as missing role.
+            if isLeaf { node.roleInferred = true }
             return isLeaf ? .button : .cell
         }
 
@@ -368,6 +384,56 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
             }
         }
         return ""
+    }
+
+    // MARK: - Platform semantics
+
+    private func semantics(for node: MutableNode, label: String, isTextInput: Bool) -> PlatformSemantics {
+        let attributes = node.attributes
+        var semantics = PlatformSemantics()
+
+        let text = node.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !isTextInput, !node.contentDesc.isEmpty, !text.isEmpty {
+            semantics.visibleText = text
+        }
+        if !isTextInput, !node.hint.isEmpty {
+            semantics.hint = node.hint
+        }
+        semantics.tooltip = nonEmpty(attributes["tooltip-text"])
+        semantics.importantForAccessibility = optionalBool(attributes["a11y-important"])
+        semantics.isHeading = optionalBool(attributes["heading"])
+        semantics.liveRegion = attributes["live-region"].flatMap { Int($0) }
+        semantics.errorText = nonEmpty(attributes["error"])
+        semantics.contentInvalid = optionalBool(attributes["content-invalid"])
+        semantics.inputType = attributes["input-type"].flatMap { Int($0) }
+        semantics.paneTitle = nonEmpty(attributes["pane-title"])
+        semantics.roleInferred = node.roleInferred
+
+        // text-size is in pixels; sp = px / density at the default font scale.
+        if let size = attributes["text-size"].flatMap({ Double($0) }), size > 0 {
+            semantics.textSizePoints = size / Double(displayScale)
+        }
+
+        // `actions` lists standard actions by constant name; anything else is
+        // a custom action label the app added.
+        if let actions = attributes["actions"] {
+            semantics.customActions = actions
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty && !$0.hasPrefix("ACTION_") && Int($0) == nil }
+        }
+        return semantics
+    }
+
+    private func optionalBool(_ value: String?) -> Bool? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !value.isEmpty else { return nil }
+        return value == "true"
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
     }
 
     // MARK: - Helpers

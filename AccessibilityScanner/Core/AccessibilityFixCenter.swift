@@ -3,7 +3,7 @@ import Foundation
 
 // MARK: - Developer Fix Center
 
-struct AccessibilityFixOpportunity: Identifiable, Codable, Hashable {
+nonisolated struct AccessibilityFixOpportunity: Identifiable, Codable, Hashable {
     let id: String
     let ruleID: String
     let ruleName: String
@@ -87,7 +87,7 @@ struct AccessibilityFixOpportunity: Identifiable, Codable, Hashable {
     }
 }
 
-struct AccessibilityFixCenter: Codable, Hashable {
+nonisolated struct AccessibilityFixCenter: Codable, Hashable {
     let opportunities: [AccessibilityFixOpportunity]
     let totalOpenFindings: Int
     let rulesWithFixGuidance: Int
@@ -156,7 +156,7 @@ struct AccessibilityFixCenter: Codable, Hashable {
     }
 }
 
-struct AccessibilityFixGuidance {
+nonisolated struct AccessibilityFixGuidance {
     let remediation: String
     let confidence: String
     let swiftUIExample: String?
@@ -281,7 +281,7 @@ struct AccessibilityFixGuidance {
     }
 }
 
-private extension AccessibilityFinding.Severity {
+private nonisolated extension AccessibilityFinding.Severity {
     var rank: Int {
         switch self {
         case .error: return 3

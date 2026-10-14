@@ -8,7 +8,7 @@
 import Foundation
 import CoreGraphics
 
-struct AccessibilityNode {
+nonisolated struct AccessibilityNode {
 
     let type: String
     let identifier: String
@@ -38,6 +38,10 @@ struct AccessibilityNode {
     /// Set by platform parsers when the role cannot be derived from `type`
     /// alone (for example a clickable generic Android `View`).
     var roleOverride: AccessibilityRole? = nil
+
+    /// Semantics only some platforms expose. Unknown values stay nil, so a
+    /// rule can tell "not exposed" apart from "false".
+    var semantics = PlatformSemantics()
 
     // MARK: - Role
 
@@ -103,4 +107,37 @@ struct AccessibilityNode {
 
         !visible || !accessible
     }
+}
+
+/// Accessibility data beyond the common XCUITest/UiAutomator2 fields.
+/// UiAutomator2 exposes most of these on Android (native, React Native and
+/// Flutter); WebDriverAgent exposes only custom actions on iOS.
+nonisolated struct PlatformSemantics: Hashable {
+    /// Visible text of the view when it differs from its accessible name
+    /// (Android `text` when `content-desc` is also set).
+    var visibleText: String? = nil
+    /// Android `hint` on a view that is not a text input, and `tooltip-text`.
+    var hint: String? = nil
+    var tooltip: String? = nil
+    /// Android `a11y-important`: false means TalkBack skips the view.
+    var importantForAccessibility: Bool? = nil
+    /// Android `heading`.
+    var isHeading: Bool? = nil
+    /// Android `live-region`: 0 none, 1 polite, 2 assertive.
+    var liveRegion: Int? = nil
+    /// Android `error` (error text set on a field) and `content-invalid`.
+    var errorText: String? = nil
+    var contentInvalid: Bool? = nil
+    /// Android `input-type` (android.text.InputType flags).
+    var inputType: Int? = nil
+    /// Rendered font size in sp (Android `text-size`, converted from px).
+    var textSizePoints: Double? = nil
+    /// Android `pane-title`: the title of a window or screen pane.
+    var paneTitle: String? = nil
+    /// Custom accessibility actions (iOS `customActions`, Android custom
+    /// entries in `actions`).
+    var customActions: [String] = []
+    /// True when the role was guessed from behaviour (a clickable generic
+    /// view) rather than exposed by the app: the role is missing.
+    var roleInferred: Bool = false
 }

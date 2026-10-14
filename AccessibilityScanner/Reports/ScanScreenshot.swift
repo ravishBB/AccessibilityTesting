@@ -8,7 +8,7 @@
 
 import Foundation
 
-struct ScanScreenshot: Codable {
+nonisolated struct ScanScreenshot: Codable {
     let imageData: Data
     let annotatedImageData: Data?
     let width: Double
@@ -34,7 +34,7 @@ struct ScanScreenshot: Codable {
 }
 
 
-struct ScreenshotViewport: Identifiable, Codable {
+nonisolated struct ScreenshotViewport: Identifiable, Codable {
     let id: UUID
     let index: Int
     let screenshot: ScanScreenshot

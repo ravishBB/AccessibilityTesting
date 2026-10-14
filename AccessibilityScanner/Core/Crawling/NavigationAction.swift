@@ -8,7 +8,7 @@
 import Foundation
 import CoreGraphics
 
-struct NavigationAction:
+nonisolated struct NavigationAction:
     Identifiable,
     Hashable {
 

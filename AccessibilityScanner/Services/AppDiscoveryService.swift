@@ -7,7 +7,8 @@
 
 import Foundation
 
-final class AppDiscoveryService {
+/// Nonisolated: its xcrun calls block, so callers run it off the main actor.
+nonisolated final class AppDiscoveryService {
 
     // MARK: - Public
 
@@ -40,56 +41,23 @@ final class AppDiscoveryService {
 
         // Do not call simctl listapps on a shutdown simulator.
         guard device.state.lowercased() == "booted" else {
-            print("Device: \(device.name)")
-            print("State: \(device.state)")
+            trace("Device: \(device.name)", Log.devices)
+            trace("State: \(device.state)", Log.devices)
 
             return []
         }
 
-        let process = Process()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-
-        process.executableURL = URL(
-            fileURLWithPath: "/usr/bin/xcrun"
+        let result = try ProcessRunner.run(
+            "/usr/bin/xcrun",
+            ["simctl", "listapps", device.udid, "--json"],
+            timeout: 60
         )
+        let data = result.stdout
 
-        process.arguments = [
-            "simctl",
-            "listapps",
-            device.udid,
-            "--json"
-        ]
-
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        let data =
-            outputPipe.fileHandleForReading
-                .readDataToEndOfFile()
-
-        guard process.terminationStatus == 0 else {
-
-            let errorData =
-                errorPipe.fileHandleForReading
-                    .readDataToEndOfFile()
-
-            let errorText =
-                String(
-                    data: errorData,
-                    encoding: .utf8
-                ) ?? ""
-
-            print("")
-            print("Device: \(device.name)")
-            print("UDID: \(device.udid)")
-            print(errorText)
-
+        guard result.status == 0 else {
+            trace("simctl listapps failed for \(device.name): \(result.stderrText)", Log.devices)
             throw AppDiscoveryError.commandFailed(
-                "Unable to retrieve applications from the simulator."
+                "Unable to retrieve applications from the simulator.\n\(result.stderrText)"
             )
         }
 
@@ -131,21 +99,23 @@ final class AppDiscoveryService {
                 InstalledApp(
                     id: bundleID,
                     name: name,
-                    bundleID: bundleID
+                    bundleID: bundleID,
+                    version: app["CFBundleShortVersionString"] as? String,
+                    build: app["CFBundleVersion"] as? String
                 )
             )
         }
 
         let cleanedApps = cleanAndSort(apps)
-        print("Device: \(device.name)")
-        print("UDID: \(device.udid)")
-        print("Apps found: \(cleanedApps.count)")
-        print("")
+        trace("Device: \(device.name)", Log.devices)
+        trace("UDID: \(device.udid)", Log.devices)
+        trace("Apps found: \(cleanedApps.count)", Log.devices)
+        trace("", Log.devices)
 
         for app in cleanedApps {
-            print(
+            trace(
                 "• \(app.name) — \(app.bundleID)"
-            )
+            , Log.devices)
         }
 
         return cleanedApps
@@ -157,67 +127,32 @@ final class AppDiscoveryService {
         for device: Device
     ) throws -> [InstalledApp] {
 
-        let outputURL = URL(
-            fileURLWithPath:
-                "/tmp/accessibility-scanner-apps-\(device.udid).json"
-        )
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("accessibility-scanner-apps-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
 
         // Remove stale output before every request.
         try? FileManager.default.removeItem(
             at: outputURL
         )
 
-        let process = Process()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-
-        process.executableURL = URL(
-            fileURLWithPath: "/usr/bin/xcrun"
-        )
-
-        process.arguments = [
-            "devicectl",
-            "device",
-            "info",
-            "apps",
-            "--device",
-            device.udid,
-            "--json-output",
-            outputURL.path
-        ]
-
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-
-        print("Device: \(device.name)")
-        print("UDID: \(device.udid)")
-
+        let result: ProcessRunner.Output
         do {
-            try process.run()
+            result = try ProcessRunner.run(
+                "/usr/bin/xcrun",
+                ["devicectl", "device", "info", "apps", "--device", device.udid, "--json-output", outputURL.path],
+                timeout: 120
+            )
+        } catch let error as ProcessRunner.RunnerError {
+            throw AppDiscoveryError.commandFailed(error.localizedDescription)
         } catch {
-            print(error.localizedDescription)
-
             throw AppDiscoveryError.commandFailed(
-                "Unable to start device application discovery."
+                "Unable to start device application discovery: \(error.localizedDescription)"
             )
         }
 
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-
-            let errorData =
-                errorPipe.fileHandleForReading
-                    .readDataToEndOfFile()
-
-            let errorText =
-                String(
-                    data: errorData,
-                    encoding: .utf8
-                ) ?? "Unknown devicectl error."
-
-            print(errorText)
-
+        guard result.status == 0 else {
+            let errorText = result.stderrText.isEmpty ? "Unknown devicectl error." : result.stderrText
             throw AppDiscoveryError.commandFailed(
                 "Unable to retrieve applications from the connected iPhone.\n\(errorText)"
             )
@@ -237,7 +172,7 @@ final class AppDiscoveryService {
                 contentsOf: outputURL
             )
         } catch {
-            print(error.localizedDescription)
+            trace(error.localizedDescription, Log.devices)
 
             throw AppDiscoveryError.invalidResponse
         }
@@ -246,15 +181,15 @@ final class AppDiscoveryService {
             from: data
         )
 
-        print("Device: \(device.name)")
-        print("UDID: \(device.udid)")
-        print("Apps found: \(apps.count)")
-        print("")
+        trace("Device: \(device.name)", Log.devices)
+        trace("UDID: \(device.udid)", Log.devices)
+        trace("Apps found: \(apps.count)", Log.devices)
+        trace("", Log.devices)
 
         for app in apps {
-            print(
+            trace(
                 "• \(app.name) — \(app.bundleID)"
-            )
+            , Log.devices)
         }
 
         return apps
@@ -274,7 +209,7 @@ final class AppDiscoveryService {
                 options: []
             )
         } catch {
-            print(error.localizedDescription)
+            trace(error.localizedDescription, Log.devices)
 
             throw AppDiscoveryError.invalidResponse
         }
@@ -288,7 +223,7 @@ final class AppDiscoveryService {
         guard let result =
                 root["result"] as? [String: Any]
         else {
-            print("Top-level keys: \(root.keys)")
+            trace("Top-level keys: \(root.keys)", Log.devices)
 
             throw AppDiscoveryError.invalidResponse
         }
@@ -296,7 +231,7 @@ final class AppDiscoveryService {
         guard let appObjects =
                 result["apps"] as? [[String: Any]]
         else {
-            print("Result keys: \(result.keys)")
+            trace("Result keys: \(result.keys)", Log.devices)
 
             throw AppDiscoveryError.invalidResponse
         }
@@ -319,7 +254,9 @@ final class AppDiscoveryService {
                 InstalledApp(
                     id: bundleID,
                     name: name,
-                    bundleID: bundleID
+                    bundleID: bundleID,
+                    version: app["version"] as? String,
+                    build: app["bundleVersion"] as? String
                 )
             )
         }
@@ -370,7 +307,7 @@ final class AppDiscoveryService {
 
 // MARK: - Errors
 
-enum AppDiscoveryError:
+nonisolated enum AppDiscoveryError:
     Error,
     LocalizedError {
 

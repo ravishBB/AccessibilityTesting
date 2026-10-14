@@ -7,32 +7,79 @@
 
 import Foundation
 
-final class DeviceDiscoveryService {
+/// Nonisolated: its xcrun/adb calls block, so callers run it off the main actor.
+nonisolated final class DeviceDiscoveryService {
 
     // MARK: - Public
 
     func discoverDevices() throws -> [Device] {
 
         var devices: [Device] = []
+        var firstError: Error?
 
-        devices.append(
-            contentsOf: try discoverSimulators()
-        )
+        // Each source is independent: a Mac without simctl/devicectl (Command
+        // Line Tools only) must still list its Android devices.
+        do {
+            devices.append(contentsOf: try discoverSimulators())
+        } catch {
+            firstError = firstError ?? error
+            trace("Simulator discovery failed: \(error.localizedDescription)", Log.devices)
+        }
 
-        devices.append(
-            contentsOf: try discoverPhysicalDevices()
-        )
+        do {
+            devices.append(contentsOf: try discoverPhysicalDevices())
+        } catch {
+            firstError = firstError ?? error
+            trace("Physical device discovery failed: \(error.localizedDescription)", Log.devices)
+        }
 
         // Android emulators and devices (empty when adb is not installed).
         devices.append(
             contentsOf: AndroidDeviceService().discoverDevices()
         )
 
+        if devices.isEmpty, let firstError {
+            throw firstError
+        }
+
         return devices
     }
 
     // MARK: - Simulators
+    /// iOS simulators from `simctl list -j`. Names such as
+    /// "iPad Pro (12.9-inch) (6th generation)" break the text output's
+    /// parentheses, and the text output also lists watchOS/tvOS devices.
     private func discoverSimulators() throws -> [Device] {
+        let output = try runCommand(
+            executable: "/usr/bin/xcrun",
+            arguments: ["simctl", "list", "devices", "available", "-j"]
+        )
+        guard let json = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any],
+              let runtimes = json["devices"] as? [String: [[String: Any]]]
+        else {
+            return try discoverSimulatorsFromText()
+        }
+
+        var devices: [Device] = []
+        for (runtime, entries) in runtimes.sorted(by: { $0.key > $1.key }) where runtime.contains(".iOS-") {
+            for entry in entries {
+                guard let udid = entry["udid"] as? String,
+                      let name = entry["name"] as? String,
+                      (entry["isAvailable"] as? Bool) ?? true
+                else { continue }
+                devices.append(Device(
+                    id: udid,
+                    name: name,
+                    udid: udid,
+                    state: (entry["state"] as? String) ?? "Shutdown",
+                    type: .simulator
+                ))
+            }
+        }
+        return devices
+    }
+
+    private func discoverSimulatorsFromText() throws -> [Device] {
 
         let output = try runCommand(
             executable: "/usr/bin/xcrun",
@@ -121,7 +168,52 @@ final class DeviceDiscoveryService {
 
     // MARK: - Physical Devices
 
+    /// Physical iPhones and iPads from `devicectl --json-output`. Appium
+    /// needs the hardware UDID, which the table output does not show
+    /// reliably (it may show the CoreDevice identifier instead).
     private func discoverPhysicalDevices() throws -> [Device] {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("accessibility-scanner-devices-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        _ = try runCommand(
+            executable: "/usr/bin/xcrun",
+            arguments: ["devicectl", "list", "devices", "--json-output", outputURL.path]
+        )
+
+        guard let data = try? Data(contentsOf: outputURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entries = (json["result"] as? [String: Any])?["devices"] as? [[String: Any]]
+        else {
+            return try discoverPhysicalDevicesFromText()
+        }
+
+        return entries.compactMap { entry in
+            let hardware = entry["hardwareProperties"] as? [String: Any] ?? [:]
+            let properties = entry["deviceProperties"] as? [String: Any] ?? [:]
+            let connection = entry["connectionProperties"] as? [String: Any] ?? [:]
+
+            guard (hardware["platform"] as? String) == "iOS",
+                  // devicectl also lists booted simulators ("simulated");
+                  // those come from simctl.
+                  (hardware["reality"] as? String) == "physical",
+                  let udid = hardware["udid"] as? String
+            else { return nil }
+
+            let connected = (connection["tunnelState"] as? String) == "connected"
+            return Device(
+                id: udid,
+                name: (properties["name"] as? String)
+                    ?? (hardware["marketingName"] as? String)
+                    ?? "iPhone",
+                udid: udid,
+                state: connected ? "Connected" : "Unavailable",
+                type: .physical
+            )
+        }
+    }
+
+    private func discoverPhysicalDevicesFromText() throws -> [Device] {
 
         let output = try runCommand(
             executable: "/usr/bin/xcrun",
@@ -132,7 +224,7 @@ final class DeviceDiscoveryService {
             ]
         )
 
-        print(output)
+        trace(output, Log.devices)
 
         return parsePhysicalDevices(
             output
@@ -189,10 +281,10 @@ final class DeviceDiscoveryService {
                     type: .physical
                 )
 
-            print("Name: \(device.name)")
-            print("UDID: \(device.udid)")
-            print("State: \(device.state)")
-            print("Type: \(device.type)")
+            trace("Name: \(device.name)", Log.devices)
+            trace("UDID: \(device.udid)", Log.devices)
+            trace("State: \(device.state)", Log.devices)
+            trace("Type: \(device.type)", Log.devices)
 
             devices.append(device)
         }
@@ -263,9 +355,9 @@ final class DeviceDiscoveryService {
                 line[matchRange]
             )
 
-        print(
+        trace(
             "Extracted physical UDID: \(udid)"
-        )
+        , Log.devices)
 
         return udid
     }
@@ -357,77 +449,22 @@ final class DeviceDiscoveryService {
         arguments: [String]
     ) throws -> String {
 
-        let process =
-            Process()
+        let result = try ProcessRunner.run(executable, arguments, timeout: 30)
 
-        process.executableURL =
-            URL(
-                fileURLWithPath:
-                    executable
-            )
-
-        process.arguments =
-            arguments
-
-        let outputPipe =
-            Pipe()
-
-        let errorPipe =
-            Pipe()
-
-        process.standardOutput =
-            outputPipe
-
-        process.standardError =
-            errorPipe
-
-        try process.run()
-
-        process.waitUntilExit()
-
-        let outputData =
-            outputPipe
-                .fileHandleForReading
-                .readDataToEndOfFile()
-
-        let errorData =
-            errorPipe
-                .fileHandleForReading
-                .readDataToEndOfFile()
-
-        let output =
-            String(
-                data: outputData,
-                encoding: .utf8
-            )
-            ?? ""
-
-        let error =
-            String(
-                data: errorData,
-                encoding: .utf8
-            )
-            ?? ""
-
-        guard process.terminationStatus == 0 else {
-
+        guard result.status == 0 else {
             throw DeviceDiscoveryError.commandFailed(
-                command:
-                    "\(executable) \(arguments.joined(separator: " "))",
-                message:
-                    error.isEmpty
-                    ? output
-                    : error
+                command: "\(executable) \(arguments.joined(separator: " "))",
+                message: result.stderrText.isEmpty ? result.stdoutText : result.stderrText
             )
         }
 
-        return output
+        return result.stdoutText
     }
 }
 
 // MARK: - Errors
 
-enum DeviceDiscoveryError:
+nonisolated enum DeviceDiscoveryError:
     Error,
     LocalizedError {
 

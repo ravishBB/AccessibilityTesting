@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct AccessibilityScanResult: Identifiable, Codable {
+nonisolated struct AccessibilityScanResult: Identifiable, Codable {
 
     let id: UUID
 
@@ -24,6 +24,14 @@ struct AccessibilityScanResult: Identifiable, Codable {
 
     let rulesExecuted: Int
     let intelligence: AccessibilityIntelligence?
+
+    /// Device, OS, app and scanner versions. Optional so baselines saved by
+    /// earlier versions still decode.
+    var environment: ScanEnvironment? = nil
+
+    /// What the scan could not do (failed taps, lost navigation, moving
+    /// screens). Optional for the same reason.
+    var scanNotes: [String]? = nil
 
     init(
         applicationName: String,

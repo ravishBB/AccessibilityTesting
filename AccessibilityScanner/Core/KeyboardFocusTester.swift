@@ -46,11 +46,44 @@ final class KeyboardFocusTester {
     }
 
     func test(rootNode: AccessibilityNode) async throws -> Result {
+        // WebDriverAgent never reports Full Keyboard Access focus on iOS
+        // (`focused` is tvOS-only, the active element is text-input focus),
+        // and Appium cannot send Tab to an iPhone. Tabbing would cost ~10 s a
+        // screen and prove nothing.
+        if appium.platform == .ios {
+            return Result(
+                evaluations: [baseEvaluation(
+                    ruleID: "keyboard-focus",
+                    name: "Interactive elements focusable using a keyboard interface",
+                    description: "Interactive controls should be reachable through the supported keyboard focus mechanism.",
+                    node: rootNode,
+                    status: .notTested,
+                    severity: .warning,
+                    message: "Keyboard focus cannot be tested on iOS through Appium: WebDriverAgent does not report Full Keyboard Access focus.",
+                    remediation: "Connect a keyboard, turn on Full Keyboard Access, and Tab through the screen to confirm every control is reachable, visibly focused and operable."
+                )],
+                focusedSequence: [],
+                reachedControlCount: 0,
+                requiredControlCount: 0,
+                evidenceAvailable: false
+            )
+        }
         let activeModal = modalNode(in: rootNode)
         let controlsRoot = activeModal ?? rootNode
         let controls = interactiveControls(in: controlsRoot)
         guard !controls.isEmpty else {
-            return Result(evaluations: [], focusedSequence: [], reachedControlCount: 0, requiredControlCount: 0, evidenceAvailable: true)
+            // An open modal with nothing to focus traps keyboard users: they
+            // cannot reach a close button.
+            let evaluations = activeModal.map { modal in
+                [ProbeEvaluation.make(
+                    ruleID: "modal-focus-containment",
+                    status: .fail,
+                    message: "The modal has no keyboard-focusable interactive controls, so keyboard users cannot act on it or close it.",
+                    remediation: "Make the modal's buttons, including a close or dismiss control, keyboard focusable.",
+                    node: modal
+                )]
+            } ?? []
+            return Result(evaluations: evaluations, focusedSequence: [], reachedControlCount: 0, requiredControlCount: 0, evidenceAvailable: true)
         }
 
         var reachedKeys = Set<String>()
@@ -59,6 +92,8 @@ final class KeyboardFocusTester {
         var observedFocusedElement = false
         var trapDetected = false
         var visualEvidence: [String: Bool] = [:]
+        var indicatorContrast: [String: (node: AccessibilityNode, ratio: Double)] = [:]
+        var obscuredBy: [String: (node: AccessibilityNode, cover: AccessibilityNode)] = [:]
         var traversalCompleted = false
         var hiddenFocused: [String: AccessibilityNode] = [:]
         var nonInteractiveFocused: [String: AccessibilityNode] = [:]
@@ -128,6 +163,18 @@ final class KeyboardFocusTester {
                         node: matching,
                         hierarchySize: rootNode.frame.size
                     )
+                    if visualEvidence[key] == true,
+                       let ratio = indicatorContrastRatio(
+                        before: baselineScreenshot,
+                        after: focusedScreenshot,
+                        node: matching,
+                        hierarchySize: rootNode.frame.size
+                       ) {
+                        indicatorContrast[key] = (matching, ratio)
+                    }
+                }
+                if isNewFocus, let cover = coveringElement(over: focused, in: root) {
+                    obscuredBy[key] = (matching, cover)
                 }
             }
 
@@ -280,6 +327,32 @@ final class KeyboardFocusTester {
                 severity: .warning,
                 message: "Rendered focus evidence was incomplete, so focus visibility was not classified as a failure.",
                 remediation: "Rerun the runtime focus probe with screenshot capture available for each reached control."
+            ))
+        }
+
+        // 3b. The focus indicator needs 3:1 against what it replaced
+        //     (1.4.11), and the focused control must not be hidden by sticky
+        //     bars (2.4.11).
+        for (node, ratio) in indicatorContrast.values {
+            let text = String(format: "%.2f:1", ratio)
+            evaluations.append(ProbeEvaluation.make(
+                ruleID: "focus-indicator-contrast",
+                status: ratio >= 3 ? .pass : .fail,
+                message: ratio >= 3
+                    ? "The focus indicator contrasts \(text) with the colours it replaces."
+                    : "The focus indicator contrasts only \(text) with the colours it replaces; at least 3:1 is required.",
+                remediation: ratio >= 3 ? "" : "Make the focus indicator at least 3:1 against adjacent colours, for example a thicker or darker outline.",
+                node: node
+            ))
+        }
+        for (node, cover) in obscuredBy.values {
+            let coverName = cover.label.isEmpty ? (cover.identifier.isEmpty ? cover.type : cover.identifier) : cover.label
+            evaluations.append(ProbeEvaluation.make(
+                ruleID: "focus-not-obscured",
+                status: .validate,
+                message: "When focused, this control lies under \"\(coverName)\", which may hide it from keyboard users.",
+                remediation: "Scroll focused controls clear of sticky headers, footers and banners.",
+                node: node
             ))
         }
 
@@ -472,6 +545,74 @@ final class KeyboardFocusTester {
         let label = node.label.trimmingCharacters(in: .whitespacesAndNewlines)
         let frame = "\(Int(node.frame.origin.x.rounded())):\(Int(node.frame.origin.y.rounded())):\(Int(node.frame.width.rounded())):\(Int(node.frame.height.rounded()))"
         return [node.type, identifier, label, frame].joined(separator: "|")
+    }
+
+    /// Contrast between the focus indicator and what it replaced: the median
+    /// colour of changed pixels after focus against the same pixels before.
+    private func indicatorContrastRatio(before: Data, after: Data?, node: AccessibilityNode, hierarchySize: CGSize) -> Double? {
+        guard let after, let beforeImage = NSImage(data: before), let afterImage = NSImage(data: after),
+              let beforeCG = beforeImage.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let afterCG = afterImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+
+        let width = min(beforeCG.width, afterCG.width)
+        let height = min(beforeCG.height, afterCG.height)
+        let scaleX = CGFloat(width) / max(1, hierarchySize.width)
+        let scaleY = CGFloat(height) / max(1, hierarchySize.height)
+        let x = max(0, Int((node.frame.minX - 6) * scaleX))
+        let y = max(0, Int((node.frame.minY - 6) * scaleY))
+        let w = min(width - x, max(1, Int((node.frame.width + 12) * scaleX)))
+        let h = min(height - y, max(1, Int((node.frame.height + 12) * scaleY)))
+        guard w > 1, h > 1,
+              let beforePixels = pixelBytes(beforeCG, x: x, y: y, width: w, height: h),
+              let afterPixels = pixelBytes(afterCG, x: x, y: y, width: w, height: h),
+              beforePixels.count == afterPixels.count else { return nil }
+
+        func luminance(_ p: [UInt8], _ i: Int) -> Double {
+            func channel(_ v: UInt8) -> Double {
+                let c = Double(v) / 255
+                return c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * channel(p[i]) + 0.7152 * channel(p[i + 1]) + 0.0722 * channel(p[i + 2])
+        }
+
+        var afterL: [Double] = []
+        var beforeL: [Double] = []
+        for i in Swift.stride(from: 0, to: beforePixels.count - 3, by: 4) {
+            let distance = abs(Int(beforePixels[i]) - Int(afterPixels[i]))
+                + abs(Int(beforePixels[i + 1]) - Int(afterPixels[i + 1]))
+                + abs(Int(beforePixels[i + 2]) - Int(afterPixels[i + 2]))
+            if distance > 60 {
+                afterL.append(luminance(afterPixels, i))
+                beforeL.append(luminance(beforePixels, i))
+            }
+        }
+        guard afterL.count >= 20 else { return nil }
+        let a = afterL.sorted()[afterL.count / 2]
+        let b = beforeL.sorted()[beforeL.count / 2]
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
+    /// A sticky bar (navigation bar, tab bar, toolbar) drawn over most of the
+    /// focused control.
+    private func coveringElement(over focused: AccessibilityNode, in root: AccessibilityNode) -> AccessibilityNode? {
+        let barRoles: Set<AccessibilityRole> = [.navigationBar, .tabBar]
+        var result: AccessibilityNode?
+        func walk(_ node: AccessibilityNode) {
+            guard result == nil else { return }
+            if node.visible, barRoles.contains(node.role) {
+                let overlap = node.frame.intersection(focused.frame)
+                let area = max(1, focused.frame.width * focused.frame.height)
+                // Not the control's own bar: the control is not inside it.
+                let isInside = node.frame.contains(focused.frame)
+                if !overlap.isNull, !isInside, overlap.width * overlap.height / area > 0.3 {
+                    result = node
+                    return
+                }
+            }
+            node.children.forEach(walk)
+        }
+        walk(root)
+        return result
     }
 
     private func focusRegionChanged(before: Data, after: Data?, node: AccessibilityNode, hierarchySize: CGSize) -> Bool {

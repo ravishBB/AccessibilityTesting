@@ -7,7 +7,7 @@
 import Foundation
 import CoreGraphics
 
-struct NavigationTransition: Identifiable, Codable, Hashable {
+nonisolated struct NavigationTransition: Identifiable, Codable, Hashable {
     let id: UUID
     let sourceSignature: String
     let targetSignature: String

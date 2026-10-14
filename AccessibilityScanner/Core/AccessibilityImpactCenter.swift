@@ -9,7 +9,7 @@
 import Foundation
 import SwiftUI
 
-struct AccessibilityHotspot: Identifiable, Codable, Hashable {
+nonisolated struct AccessibilityHotspot: Identifiable, Codable, Hashable {
     let id: String
     let screenName: String
     let signature: String
@@ -30,7 +30,7 @@ struct AccessibilityHotspot: Identifiable, Codable, Hashable {
     }
 }
 
-struct AccessibilityImpactCenter: Codable, Hashable {
+nonisolated struct AccessibilityImpactCenter: Codable, Hashable {
     let hotspots: [AccessibilityHotspot]
     let topFixes: [AccessibilityFixOpportunity]
     let totalJourneyExposure: Int
@@ -384,7 +384,6 @@ struct AccessibilityImpactCenterView: View {
         case .validate: return .yellow
         case .notTested: return .gray
         case .pass: return .green
-        case .notTested: return .gray
         }
     }
 

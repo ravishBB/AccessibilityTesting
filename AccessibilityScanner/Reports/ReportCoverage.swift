@@ -13,13 +13,13 @@ import Foundation
 
 // MARK: - WCAG 2.2 reference (Level A and AA)
 
-struct WCAGCriterionReference: Hashable {
+nonisolated struct WCAGCriterionReference: Hashable {
     let number: String
     let title: String
     let level: String
 }
 
-enum WCAGReference {
+nonisolated enum WCAGReference {
 
     /// Every WCAG 2.2 Level A and AA success criterion, in numeric order.
     /// (4.1.1 Parsing was removed in WCAG 2.2.)
@@ -94,7 +94,7 @@ enum WCAGReference {
 
 // MARK: - Per-rule outcome
 
-enum RuleCoverageOutcome: String, Codable {
+nonisolated enum RuleCoverageOutcome: String, Codable {
     /// The rule produced at least one pass, fail or warning.
     case automatedVerdict
     /// The rule only produced manual-review items.
@@ -133,7 +133,7 @@ enum RuleCoverageOutcome: String, Codable {
     }
 }
 
-struct RuleCoverageEntry: Identifiable, Codable {
+nonisolated struct RuleCoverageEntry: Identifiable, Codable {
     var id: String { ruleID }
 
     let ruleID: String
@@ -152,7 +152,7 @@ struct RuleCoverageEntry: Identifiable, Codable {
 
 // MARK: - Per-criterion coverage
 
-enum CriterionCoverageState: String, Codable {
+nonisolated enum CriterionCoverageState: String, Codable {
     case failed
     case warning
     /// Every mapped rule that ran passed, and nothing is left unresolved.
@@ -199,7 +199,7 @@ enum CriterionCoverageState: String, Codable {
     }
 }
 
-struct CriterionCoverage: Identifiable, Codable {
+nonisolated struct CriterionCoverage: Identifiable, Codable {
     var id: String { number }
 
     let number: String
@@ -216,7 +216,7 @@ struct CriterionCoverage: Identifiable, Codable {
 
 // MARK: - Report coverage
 
-struct ReportCoverage: Codable {
+nonisolated struct ReportCoverage: Codable {
 
     let ruleSetVersion: String
 
@@ -393,10 +393,20 @@ struct ReportCoverage: Codable {
 
 // MARK: - Cheap helper for list rows and headers
 
-extension AccessibilityScanResult {
+nonisolated extension AccessibilityScanResult {
 
     /// Number of distinct rules that produced a pass, fail or warning. Cheaper
     /// than building a full `ReportCoverage`, for use in headers and list rows.
+    /// Rules that can give pass/fail on the scanned platform: the honest
+    /// denominator for automatedVerdictRuleCount.
+    var verdictCapableRuleCount: Int {
+        AccessibilityRuleCatalog.verdictCapableRuleCount(on: BBCoverage.platform(of: self))
+    }
+
+    var platformName: String {
+        BBCoverage.platform(of: self) == .android ? "Android" : "iOS"
+    }
+
     var automatedVerdictRuleCount: Int {
         Set(
             allEvaluations

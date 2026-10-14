@@ -4,7 +4,7 @@ import CoreGraphics
 import AppKit
 
 // MARK: - Common rule context
-struct AccessibilityRuleContext {
+nonisolated struct AccessibilityRuleContext {
     let screenshotData: Data?
     let screenshotWidth: Double
     let screenshotHeight: Double
@@ -26,7 +26,7 @@ struct AccessibilityRuleContext {
     }
 }
 
-protocol ContextualAccessibilityRule {
+nonisolated protocol ContextualAccessibilityRule {
     func evaluate(
         node: AccessibilityNode,
         context: AccessibilityRuleContext
@@ -36,7 +36,7 @@ protocol ContextualAccessibilityRule {
 
 // MARK: - Rule catalog
 
-struct AccessibilityRules {
+nonisolated struct AccessibilityRules {
 
     static var all: [AccessibilityRule] {
         [
@@ -59,7 +59,7 @@ struct AccessibilityRules {
             SegmentControlRule(),
             TabAccessibilityRule(),
             FormLabelRule(),
-            AutocompleteRule(),
+            InputPurposeRule(),
             ScreenTitleRule(),
             DuplicateInteractiveNameRule(),
             InteractiveTargetOverlapRule(),
@@ -85,12 +85,12 @@ struct AccessibilityRules {
             LanguageRule(),
             ModalAccessibilityRule(),
             LoadingIndicatorContrastRule(),
-            LiveRegionRule(),
+            StatusLiveRegionRule(),
             TimeLimitedUIRule(),
             FocusIndicatorRule(),
             NonTextContrastRule(),
             FormBorderContrastRule(),
-            ErrorMessageRule(),
+            ErrorExposureRule(),
             MapAlternativeRule(),
             GestureKeyboardRule(),
             AccessibilityInterfaceOperabilityRule(),
@@ -112,17 +112,25 @@ struct AccessibilityRules {
             ErrorSuggestionRule(),
             StateUpdateRule(),
             LinkColorRule(),
-            VisualLabelRule(),
             LanguageChangeRule(),
             TextSpacingRule(),
-            ModalFocusContainmentRule()
+            ModalFocusContainmentRule(),
+
+            // Platform semantics (data only some platforms expose)
+            MissingRoleRule(),
+            NameViaHintRule(),
+            LabelInNameRule(),
+            HeadingCandidateRule(),
+            FocusIndicatorContrastRule(),
+            FocusNotObscuredRule(),
+            ModalClosableRule()
         ]
     }
 }
 
 // MARK: - Core common rules
 
-struct CommonAccessibleNameRule: AccessibilityRule {
+nonisolated struct CommonAccessibleNameRule: AccessibilityRule {
     let id = "accessible-name"
     let title = "Accessible Name"
     let description = "Interactive controls must expose a meaningful accessible name."
@@ -132,9 +140,15 @@ struct CommonAccessibleNameRule: AccessibilityRule {
         // Buttons have a dedicated descriptive-name rule. Keeping the common
         // rule off buttons prevents duplicate PASS/FAIL records.
         guard node.role != .button else { return nil }
+        // A name given only as a hint is reported by name-via-hint.
+        guard !RuleHelper.isNamedOnlyByHint(node) else { return nil }
         if RuleHelper.clean(node.label).isEmpty {
+            let imageSegments = node.role == .segmentedControl &&
+                RuleHelper.allNodes(node).dropFirst().contains { $0.role == .image }
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "Interactive element has no accessible name.",
+                                   message: imageSegments
+                                       ? "Image segmented control has no accessible name."
+                                       : "Interactive element has no accessible name.",
                                    remediation: "Provide a meaningful accessibility label.")
         }
         return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
@@ -142,7 +156,7 @@ struct CommonAccessibleNameRule: AccessibilityRule {
     }
 }
 
-struct CommonEnhancedTargetSizeRule: AccessibilityRule {
+nonisolated struct CommonEnhancedTargetSizeRule: AccessibilityRule {
     let id = "touch-target-size-44"
     let title = "Interactive controls meet the enhanced target size (44pt) requirement"
     let description = "Interactive controls should provide at least a 44×44 point target."
@@ -154,7 +168,8 @@ struct CommonEnhancedTargetSizeRule: AccessibilityRule {
         let unit = node.platform.sizeUnit
         let size = "\(Int(target))×\(Int(target)) \(unit)"
         if node.frame.width < target || node.frame.height < target {
-            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+            // AAA (2.5.5): reported, but not a blocking failure.
+            return RuleHelper.warning(ruleID: id, name: title, description: description, node: node,
                                    message: "Interactive control does not meet the \(size) target size.",
                                    remediation: "Increase the interactive area to at least \(size).")
         }
@@ -163,7 +178,7 @@ struct CommonEnhancedTargetSizeRule: AccessibilityRule {
     }
 }
 
-struct CommonMinimumTargetSizeRule: AccessibilityRule {
+nonisolated struct CommonMinimumTargetSizeRule: AccessibilityRule {
     let id = "touch-target-size-24"
     let title = "Interactive controls meet the minimum target size (24pt) requirement"
     let description = "Interactive controls should provide at least a 24×24 point target."
@@ -182,7 +197,7 @@ struct CommonMinimumTargetSizeRule: AccessibilityRule {
 
 // MARK: - Helpers
 
-private enum RuleHelper {
+private nonisolated enum RuleHelper {
 
     static let buttons: Set<AccessibilityRole> = [
         .button
@@ -207,14 +222,70 @@ private enum RuleHelper {
         (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Lowercase words of the label and identifier; camelCase identifiers are
+    /// split ("btnClose" -> "btn", "close").
+    static func words(_ node: AccessibilityNode) -> Set<String> {
+        var spaced = ""
+        var previous: Character?
+        for character in node.label + " " + node.identifier {
+            if let previous, previous.isLowercase, character.isUppercase { spaced.append(" ") }
+            spaced.append(character)
+            previous = character
+        }
+        let parts = spaced.lowercased().split { !$0.isLetter && !$0.isNumber }
+        return Set(parts.map(String.init))
+    }
+
+    /// No accessible name, but a hint or tooltip that names the purpose
+    /// (Android exposes both; iOS does not expose hints).
+    static func isNamedOnlyByHint(_ node: AccessibilityNode) -> Bool {
+        guard controls.contains(node.role), !textInputs.contains(node.role), node.visible,
+              clean(node.label).isEmpty
+        else { return false }
+        return !clean(node.semantics.hint ?? node.semantics.tooltip).isEmpty
+    }
+
+    /// Text of static-text descendants, which is what a sighted user reads
+    /// inside a control (SwiftUI and Compose expose it this way).
+    static func childText(of node: AccessibilityNode) -> String? {
+        let parts = allNodes(node).dropFirst()
+            .filter { $0.role == .staticText && $0.visible }
+            .map { clean($0.label) }
+            .filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
+    /// Lowercase words, letters and digits only.
+    static func wordList(_ text: String) -> [String] {
+        text.lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+    }
+
+    /// True when `text` sits just below or beside `field`, where an error
+    /// message for that field would appear.
+    static func isBelowOrBeside(_ text: AccessibilityNode, _ field: AccessibilityNode) -> Bool {
+        let verticalGap = max(text.frame.minY - field.frame.maxY, field.frame.minY - text.frame.maxY, 0)
+        let horizontalOverlap = min(text.frame.maxX, field.frame.maxX) - max(text.frame.minX, field.frame.minX)
+        return verticalGap <= 60 && horizontalOverlap > 0
+    }
+
+    /// Scroll views, lists, collections and carousels, on either platform.
+    static func isScrollContainer(_ node: AccessibilityNode) -> Bool {
+        node.role == .scrollView || node.role == .table ||
+            node.type.contains("ScrollView") || node.type.contains("CollectionView") ||
+            node.traits.contains("scrollable")
+    }
+
     static func isGenericName(_ value: String) -> Bool {
         let normalized = clean(value).lowercased()
         if normalized.isEmpty { return true }
 
         let generic = [
-            "button", "click", "click here", "tap", "tap here",
-            "image", "icon", "more", "next", "ok", "yes", "no",
-            "submit", "action", "item", "cell", "link"
+            // Only names that say nothing about purpose. "OK", "Next",
+            // "Submit" or "More" are clear in context and are not flagged.
+            "button", "btn", "click", "click here", "tap", "tap here",
+            "image", "img", "icon", "action", "item", "cell", "link", "view", "label"
         ]
 
         return generic.contains(normalized)
@@ -453,7 +524,7 @@ private enum RuleHelper {
 }
 
 // MARK: - Direct rules
-struct DescriptiveButtonNameRule: AccessibilityRule {
+nonisolated struct DescriptiveButtonNameRule: AccessibilityRule {
     let id = "button-name-descriptive"
     let title = "Accessible name for button is descriptive"
     let description = "Button names should identify the action or purpose."
@@ -462,6 +533,7 @@ struct DescriptiveButtonNameRule: AccessibilityRule {
         guard node.role == .button, node.visible else { return nil }
         // Image-only buttons are reported by the image-button-specific rule.
         guard !RuleHelper.isImageLikeButton(node) else { return nil }
+        guard !RuleHelper.isNamedOnlyByHint(node) else { return nil }
         if RuleHelper.isGenericName(node.label) {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Button accessible name is missing or generic.",
@@ -472,7 +544,7 @@ struct DescriptiveButtonNameRule: AccessibilityRule {
     }
 }
 
-struct ImageButtonNameRule: AccessibilityRule {
+nonisolated struct ImageButtonNameRule: AccessibilityRule {
     let id = "image-button-name"
     let title = "Missing accessible name for image button"
     let description = "Image-only buttons need an accessible name."
@@ -480,14 +552,14 @@ struct ImageButtonNameRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.role == .button, node.visible else { return nil }
         let imageLike = RuleHelper.isImageLikeButton(node)
-        guard imageLike else { return nil }
+        guard imageLike, !RuleHelper.isNamedOnlyByHint(node) else { return nil }
         return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                message: "Image-based button has no accessible name.",
                                remediation: "Provide an accessibility label that describes the action, not only the image appearance.")
     }
 }
 
-struct PlaceholderOnlyNameRule: AccessibilityRule {
+nonisolated struct PlaceholderOnlyNameRule: AccessibilityRule {
     let id = "placeholder-only-name"
     let title = "Placeholder text used as the only accessible name — no visible label present"
     let description = "A placeholder should not be the only accessible name for a form control."
@@ -502,7 +574,7 @@ struct PlaceholderOnlyNameRule: AccessibilityRule {
     }
 }
 
-struct DescriptiveInteractiveNameRule: AccessibilityRule {
+nonisolated struct DescriptiveInteractiveNameRule: AccessibilityRule {
     let id = "interactive-name-descriptive"
     let title = "Accessible name for interactive element is descriptive"
     let description = "Interactive elements should expose meaningful names."
@@ -510,9 +582,11 @@ struct DescriptiveInteractiveNameRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard RuleHelper.controls.contains(node.role), node.visible else { return nil }
         guard node.role != .button else { return nil }
+        // A missing name is reported once, by accessible-name.
+        guard !RuleHelper.clean(node.label).isEmpty else { return nil }
         if RuleHelper.isGenericName(node.label) {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "Interactive element has a missing or generic accessible name.",
+                                   message: "Interactive element has a generic accessible name.",
                                    remediation: "Use a name that communicates the control's purpose.")
         }
         return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
@@ -520,7 +594,7 @@ struct DescriptiveInteractiveNameRule: AccessibilityRule {
     }
 }
 
-struct AccessibleLabelImageRule: AccessibilityRule {
+nonisolated struct AccessibleLabelImageRule: AccessibilityRule {
     let id = "image-accessible-label"
     let title = "Missing accessible label for image"
     let description = "Meaningful images should expose a textual description."
@@ -537,16 +611,18 @@ struct AccessibleLabelImageRule: AccessibilityRule {
     }
 }
 
-struct DescriptiveImageRule: AccessibilityRule {
+nonisolated struct DescriptiveImageRule: AccessibilityRule {
     let id = "image-name-descriptive"
     let title = "Non-descriptive accessible name for image"
     let description = "Image labels should communicate meaningful content."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.role == .image, node.visible, node.accessible else { return nil }
+        // A missing label is reported once, by image-accessible-label.
+        guard !RuleHelper.clean(node.label).isEmpty else { return nil }
         if RuleHelper.isGenericName(node.label) {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "Image accessible name is missing or generic.",
+                                   message: "Image accessible name is generic.",
                                    remediation: "Describe the meaningful content or purpose of the image.")
         }
         return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
@@ -554,7 +630,7 @@ struct DescriptiveImageRule: AccessibilityRule {
     }
 }
 
-struct AdjustableValueRule: AccessibilityRule {
+nonisolated struct AdjustableValueRule: AccessibilityRule {
     let id = "adjustable-accessibility-value"
     let title = "Adjustable element exposes accessibilityValue"
     let description = "Adjustable controls should expose their current value."
@@ -577,7 +653,7 @@ struct AdjustableValueRule: AccessibilityRule {
     }
 }
 
-struct DuplicateInteractiveNameRule: ScreenAccessibilityRule {
+nonisolated struct DuplicateInteractiveNameRule: ScreenAccessibilityRule {
     let id = "duplicate-interactive-name"
     let title = "Interactive elements have identical accessible names"
     let description = "Repeated accessible names can make controls indistinguishable to assistive technology."
@@ -617,7 +693,7 @@ struct DuplicateInteractiveNameRule: ScreenAccessibilityRule {
     }
 }
 
-struct InteractiveTargetOverlapRule: ScreenAccessibilityRule {
+nonisolated struct InteractiveTargetOverlapRule: ScreenAccessibilityRule {
     let id = "interactive-target-overlap"
     let title = "Interactive targets do not improperly overlap"
     let description = "Interactive controls should not substantially overlap in a way that can make activation ambiguous."
@@ -673,23 +749,22 @@ struct InteractiveTargetOverlapRule: ScreenAccessibilityRule {
     }
 }
 
-struct DisabledButtonStateRule: AccessibilityRule {
+nonisolated struct DisabledButtonStateRule: AccessibilityRule {
     let id = "button-disabled-state"
     let title = "Disabled state of button not defined"
     let description = "A disabled button should expose its disabled state consistently."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.role == .button, node.visible else { return nil }
-        if !node.enabled {
-            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                                   message: "Button is exposed as disabled by the accessibility hierarchy.")
-        }
+        // Only a disabled button is evidence: it shows the disabled state is
+        // exposed. An enabled button proves nothing either way.
+        guard !node.enabled else { return nil }
         return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                               message: "Button is exposed as enabled.")
+                               message: "Button is exposed as disabled by the accessibility hierarchy.")
     }
 }
 
-struct RoleTraitConsistencyRule: AccessibilityRule {
+nonisolated struct RoleTraitConsistencyRule: AccessibilityRule {
     let id = "role-trait-consistency"
     let title = "Accessibility role and traits are consistent"
     let description = "Accessibility traits should agree with the exposed element role."
@@ -729,7 +804,7 @@ struct RoleTraitConsistencyRule: AccessibilityRule {
     }
 }
 
-struct StateTraitConsistencyRule: AccessibilityRule {
+nonisolated struct StateTraitConsistencyRule: AccessibilityRule {
     let id = "state-trait-consistency"
     let title = "Accessibility state is consistent with the current control state"
     let description = "Exposed state information should agree with the control's current state."
@@ -755,13 +830,8 @@ struct StateTraitConsistencyRule: AccessibilityRule {
             )
         }
 
-        if node.isAdjustable && !node.hasValue && node.platform == .ios {
-            return RuleHelper.fail(
-                ruleID: id, name: title, description: description, node: node,
-                message: "Adjustable control has no current accessibility value.",
-                remediation: "Expose the current value so assistive technology can communicate the control's state."
-            )
-        }
+        // A missing value on an adjustable control is reported once, by
+        // adjustable-accessibility-value.
 
         return RuleHelper.pass(
             ruleID: id, name: title, description: description, node: node,
@@ -770,7 +840,7 @@ struct StateTraitConsistencyRule: AccessibilityRule {
     }
 }
 
-struct TextClippingRule: ScreenAccessibilityRule {
+nonisolated struct TextClippingRule: ScreenAccessibilityRule {
     let id = "text-clipping"
     let title = "Text is not clipped by layout bounds"
     let description = "Visible text should remain within the screen and its accessible layout bounds."
@@ -782,7 +852,17 @@ struct TextClippingRule: ScreenAccessibilityRule {
     func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
         let rootBounds = rootNode.frame
 
-        return RuleHelper.allNodes(rootNode).compactMap { node in
+        // Text inside a scrolling container (carousel, list) that runs past
+        // the screen edge is scrolled out of view, not clipped.
+        var texts: [(node: AccessibilityNode, insideScroll: Bool)] = []
+        func collect(_ node: AccessibilityNode, insideScroll: Bool) {
+            let scrolls = insideScroll || RuleHelper.isScrollContainer(node)
+            if RuleHelper.isText(node) { texts.append((node, insideScroll)) }
+            node.children.forEach { collect($0, insideScroll: scrolls) }
+        }
+        collect(rootNode, insideScroll: false)
+
+        return texts.compactMap { node, insideScroll in
             guard RuleHelper.isText(node), node.visible, !RuleHelper.clean(node.label).isEmpty else { return nil }
 
             if node.frame.width <= 0 || node.frame.height <= 0 {
@@ -798,8 +878,13 @@ struct TextClippingRule: ScreenAccessibilityRule {
 
             let visibleIntersection = node.frame.intersection(rootBounds)
             let area = max(node.frame.width * node.frame.height, 1)
-            let visibleArea = max(visibleIntersection.width * visibleIntersection.height, 0)
+            let visibleArea = visibleIntersection.isNull ? 0 : max(visibleIntersection.width * visibleIntersection.height, 0)
             let visibleRatio = visibleArea / area
+
+            // Wholly off screen, or partly scrolled out of a scroll view: not clipping.
+            if visibleRatio == 0 || (insideScroll && visibleRatio < 0.80) {
+                return nil
+            }
 
             if visibleRatio < 0.80 {
                 return RuleHelper.fail(
@@ -823,13 +908,21 @@ struct TextClippingRule: ScreenAccessibilityRule {
     }
 }
 
-struct HeadingQualityRule: AccessibilityRule {
+nonisolated struct HeadingQualityRule: AccessibilityRule {
     let id = "heading-quality"
     let title = "Non-descriptive heading text"
     let description = "Headings should provide meaningful section context."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard RuleHelper.hasTrait(node, RuleHelper.headingsTraits), node.visible else { return nil }
+        let label = RuleHelper.clean(node.label)
+        // A "heading" that reads like body text (long, or a full sentence)
+        // may be marked as a heading by mistake.
+        if label.count > 80 || RuleHelper.wordList(label).count > 12 || label.hasSuffix(".") {
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                         message: "This text is marked as a heading but reads like body text (\(RuleHelper.wordList(label).count) words).",
+                                         remediation: "Mark only text that introduces a section as a heading.")
+        }
         if RuleHelper.isGenericName(node.label) {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Heading text is missing or generic.",
@@ -840,7 +933,7 @@ struct HeadingQualityRule: AccessibilityRule {
     }
 }
 
-struct SegmentControlRule: AccessibilityRule {
+nonisolated struct SegmentControlRule: AccessibilityRule {
     let id = "segmented-control-interactive"
     let title = "Check if segmented controls needs to be interactive"
     let description = "Segments that represent choices should expose an interactive role."
@@ -853,7 +946,7 @@ struct SegmentControlRule: AccessibilityRule {
     }
 }
 
-struct TabAccessibilityRule: AccessibilityRule {
+nonisolated struct TabAccessibilityRule: AccessibilityRule {
     let id = "tab-accessibility"
     let title = "Check if tab control needs to be hidden for screen reader user"
     let description = "Tab controls should expose an appropriate tab role and selected state."
@@ -868,7 +961,7 @@ struct TabAccessibilityRule: AccessibilityRule {
     }
 }
 
-struct FormLabelRule: ScreenAccessibilityRule {
+nonisolated struct FormLabelRule: ScreenAccessibilityRule {
     let id = "form-visual-label"
     let title = "Form controls have an associated visible label"
     let description = "Form controls should have a visible label independent of placeholder text."
@@ -881,16 +974,6 @@ struct FormLabelRule: ScreenAccessibilityRule {
         RuleHelper.allNodes(rootNode).compactMap { node in
             guard RuleHelper.textInputs.contains(node.role), node.visible else { return nil }
 
-            if !RuleHelper.clean(node.label).isEmpty {
-                return RuleHelper.pass(
-                    ruleID: id,
-                    name: title,
-                    description: description,
-                    node: node,
-                    message: "Form control exposes an accessible name; visual label association is also checked from nearby hierarchy text."
-                )
-            }
-
             if let visualLabel = RuleHelper.nearbyVisualLabel(for: node, in: rootNode) {
                 return RuleHelper.pass(
                     ruleID: id,
@@ -901,38 +984,56 @@ struct FormLabelRule: ScreenAccessibilityRule {
                 )
             }
 
+            // No name, no placeholder and no text next to it: nothing tells a
+            // sighted user what to enter. (Placeholder-only fields are
+            // reported by placeholder-only-name.)
+            if RuleHelper.clean(node.label).isEmpty, RuleHelper.clean(node.placeholderValue).isEmpty {
+                return RuleHelper.fail(
+                    ruleID: id,
+                    name: title,
+                    description: description,
+                    node: node,
+                    message: "The field has no visible label, no placeholder and no accessible name.",
+                    remediation: "Add a persistent visible label next to the field and use it as the accessible name."
+                )
+            }
+
             return RuleHelper.validation(
                 ruleID: id,
                 name: title,
                 description: description,
                 node: node,
-                message: "No accessible or nearby visible text label could be established from the current hierarchy.",
+                message: RuleHelper.clean(node.label).isEmpty
+                    ? "No accessible or nearby visible text label could be established from the current hierarchy."
+                    : "The field has an accessible name (\"\(RuleHelper.clean(node.label))\"), but no visible label could be found next to it.",
                 remediation: "Provide a persistent visible label associated with the field; do not rely on placeholder text alone."
             )
         }
     }
 }
 
-struct AutocompleteRule: AccessibilityRule {
-    let id = "form-autocomplete"
-    let title = "Autocomplete information is specified for form field"
-    let description = "Form fields should expose appropriate autocomplete semantics where applicable."
 
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.textInputs.contains(node.role), node.visible else { return nil }
-        return RuleHelper.notTested(ruleID: id, name: title, description: description, node: node,
-                                    message: "Autocomplete/content-type metadata is not exposed through Appium, so it could not be checked.",
-                                    remediation: "Verify the field has the correct autocomplete/content-type semantics.")
-    }
-}
-
-struct ScreenTitleRule: AccessibilityRule {
+nonisolated struct ScreenTitleRule: AccessibilityRule {
     let id = "screen-title"
     let title = "Title is specified for screen"
     let description = "Screens should expose a meaningful title to assistive technology."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        // Android panes (activities, dialogs, Compose/Flutter/RN screens)
+        // can carry a title without a toolbar.
+        if let paneTitle = node.semantics.paneTitle {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "The screen pane exposes the title \"\(paneTitle)\".")
+        }
         guard node.role == .navigationBar, node.visible else { return nil }
+        // UIKit and SwiftUI put the title in the bar's name or in a text
+        // element inside the bar (large titles), not always in its label.
+        let shownTitle = [RuleHelper.clean(node.label), RuleHelper.childText(of: node) ?? "", RuleHelper.clean(node.identifier)]
+            .first { !$0.isEmpty && !RuleHelper.isGenericName($0) }
+        if let shownTitle, RuleHelper.clean(node.label).isEmpty {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "Navigation bar exposes the screen title \"\(shownTitle)\".")
+        }
         if RuleHelper.clean(node.label).isEmpty {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Navigation bar has no accessible title.",
@@ -945,7 +1046,7 @@ struct ScreenTitleRule: AccessibilityRule {
 
 // MARK: - Validation rules
 
-private struct ValidationRule: AccessibilityRule {
+private nonisolated struct ValidationRule: AccessibilityRule {
     let id: String
     let title: String
     let description: String
@@ -961,7 +1062,7 @@ private struct ValidationRule: AccessibilityRule {
 }
 
 /// Which text a contrast rule applies to, and the ratio it requires.
-private enum ContrastTarget {
+private nonisolated enum ContrastTarget {
     /// Standard text. Text that may be large if bold is also checked here;
     /// `largeThreshold` is what it would need if it were large.
     case standard(threshold: Double, largeThreshold: Double)
@@ -974,13 +1075,13 @@ private enum ContrastTarget {
 /// Which backgrounds a contrast rule covers. The minimum-contrast check of
 /// each text element belongs to exactly one rule: the standard/large text
 /// rules for flat backgrounds, the text-over-image rule for varied ones.
-private enum ContrastBackground {
+private nonisolated enum ContrastBackground {
     case flat
     case varied
     case any
 }
 
-private enum ContrastRuleFactory {
+private nonisolated enum ContrastRuleFactory {
 
     private static func ratioText(_ value: Double) -> String {
         value == value.rounded() ? "\(Int(value)):1" : String(format: "%.1f:1", value)
@@ -993,7 +1094,8 @@ private enum ContrastRuleFactory {
         title: String,
         description: String,
         target: ContrastTarget,
-        background: ContrastBackground
+        background: ContrastBackground,
+        enhanced: Bool = false
     ) -> AccessibilityRuleEvaluation? {
         guard RuleHelper.isText(node), node.visible, !node.label.isEmpty else { return nil }
 
@@ -1015,8 +1117,14 @@ private enum ContrastRuleFactory {
             if sizeClass == .possiblyLarge { possiblyLargeThreshold = large }
         }
 
-        let estimatedSize = TextSizeEstimate.fontSize(frame: node.frame, text: node.label)
-            .map { "estimated \(Int($0.rounded())) \(node.platform == .android ? "sp" : "pt")" } ?? "size unknown"
+        let unit = node.platform == .android ? "sp" : "pt"
+        let estimatedSize: String
+        if let points = node.semantics.textSizePoints {
+            estimatedSize = "\(Int(points.rounded())) \(unit)"
+        } else {
+            estimatedSize = TextSizeEstimate.fontSize(frame: node.frame, text: node.label)
+                .map { "estimated \(Int($0.rounded())) \(unit)" } ?? "size unknown"
+        }
         let sizeText: String
         switch sizeClass {
         case .large: sizeText = "large text, \(estimatedSize)"
@@ -1051,16 +1159,22 @@ private enum ContrastRuleFactory {
                                              message: "The \(basis) is \(measured) (\(sizeText)). This is below \(requirement) for standard text but meets \(ratioText(possiblyLargeThreshold)), which is enough if the text is bold.",
                                              remediation: "Confirm whether the text is bold. If it is not, increase the contrast to at least \(requirement).")
             }
+            // Enhanced contrast is AAA (1.4.6): reported, but not a blocking failure.
+            let message = "The \(basis) is \(measured) (\(sizeText)), below the required \(requirement)."
+            let remediation = "Increase the effective foreground/background contrast to at least \(requirement)\(measurement.variedBackground ? ", for example with a scrim or solid backing behind the text" : "")."
+            if enhanced {
+                return RuleHelper.warning(ruleID: ruleID, name: title, description: description, node: node,
+                                          message: message, remediation: remediation)
+            }
             return RuleHelper.fail(ruleID: ruleID, name: title, description: description, node: node,
-                                   message: "The \(basis) is \(measured) (\(sizeText)), below the required \(requirement).",
-                                   remediation: "Increase the effective foreground/background contrast to at least \(requirement)\(measurement.variedBackground ? ", for example with a scrim or solid backing behind the text" : "").")
+                                   message: message, remediation: remediation)
         }
         return RuleHelper.pass(ruleID: ruleID, name: title, description: description, node: node,
                                message: "The \(basis) is \(measured) (\(sizeText)), meeting the required \(requirement).")
     }
 }
 
-struct ContrastStandardTextRule: AccessibilityRule, ContextualAccessibilityRule {
+nonisolated struct ContrastStandardTextRule: AccessibilityRule, ContextualAccessibilityRule {
     let id = "contrast-standard-text-4-5"
     let title = "Verify if color contrast for standard text with its background is sufficient"
     let description = "Standard text should meet a minimum 4.5:1 contrast ratio."
@@ -1071,7 +1185,7 @@ struct ContrastStandardTextRule: AccessibilityRule, ContextualAccessibilityRule 
     }
 }
 
-struct ContrastLargeTextRule: AccessibilityRule, ContextualAccessibilityRule {
+nonisolated struct ContrastLargeTextRule: AccessibilityRule, ContextualAccessibilityRule {
     let id = "contrast-large-text-3"
     let title = "Verify if color contrast for large text with its background is sufficient"
     let description = "Large text should meet a minimum 3:1 contrast ratio."
@@ -1082,29 +1196,29 @@ struct ContrastLargeTextRule: AccessibilityRule, ContextualAccessibilityRule {
     }
 }
 
-struct ContrastEnhancedStandardTextRule: AccessibilityRule, ContextualAccessibilityRule {
+nonisolated struct ContrastEnhancedStandardTextRule: AccessibilityRule, ContextualAccessibilityRule {
     let id = "contrast-standard-text-7"
     let title = "Check if the contrast ratio of standard text ... is 7:1"
     let description = "Standard text enhanced contrast requirement."
     /// Needs the screenshot: the result comes from the contextual evaluation below.
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
     func evaluate(node: AccessibilityNode, context: AccessibilityRuleContext) -> AccessibilityRuleEvaluation? {
-        ContrastRuleFactory.result(node: node, context: context, ruleID: id, title: title, description: description, target: .standard(threshold: 7, largeThreshold: 4.5), background: .any)
+        ContrastRuleFactory.result(node: node, context: context, ruleID: id, title: title, description: description, target: .standard(threshold: 7, largeThreshold: 4.5), background: .any, enhanced: true)
     }
 }
 
-struct ContrastEnhancedLargeTextRule: AccessibilityRule, ContextualAccessibilityRule {
+nonisolated struct ContrastEnhancedLargeTextRule: AccessibilityRule, ContextualAccessibilityRule {
     let id = "contrast-large-text-4-5"
     let title = "Check if the contrast ratio of large text ... is 4.5:1"
     let description = "Large text enhanced contrast requirement."
     /// Needs the screenshot: the result comes from the contextual evaluation below.
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
     func evaluate(node: AccessibilityNode, context: AccessibilityRuleContext) -> AccessibilityRuleEvaluation? {
-        ContrastRuleFactory.result(node: node, context: context, ruleID: id, title: title, description: description, target: .large(threshold: 4.5), background: .any)
+        ContrastRuleFactory.result(node: node, context: context, ruleID: id, title: title, description: description, target: .large(threshold: 4.5), background: .any, enhanced: true)
     }
 }
 
-struct ContrastImageBackgroundRule: AccessibilityRule, ContextualAccessibilityRule {
+nonisolated struct ContrastImageBackgroundRule: AccessibilityRule, ContextualAccessibilityRule {
     let id = "contrast-text-over-image"
     let title = "Check contrast between text and background image"
     let description = "Text over imagery must maintain sufficient rendered contrast."
@@ -1115,7 +1229,7 @@ struct ContrastImageBackgroundRule: AccessibilityRule, ContextualAccessibilityRu
     }
 }
 
-struct ContrastOpacityRule: AccessibilityRule, ContextualAccessibilityRule {
+nonisolated struct ContrastOpacityRule: AccessibilityRule, ContextualAccessibilityRule {
     let id = "contrast-opacity"
     let title = "Check contrast with opacity"
     let description = "Effective rendered contrast must remain sufficient after opacity/compositing."
@@ -1127,7 +1241,7 @@ struct ContrastOpacityRule: AccessibilityRule, ContextualAccessibilityRule {
     func evaluate(node: AccessibilityNode, context: AccessibilityRuleContext) -> AccessibilityRuleEvaluation? { nil }
 }
 
-struct TextResizeRule: AccessibilityRule {
+nonisolated struct TextResizeRule: AccessibilityRule {
     let id = "text-resize"
     let title = "Text can be resized"
     let description = "Text should remain usable when Dynamic Type/accessibility text size is increased."
@@ -1136,7 +1250,7 @@ struct TextResizeRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 
-struct LinkRoleRule: AccessibilityRule {
+nonisolated struct LinkRoleRule: AccessibilityRule {
     let id = "text-link-role"
     let title = "Text functions as a link but is missing role link"
     let description = "Link-like text should expose link semantics."
@@ -1147,15 +1261,17 @@ struct LinkRoleRule: AccessibilityRule {
                                    message: "Element exposes the link role.")
         }
         guard node.role == .staticText else { return nil }
-        let hint = (node.label + " " + node.identifier).lowercased()
-        guard hint.contains("http") || hint.contains("www") || hint.contains("link") else { return nil }
-        return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+        let label = node.label.lowercased()
+        let looksLikeURL = label.contains("http://") || label.contains("https://") || label.contains("www.")
+        guard looksLikeURL || RuleHelper.words(node).contains("link") else { return nil }
+        // Heuristic: displayed URLs are often not tappable at all.
+        return RuleHelper.warning(ruleID: id, name: title, description: description, node: node,
                                message: "Text appears link-like but is exposed as static text.",
                                remediation: "Expose link semantics if activating the text navigates somewhere.")
     }
 }
 
-struct ButtonRoleRule: AccessibilityRule {
+nonisolated struct ButtonRoleRule: AccessibilityRule {
     let id = "text-button-role"
     let title = "Text functions as a button but is missing role button"
     let description = "Actionable text should expose button semantics when appropriate."
@@ -1166,16 +1282,19 @@ struct ButtonRoleRule: AccessibilityRule {
                                    message: "Element exposes button semantics.")
         }
         guard node.role == .staticText else { return nil }
-        let hint = (node.label + " " + node.identifier + " " + node.traits).lowercased()
-        let actionWords = ["button", "submit", "save", "cancel", "continue", "login", "sign in", "delete", "close"]
-        guard actionWords.contains(where: { hint.contains($0) }) else { return nil }
-        return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+        // Whole words, so "Saved" or "Closed" are not read as "save"/"close".
+        let words = RuleHelper.words(node)
+        let actionWords: Set<String> = ["button", "btn", "submit", "save", "cancel", "continue", "login", "signin", "delete", "close"]
+        let isAction = !words.isDisjoint(with: actionWords) || RuleHelper.clean(node.label).lowercased() == "sign in"
+        guard isAction else { return nil }
+        // Heuristic: the text may not be tappable at all.
+        return RuleHelper.warning(ruleID: id, name: title, description: description, node: node,
                                message: "Text appears action-oriented but is exposed as static text.",
                                remediation: "Expose an appropriate button role when the text performs an action.")
     }
 }
 
-struct DecorativeImageRule: AccessibilityRule {
+nonisolated struct DecorativeImageRule: AccessibilityRule {
     let id = "decorative-image"
     let title = "Check if Image should be marked as decorative"
     let description = "Decorative images should not add redundant screen-reader content."
@@ -1187,7 +1306,7 @@ struct DecorativeImageRule: AccessibilityRule {
     }
 }
 
-struct ScreenReaderHiddenInteractiveRule: AccessibilityRule {
+nonisolated struct ScreenReaderHiddenInteractiveRule: AccessibilityRule {
     let id = "interactive-screen-reader-hidden"
     let title = "Check if interactive control needs to be hidden for screen reader user"
     let description = "Interactive controls should not be unintentionally hidden from assistive technology."
@@ -1208,7 +1327,7 @@ struct ScreenReaderHiddenInteractiveRule: AccessibilityRule {
     }
 }
 
-struct MotionAlternativeRule: AccessibilityRule {
+nonisolated struct MotionAlternativeRule: AccessibilityRule {
     let id = "motion-alternative"
     let title = "No On-Screen Alternative for Motion Action"
     let description = "Motion-driven actions should have an accessible non-motion alternative."
@@ -1220,7 +1339,7 @@ struct MotionAlternativeRule: AccessibilityRule {
     }
 }
 
-struct FocusOrderRule: AccessibilityRule {
+nonisolated struct FocusOrderRule: AccessibilityRule {
     let id = "focus-order"
     let title = "Keyboard focus order correct"
     let description = "Runtime accessibility focus should follow a meaningful reading and interaction order."
@@ -1231,7 +1350,7 @@ struct FocusOrderRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 
-struct OrientationRule: AccessibilityRule {
+nonisolated struct OrientationRule: AccessibilityRule {
     let id = "orientation-support"
     let title = "Check if all the content is available when the device orientation is changed"
     let description = "Content should remain available in supported orientations."
@@ -1240,7 +1359,7 @@ struct OrientationRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 
-struct ScreenReaderContentRule: AccessibilityRule {
+nonisolated struct ScreenReaderContentRule: AccessibilityRule {
     let id = "screen-reader-content"
     let title = "Content can be accessed by screen reader user"
     let description = "Meaningful content should be exposed to assistive technology."
@@ -1268,7 +1387,7 @@ struct ScreenReaderContentRule: AccessibilityRule {
     private static func flatten(_ nodes: [AccessibilityNode]) -> [AccessibilityNode] { nodes.flatMap { [$0] + flatten($0.children) } }
 }
 
-struct LanguageRule: AccessibilityRule {
+nonisolated struct LanguageRule: AccessibilityRule {
     let id = "language"
     let title = "Missing language attribute for content"
     let description = "Content language should be correctly identified where it differs from the app language."
@@ -1280,7 +1399,7 @@ struct LanguageRule: AccessibilityRule {
     }
 }
 
-struct ModalAccessibilityRule: AccessibilityRule {
+nonisolated struct ModalAccessibilityRule: AccessibilityRule {
     let id = "modal-accessibility"
     let title = "Screen reader focus within modals correct"
     let description = "Assistive-technology focus should enter, remain within, and leave a modal correctly."
@@ -1297,7 +1416,7 @@ struct ModalAccessibilityRule: AccessibilityRule {
     }
 }
 
-struct LoadingIndicatorContrastRule: AccessibilityRule, ContextualAccessibilityRule {
+nonisolated struct LoadingIndicatorContrastRule: AccessibilityRule, ContextualAccessibilityRule {
     let id = "loading-indicator-contrast"
     let title = "Loading indicator has sufficient contrast with its background"
     let description = "Loading indicators should remain distinguishable from their background."
@@ -1327,19 +1446,8 @@ struct LoadingIndicatorContrastRule: AccessibilityRule, ContextualAccessibilityR
     }
 }
 
-struct LiveRegionRule: AccessibilityRule {
-    let id = "live-region"
-    let title = "Live region is defined for dynamic content"
-    let description = "Dynamic updates that require announcement should expose appropriate accessibility notifications."
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.role == .application else { return nil }
-        return RuleHelper.notTested(ruleID: id, name: title, description: description, node: node,
-                                    message: "Screen-reader announcements for dynamic updates cannot be observed through Appium.",
-                                    remediation: "Trigger the update with VoiceOver/TalkBack on and confirm it is announced.")
-    }
-}
 
-struct TimeLimitedUIRule: AccessibilityRule {
+nonisolated struct TimeLimitedUIRule: AccessibilityRule {
     let id = "time-limited-ui"
     let title = "Time-limited UI has a visible user control"
     let description = "Time-limited content should provide a user-controlled extension or equivalent mechanism."
@@ -1351,7 +1459,7 @@ struct TimeLimitedUIRule: AccessibilityRule {
     }
 }
 
-struct FocusIndicatorRule: AccessibilityRule {
+nonisolated struct FocusIndicatorRule: AccessibilityRule {
     let id = "focus-indicator"
     let title = "Customized keyboard focus visible"
     let description = "Keyboard focus should have a visible indicator in the rendered UI."
@@ -1360,7 +1468,7 @@ struct FocusIndicatorRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 
-struct NonTextContrastRule: AccessibilityRule, ContextualAccessibilityRule {
+nonisolated struct NonTextContrastRule: AccessibilityRule, ContextualAccessibilityRule {
     let id = "non-text-contrast"
     let title = "Non-text element has sufficient contrast with its background"
     let description = "Meaningful non-text UI components should have sufficient contrast."
@@ -1407,7 +1515,7 @@ struct NonTextContrastRule: AccessibilityRule, ContextualAccessibilityRule {
     }
 }
 
-struct FormBorderContrastRule: AccessibilityRule, ContextualAccessibilityRule {
+nonisolated struct FormBorderContrastRule: AccessibilityRule, ContextualAccessibilityRule {
     let id = "form-border-contrast"
     let title = "Border of form controls has sufficient contrast with its background"
     let description = "Visible form-control boundaries should remain distinguishable."
@@ -1437,16 +1545,8 @@ struct FormBorderContrastRule: AccessibilityRule, ContextualAccessibilityRule {
     }
 }
 
-struct ErrorMessageRule: AccessibilityRule {
-    let id = "error-message-accessibility"
-    let title = "Error message is accessible and includes a suggestion to fix it"
-    let description = "Validation errors should be identified in text and exposed to assistive technology."
 
-    /// Runtime-only: the error is triggered by the error-message probe (RuntimeProbes.swift).
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
-}
-
-struct ErrorSuggestionRule: AccessibilityRule {
+nonisolated struct ErrorSuggestionRule: AccessibilityRule {
     let id = "error-message-suggestion"
     let title = "Error message includes a suggestion to fix it"
     let description = "When an input error is detected, the message should say how to correct it."
@@ -1468,7 +1568,23 @@ struct ErrorSuggestionRule: AccessibilityRule {
     }
 }
 
-struct KeyboardActivationRule: AccessibilityRule {
+/// Runtime-only: measured by KeyboardFocusTester during Tab traversal.
+nonisolated struct FocusIndicatorContrastRule: AccessibilityRule {
+    let id = "focus-indicator-contrast"
+    let title = "Focus indicator has sufficient contrast"
+    let description = "The keyboard focus indicator must have at least 3:1 contrast with adjacent colours."
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+}
+
+/// Runtime-only: checked by KeyboardFocusTester during Tab traversal.
+nonisolated struct FocusNotObscuredRule: AccessibilityRule {
+    let id = "focus-not-obscured"
+    let title = "Check if focus indicator is obscured by another element"
+    let description = "A focused control must not be hidden by sticky headers, footers or banners."
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+}
+
+nonisolated struct KeyboardActivationRule: AccessibilityRule {
     let id = "keyboard-activation"
     let title = "Buttons and links are operable with a keyboard"
     let description = "Controls that can be tapped must also be activated from the keyboard."
@@ -1477,7 +1593,7 @@ struct KeyboardActivationRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 
-struct KeyboardHiddenFocusRule: AccessibilityRule {
+nonisolated struct KeyboardHiddenFocusRule: AccessibilityRule {
     let id = "keyboard-focus-hidden-content"
     let title = "Hidden content does not receive keyboard focus"
     let description = "Keyboard focus must not land on hidden or off-screen content."
@@ -1486,7 +1602,7 @@ struct KeyboardHiddenFocusRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 
-struct KeyboardNonInteractiveFocusRule: AccessibilityRule {
+nonisolated struct KeyboardNonInteractiveFocusRule: AccessibilityRule {
     let id = "keyboard-focus-noninteractive"
     let title = "Non-interactive elements do not receive keyboard focus"
     let description = "Keyboard focus should only stop on elements the user can act on."
@@ -1495,20 +1611,72 @@ struct KeyboardNonInteractiveFocusRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 
-struct MapAlternativeRule: AccessibilityRule {
+nonisolated struct MapAlternativeRule: AccessibilityRule {
     let id = "map-text-alternative"
     let title = "Map view has a text alternative"
     let description = "Maps should expose an accessible textual alternative for meaningful locations and controls."
+
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        let text = (node.type + " " + node.identifier + " " + node.label).lowercased()
-        guard text.contains("map") else { return nil }
+        guard node.visible else { return nil }
+
+        // A real map view: iOS XCUIElementTypeMap, Android MapView / Google Maps.
+        let isMapView = node.type == "XCUIElementTypeMap" ||
+            node.type.hasSuffix("MapView") || node.type.contains(".maps.")
+        if isMapView {
+            let labelledMarkers = RuleHelper.allNodes(node).dropFirst()
+                .filter { $0.accessible && !RuleHelper.clean($0.label).isEmpty }
+            if !RuleHelper.clean(node.label).isEmpty || !labelledMarkers.isEmpty {
+                return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                       message: "The map exposes text to assistive technology (\(labelledMarkers.count) labelled marker\(labelledMarkers.count == 1 ? "" : "s")\(RuleHelper.clean(node.label).isEmpty ? "" : " and a map label")).")
+            }
+            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                                   message: "The map has no accessible label and no labelled markers, so its content is not available as text.",
+                                   remediation: "Label the map and its markers, or provide the same information as a list.")
+        }
+
+        // Something named like a map: the type cannot be confirmed.
+        let text = (node.identifier + " " + node.label).lowercased()
+        guard RuleHelper.wordList(text).contains("map") else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Map content is detected by naming only; verify an equivalent textual representation exists.",
                                      remediation: "Provide an accessible textual alternative for important map information.")
     }
 }
 
-struct GestureKeyboardRule: AccessibilityRule {
+/// BB40114. An open dialog offers a way to close it.
+nonisolated struct ModalClosableRule: ScreenAccessibilityRule {
+    let id = "modal-closable"
+    let title = "Modal dialog can be closed"
+    let description = "A modal dialog must offer a visible, accessible way to close it."
+
+    private static let closeWords: Set<String> = ["close", "cancel", "dismiss", "done", "ok", "back", "no", "later"]
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+
+    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        let modals = RuleHelper.allNodes(rootNode).filter { node in
+            guard node.visible else { return false }
+            let text = (node.type + " " + node.identifier).lowercased()
+            return node.type == "XCUIElementTypeAlert" || node.type == "XCUIElementTypeSheet" ||
+                text.contains("dialog") || text.contains("modal") || text.contains("bottomsheet")
+        }
+        return modals.prefix(1).map { modal in
+            let close = RuleHelper.allNodes(modal).first { node in
+                RuleHelper.controls.contains(node.role) && node.accessible &&
+                !RuleHelper.wordList(node.label + " " + node.identifier).filter { Self.closeWords.contains($0) }.isEmpty
+            }
+            if let close {
+                return RuleHelper.pass(ruleID: id, name: title, description: description, node: modal,
+                                       message: "The dialog has an accessible \"\(RuleHelper.clean(close.label))\" control to close it.")
+            }
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: modal,
+                                         message: "No close, cancel or done control was found in the dialog.",
+                                         remediation: "Provide a visible, accessible control that closes the dialog.")
+        }
+    }
+}
+
+nonisolated struct GestureKeyboardRule: AccessibilityRule {
     let id = "gesture-keyboard-operable"
     let title = "Interactive elements operable with keyboard interface"
     let description = "Functionality implemented through gestures should have an equivalent keyboard operation where keyboard operation is supported."
@@ -1521,7 +1689,7 @@ struct GestureKeyboardRule: AccessibilityRule {
     }
 }
 
-struct AccessibilityInterfaceOperabilityRule: AccessibilityRule {
+nonisolated struct AccessibilityInterfaceOperabilityRule: AccessibilityRule {
     let id = "accessibility-interface-operable"
     let title = "Interactive elements operable with accessibility interface"
     let description = "Interactive controls should be operable through the platform accessibility interface."
@@ -1534,7 +1702,7 @@ struct AccessibilityInterfaceOperabilityRule: AccessibilityRule {
     }
 }
 
-struct TouchPhaseRule: AccessibilityRule {
+nonisolated struct TouchPhaseRule: AccessibilityRule {
     let id = "touch-up-cancellation"
     let title = "Action supports cancellation before activation"
     let description = "Where applicable, an interaction should allow the user to cancel before activation."
@@ -1547,12 +1715,18 @@ struct TouchPhaseRule: AccessibilityRule {
     }
 }
 
-struct ComplexGestureRule: AccessibilityRule {
+nonisolated struct ComplexGestureRule: AccessibilityRule {
     let id = "complex-gesture-alternative"
     let title = "Alternative for multi-point/path-based gestures present"
     let description = "Complex gestures should have an equivalent accessible operation."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        // Custom accessibility actions are how screen-reader users reach
+        // swipe and multi-finger gesture actions.
+        if !node.semantics.customActions.isEmpty, node.visible {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "The element exposes custom actions: \(node.semantics.customActions.prefix(4).joined(separator: ", ")).")
+        }
         guard node.role == .application else { return nil }
         return RuleHelper.notTested(ruleID: id, name: title, description: description, node: node,
                                      message: "The accessibility hierarchy does not identify multi-point or path-based gestures and cannot prove an equivalent alternative.",
@@ -1560,7 +1734,7 @@ struct ComplexGestureRule: AccessibilityRule {
     }
 }
 
-struct MultiPointGestureAlternativeRule: AccessibilityRule {
+nonisolated struct MultiPointGestureAlternativeRule: AccessibilityRule {
     let id = "multi-point-gesture-alternative"
     let title = "Alternative for multi-point gestures present"
     let description = "Multi-point gesture functionality should have an equivalent simple operation unless the gesture is essential."
@@ -1573,7 +1747,7 @@ struct MultiPointGestureAlternativeRule: AccessibilityRule {
     }
 }
 
-struct PathBasedGestureAlternativeRule: AccessibilityRule {
+nonisolated struct PathBasedGestureAlternativeRule: AccessibilityRule {
     let id = "path-based-gesture-alternative"
     let title = "Alternative for path-based gestures present"
     let description = "Path-based gesture functionality should have an equivalent simple operation unless the gesture is essential."
@@ -1586,7 +1760,7 @@ struct PathBasedGestureAlternativeRule: AccessibilityRule {
     }
 }
 
-struct ReadingOrderRule: ScreenAccessibilityRule {
+nonisolated struct ReadingOrderRule: ScreenAccessibilityRule {
     let id = "reading-order"
     let title = "Screen reader focus order includes all meaningful elements"
     let description = "Assistive-technology traversal should include meaningful content in a meaningful order."
@@ -1619,40 +1793,28 @@ struct ReadingOrderRule: ScreenAccessibilityRule {
     }
 }
 
-struct ScreenReaderFocusOrderRule: ScreenAccessibilityRule {
+nonisolated struct ScreenReaderFocusOrderRule: ScreenAccessibilityRule {
     let id = "screen-reader-focus-order"
     let title = "Screen reader focus order correct"
     let description = "VoiceOver/TalkBack focus should follow a meaningful order."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 
+    /// Appium cannot drive VoiceOver/TalkBack focus, so this cannot be
+    /// proven automatically. The accessibility tree order, which screen
+    /// readers follow by default, is assessed by `reading-order`.
     func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
-        var elements: [AccessibilityNode] = []
-        func visit(_ node: AccessibilityNode) {
-            if node.exists, node.visible, node.accessible,
-               node.frame.width > 0, node.frame.height > 0,
-               node.role != .application, node.role != .scrollView, node.role != .table,
-               !RuleHelper.clean(node.label).isEmpty,
-               node.children.isEmpty || RuleHelper.controls.contains(node.role) {
-                elements.append(node)
-            }
-            for child in node.children { visit(child) }
+        let meaningful = RuleHelper.allNodes(rootNode).filter {
+            $0.visible && $0.accessible && !RuleHelper.clean($0.label).isEmpty
         }
-        visit(rootNode)
-
-        guard let assessment = VisualOrder.assess(frames: elements.map(\.frame)) else { return [] }
-
-        if assessment.ratio >= VisualOrder.passThreshold {
-            return [RuleHelper.pass(ruleID: id, name: title, description: description, node: rootNode,
-                                    message: "The accessibility tree order of \(assessment.count) meaningful elements follows the visual reading order (top to bottom, left to right).")]
-        }
-        return [RuleHelper.warning(ruleID: id, name: title, description: description, node: rootNode,
-                                   message: "\(assessment.outOfOrder) of \(assessment.count) meaningful elements are exposed out of visual reading order. Screen readers follow the accessibility tree order by default.",
-                                   remediation: "Reorder the accessibility elements (or set traversal order) so assistive technology reads the screen in a meaningful order.")]
+        guard meaningful.count >= 2 else { return [] }
+        return [RuleHelper.validation(ruleID: id, name: title, description: description, node: rootNode,
+                                      message: "Screen reader focus order cannot be observed through Appium. The accessibility tree order is reported under Reading order.",
+                                      remediation: "Swipe through the screen with VoiceOver/TalkBack and confirm focus follows the intended order.")]
     }
 }
 
-struct ScreenReaderModalFocusRule: AccessibilityRule {
+nonisolated struct ScreenReaderModalFocusRule: AccessibilityRule {
     let id = "screen-reader-modal-focus"
     let title = "Screen reader focus within modals correct"
     let description = "Screen reader focus should enter an active modal, remain contained, and return correctly after dismissal."
@@ -1665,7 +1827,7 @@ struct ScreenReaderModalFocusRule: AccessibilityRule {
     }
 }
 
-struct ScreenReaderTrapRule: AccessibilityRule {
+nonisolated struct ScreenReaderTrapRule: AccessibilityRule {
     let id = "screen-reader-trap"
     let title = "No screen reader trap present"
     let description = "Assistive-technology focus should be able to leave every component and modal when appropriate."
@@ -1678,7 +1840,7 @@ struct ScreenReaderTrapRule: AccessibilityRule {
     }
 }
 
-struct ScreenReaderFocusContextChangeRule: AccessibilityRule {
+nonisolated struct ScreenReaderFocusContextChangeRule: AccessibilityRule {
     let id = "screen-reader-focus-context-change"
     let title = "No context change on focus with screen reader present"
     let description = "Receiving assistive-technology focus should not unexpectedly initiate a context change."
@@ -1691,7 +1853,7 @@ struct ScreenReaderFocusContextChangeRule: AccessibilityRule {
     }
 }
 
-struct KeyboardFocusContextChangeRule: AccessibilityRule {
+nonisolated struct KeyboardFocusContextChangeRule: AccessibilityRule {
     let id = "keyboard-focus-context-change"
     let title = "No context change on focus with external keyboard"
     let description = "Receiving external-keyboard focus should not unexpectedly change context."
@@ -1700,7 +1862,7 @@ struct KeyboardFocusContextChangeRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 
-struct CancelUndoMechanismRule: AccessibilityRule {
+nonisolated struct CancelUndoMechanismRule: AccessibilityRule {
     let id = "cancel-undo-mechanism"
     let title = "Cancel or undo action mechanism present"
     let description = "Where an interaction can cause a consequential or difficult-to-reverse change, an appropriate cancel or undo mechanism should be available."
@@ -1713,7 +1875,7 @@ struct CancelUndoMechanismRule: AccessibilityRule {
     }
 }
 
-struct InputContextChangeRule: AccessibilityRule {
+nonisolated struct InputContextChangeRule: AccessibilityRule {
     let id = "input-context-change"
     let title = "No unexpected context change on input"
     let description = "Entering data or changing a control should not unexpectedly change context."
@@ -1726,7 +1888,7 @@ struct InputContextChangeRule: AccessibilityRule {
     }
 }
 
-struct KeyboardFocusRule: AccessibilityRule {
+nonisolated struct KeyboardFocusRule: AccessibilityRule {
     let id = "keyboard-focus"
     let title = "Interactive control can receive keyboard focus"
     let description = "Keyboard users should be able to reach interactive controls where keyboard operation is supported."
@@ -1734,7 +1896,7 @@ struct KeyboardFocusRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 
-struct StateUpdateRule: AccessibilityRule {
+nonisolated struct StateUpdateRule: AccessibilityRule {
     let id = "state-updates-after-interaction"
     let title = "State does not get updated on user interaction"
     let description = "Interactive state should update after user actions."
@@ -1743,7 +1905,7 @@ struct StateUpdateRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 
-struct LinkColorRule: ScreenAccessibilityRule, ContextualScreenAccessibilityRule {
+nonisolated struct LinkColorRule: ScreenAccessibilityRule, ContextualScreenAccessibilityRule {
     let id = "link-color-differentiation"
     let title = "Link color differentiation check"
     let description = "Links should not rely on color alone to communicate their role."
@@ -1817,23 +1979,7 @@ struct LinkColorRule: ScreenAccessibilityRule, ContextualScreenAccessibilityRule
     }
 }
 
-struct VisualLabelRule: AccessibilityRule {
-    let id = "visual-label"
-    let title = "Visual label is specified for form control"
-    let description = "Form controls should have a visible, persistent label."
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.textInputs.contains(node.role), node.visible else { return nil }
-        if !RuleHelper.clean(node.label).isEmpty || !RuleHelper.clean(node.placeholderValue ?? "").isEmpty {
-            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                                   message: "Form control exposes a descriptive label or placeholder in the accessibility hierarchy.")
-        }
-        return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                               message: "Form control has no accessible label or placeholder that can be used as evidence of a visible label.",
-                               remediation: "Provide a persistent visible label and expose the same purpose to assistive technology.")
-    }
-}
-
-struct LanguageChangeRule: AccessibilityRule {
+nonisolated struct LanguageChangeRule: AccessibilityRule {
     let id = "language-change"
     let title = "Change in language is defined correctly"
     let description = "Content language changes should be identified correctly."
@@ -1845,7 +1991,7 @@ struct LanguageChangeRule: AccessibilityRule {
     }
 }
 
-struct TextSpacingRule: AccessibilityRule {
+nonisolated struct TextSpacingRule: AccessibilityRule {
     let id = "text-spacing"
     let title = "Text spacing requirements met"
     let description = "Content should remain usable with increased text spacing."
@@ -1857,11 +2003,266 @@ struct TextSpacingRule: AccessibilityRule {
     }
 }
 
-struct ModalFocusContainmentRule: AccessibilityRule {
+nonisolated struct ModalFocusContainmentRule: AccessibilityRule {
     let id = "modal-focus-containment"
     let title = "Keyboard focus within modals correct"
     let description = "Keyboard focus should remain inside an active modal until dismissal."
 
     // Runtime keyboard traversal is evaluated by KeyboardFocusTester.
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+}
+
+// MARK: - Platform semantics rules
+//
+// Rules that use data only some platforms expose (PlatformSemantics). They
+// return nothing where the data is missing, so a platform that cannot be
+// checked is never reported as passing.
+
+/// BB40282. A clickable or checkable generic view (React Native Pressable,
+/// Flutter GestureDetector, Compose clickable) with no role.
+nonisolated struct MissingRoleRule: AccessibilityRule {
+    let id = "missing-role"
+    let title = "Missing role for interactive element"
+    let description = "Interactive elements must expose a role so assistive technology announces what they are."
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        guard node.visible, node.semantics.roleInferred else { return nil }
+        let simpleClass = node.type.split(separator: ".").last.map(String.init) ?? node.type
+        let expected = node.role == .checkBox ? "checkbox or switch" : "button"
+        return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                               message: "This element can be activated but exposes no role (class \(simpleClass)), so TalkBack does not say it is a \(expected).",
+                               remediation: "Expose a role: accessibilityRole in React Native, Semantics(button: true) in Flutter, Modifier.semantics { role = Role.Button } in Compose, or use a native \(expected).")
+    }
+}
+
+/// BB40049. A control whose only name is its hint or tooltip.
+nonisolated struct NameViaHintRule: AccessibilityRule {
+    let id = "name-via-hint"
+    let title = "Accessible name incorrectly specified using hint"
+    let description = "A control's purpose must be in its accessible name, not only in its hint."
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        guard RuleHelper.isNamedOnlyByHint(node) else { return nil }
+        let hint = node.semantics.hint ?? node.semantics.tooltip ?? ""
+        return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                               message: "The control has no accessible name; its purpose (\"\(RuleHelper.clean(hint))\") is only in the hint, which screen readers announce after a pause or not at all.",
+                               remediation: "Put the purpose in the accessible name (contentDescription / accessibilityLabel) and keep the hint for extra guidance only.")
+    }
+}
+
+/// BB40088, BB40089, BB40121. The accessible name must contain the visible
+/// label so voice-control users can say what they see.
+nonisolated struct LabelInNameRule: AccessibilityRule, ContextualAccessibilityRule {
+    let id = "label-in-name"
+    let title = "Accessible name matches visible label"
+    let description = "The accessible name of a control with a visible text label must contain that text."
+
+    private static let roles: Set<AccessibilityRole> = [
+        .button, .link, .toggle, .checkBox, .radioButton, .segmentedControl
+    ]
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        result(node: node, context: nil)
+    }
+
+    func evaluate(node: AccessibilityNode, context: AccessibilityRuleContext) -> AccessibilityRuleEvaluation? {
+        result(node: node, context: context)
+    }
+
+    private func result(node: AccessibilityNode, context: AccessibilityRuleContext?) -> AccessibilityRuleEvaluation? {
+        guard Self.roles.contains(node.role), node.visible else { return nil }
+        let name = RuleHelper.clean(node.label)
+        guard !name.isEmpty else { return nil }
+
+        // Prefer text the platform exposes; fall back to reading the screenshot.
+        let visible: String
+        let fromScreenshot: Bool
+        if let text = node.semantics.visibleText {
+            visible = text; fromScreenshot = false
+        } else if let text = RuleHelper.childText(of: node) {
+            visible = text; fromScreenshot = false
+        } else if let context, let text = TextRecognizer.text(in: node.frame, context: context) {
+            visible = text; fromScreenshot = true
+        } else {
+            return nil
+        }
+
+        let visibleWords = RuleHelper.wordList(visible)
+        guard !visibleWords.isEmpty else { return nil }
+        let nameWords = Set(RuleHelper.wordList(name))
+        let matched = visibleWords.filter { nameWords.contains($0) }.count
+        let ratio = Double(matched) / Double(visibleWords.count)
+        // Screenshot text can misread a character; allow one miss in longer labels.
+        let required = fromScreenshot && visibleWords.count >= 3 ? 0.75 : 1.0
+
+        if ratio >= required {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "The accessible name \"\(name)\" contains the visible label \"\(visible)\".")
+        }
+        let message = "The accessible name \"\(name)\" does not contain the visible label \"\(visible)\"\(fromScreenshot ? " (read from the screenshot)" : ""). Voice Control users who say the visible label cannot activate it."
+        let remediation = "Start the accessible name with the visible label text, or make them match."
+        // Text read from the screenshot can be wrong, so it is a warning.
+        return fromScreenshot
+            ? RuleHelper.warning(ruleID: id, name: title, description: description, node: node, message: message, remediation: remediation)
+            : RuleHelper.fail(ruleID: id, name: title, description: description, node: node, message: message, remediation: remediation)
+    }
+}
+
+/// BB40041. Short, large text that looks like a heading but is not marked as one.
+nonisolated struct HeadingCandidateRule: ScreenAccessibilityRule {
+    let id = "heading-candidate"
+    let title = "Check if the text should be a heading"
+    let description = "Text that visually introduces a section should be marked as a heading."
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+
+    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        let texts = RuleHelper.allNodes(rootNode).filter {
+            $0.role == .staticText && $0.visible && !RuleHelper.clean($0.label).isEmpty
+        }
+        func size(_ node: AccessibilityNode) -> Double? {
+            node.semantics.textSizePoints ?? TextSizeEstimate.fontSize(frame: node.frame, text: node.label).map(Double.init)
+        }
+        let sizes = texts.compactMap(size).sorted()
+        guard sizes.count >= 3 else { return [] }
+        let median = sizes[sizes.count / 2]
+
+        let candidates = texts.filter { node in
+            guard !RuleHelper.hasTrait(node, RuleHelper.headingsTraits),
+                  node.semantics.isHeading != true,
+                  let points = size(node), points >= max(20, median * 1.3)
+            else { return false }
+            let label = RuleHelper.clean(node.label)
+            return label.count <= 60 && RuleHelper.wordList(label).count <= 8 && !label.hasSuffix(".")
+        }
+
+        return candidates.prefix(5).map { node in
+            RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                  message: "\"\(RuleHelper.clean(node.label))\" is larger than the surrounding text and looks like a heading, but is not marked as one.",
+                                  remediation: "If the text introduces a section, mark it as a heading (accessibilityTraits .header, accessibilityHeading, accessibilityRole=\"header\", Semantics(header: true)).")
+        }
+    }
+}
+
+/// BB40095. Android: an error shown next to a field that TalkBack is not told about.
+nonisolated struct ErrorExposureRule: ScreenAccessibilityRule {
+    let id = "error-message-accessibility"
+    let title = "Error message is announced to screen reader users"
+    let description = "Validation errors should be identified in text and exposed to assistive technology."
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+
+    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        // iOS exposes neither field errors nor live regions to Appium.
+        guard rootNode.platform == .android else { return [] }
+        let nodes = RuleHelper.allNodes(rootNode).filter(\.visible)
+        let inputs = nodes.filter { RuleHelper.textInputs.contains($0.role) }
+        guard !inputs.isEmpty else { return [] }
+
+        var results: [AccessibilityRuleEvaluation] = []
+        for input in inputs where input.semantics.errorText != nil || input.semantics.contentInvalid == true {
+            results.append(RuleHelper.pass(ruleID: id, name: title, description: description, node: input,
+                                           message: "The field exposes its error to TalkBack\(input.semantics.errorText.map { ": \"\($0)\"" } ?? ".")"))
+        }
+
+        let errorTexts = nodes.filter { node in
+            node.role == .staticText &&
+            ErrorMessageHeuristics.looksLikeStrictError(node.label) &&
+            (node.semantics.liveRegion ?? 0) == 0
+        }
+        for text in errorTexts {
+            guard let field = inputs.first(where: { RuleHelper.isBelowOrBeside(text, $0) }),
+                  field.semantics.errorText == nil, field.semantics.contentInvalid != true
+            else { continue }
+            results.append(RuleHelper.warning(ruleID: id, name: title, description: description, node: text,
+                                              message: "The error \"\(RuleHelper.clean(text.label))\" is shown next to a field, but the field is not marked invalid and the text is not a live region, so TalkBack does not announce it.",
+                                              remediation: "Set the error on the field (setError / TextInputLayout.setError) or make the message a live region so it is announced."))
+        }
+        return results
+    }
+}
+
+/// BB40103, BB40104. Android: status content that changes should be a live region.
+nonisolated struct StatusLiveRegionRule: AccessibilityRule {
+    let id = "live-region"
+    let title = "Live region is defined for dynamic content"
+    let description = "Dynamic updates that require announcement should expose appropriate accessibility notifications."
+
+    private static let statusCues = ["snackbar", "toast", "status", "banner", "notice"]
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        if node.role == .application {
+            guard node.platform == .ios else { return nil }
+            return RuleHelper.notTested(ruleID: id, name: title, description: description, node: node,
+                                        message: "Screen-reader announcements for dynamic updates cannot be observed through Appium on iOS.",
+                                        remediation: "Trigger the update with VoiceOver on and confirm it is announced.")
+        }
+        guard node.platform == .android, node.visible, let liveRegion = node.semantics.liveRegion else { return nil }
+        let text = (node.type + " " + node.identifier).lowercased()
+        guard Self.statusCues.contains(where: { text.contains($0) }) else { return nil }
+        if liveRegion > 0 {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "Status content is a \(liveRegion == 2 ? "assertive" : "polite") live region, so TalkBack announces updates.")
+        }
+        return RuleHelper.warning(ruleID: id, name: title, description: description, node: node,
+                                  message: "This looks like status content (\(node.identifier.isEmpty ? node.type : node.identifier)) but is not a live region, so TalkBack may not announce updates.",
+                                  remediation: "Set accessibilityLiveRegion (polite) on the view, or announce the change.")
+    }
+}
+
+/// BB40091, BB40092. Android: a personal-data field's input type should say
+/// what it collects. Autofill hints are not in the hierarchy, so the input
+/// type is the evidence available.
+nonisolated struct InputPurposeRule: AccessibilityRule {
+    let id = "form-autocomplete"
+    let title = "Autocomplete information is specified for form field"
+    let description = "Form fields should expose appropriate autocomplete semantics where applicable."
+
+    private enum Purpose: String {
+        case email, phone, password, name, postalCode = "postal code", address
+    }
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        guard RuleHelper.textInputs.contains(node.role), node.visible else { return nil }
+
+        guard node.platform == .android, let inputType = node.semantics.inputType else {
+            return RuleHelper.notTested(ruleID: id, name: title, description: description, node: node,
+                                        message: "Autocomplete/content-type metadata is not exposed through Appium on this platform, so it could not be checked.",
+                                        remediation: "Verify the field has the correct autocomplete/content-type semantics.")
+        }
+        guard let purpose = purpose(of: node) else { return nil }
+
+        let typeClass = inputType & 0xF
+        let variation = inputType & 0xFF0
+        let matches: Bool
+        switch purpose {
+        case .email: matches = typeClass == 1 && [0x20, 0xD0].contains(variation)
+        case .phone: matches = typeClass == 3
+        case .password: matches = (typeClass == 1 && [0x80, 0x90, 0xE0].contains(variation)) || (typeClass == 2 && variation == 0x10)
+        case .name: matches = typeClass == 1 && variation == 0x60
+        case .postalCode: matches = typeClass == 2 || (typeClass == 1 && variation == 0x70)
+        case .address: matches = typeClass == 1 && variation == 0x70
+        }
+
+        if matches {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "The \(purpose.rawValue) field declares a matching input type.")
+        }
+        return RuleHelper.warning(ruleID: id, name: title, description: description, node: node,
+                                  message: "The field collects a \(purpose.rawValue) but its input type does not say so, so autofill and assistive features cannot identify it.",
+                                  remediation: "Set the matching inputType and autofillHints (textContentType / autoComplete in React Native, autofillHints in Flutter).")
+    }
+
+    private func purpose(of node: AccessibilityNode) -> Purpose? {
+        let text = [node.label, node.placeholderValue ?? "", node.identifier]
+            .joined(separator: " ")
+            .lowercased()
+        if text.contains("email") || text.contains("e-mail") { return .email }
+        if text.contains("password") || text.contains("passcode") { return .password }
+        if ["phone", "mobile", "telephone"].contains(where: text.contains) { return .phone }
+        if ["postcode", "postal code", "zip", "pincode", "pin code"].contains(where: text.contains) { return .postalCode }
+        if ["first name", "last name", "full name", "surname", "given name", "family name"].contains(where: text.contains) { return .name }
+        if text.contains("address") || text.contains("street") { return .address }
+        return nil
+    }
 }

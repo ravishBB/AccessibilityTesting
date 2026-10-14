@@ -9,7 +9,7 @@
 import Foundation
 import ImageIO
 
-enum ReportImageEncoder {
+nonisolated enum ReportImageEncoder {
 
     struct EncodedImage {
         let data: Data

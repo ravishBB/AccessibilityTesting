@@ -2,31 +2,10 @@
 //  KeyboardAndFormProbes.swift
 //  AccessibilityScanner
 //
-//  Runtime probes for keyboard operability (BB41035, BB41067) and form error
-//  messages (BB40095 to BB40097). Same result policy as RuntimeProbes.swift:
-//  Not tested when a probe cannot run, Validate only when it ran but the
-//  evidence is ambiguous.
-//
+
 
 import Foundation
 import CoreGraphics
-
-// MARK: - Safety
-
-/// Controls whose label suggests an action that is hard to undo. The probes
-/// never activate these.
-enum ProbeSafety {
-
-    private static let destructiveCues = [
-        "delete", "remove", "erase", "clear", "reset", "sign out", "log out", "logout",
-        "buy", "purchase", "pay", "order", "unsubscribe", "cancel subscription", "deactivate"
-    ]
-
-    static func isSafeToActivate(_ node: AccessibilityNode) -> Bool {
-        let text = (node.label + " " + node.identifier).lowercased()
-        return !destructiveCues.contains { text.contains($0) }
-    }
-}
 
 extension ProbeNodes {
 
@@ -99,7 +78,7 @@ final class KeyboardActivationProbe {
             .filter {
                 ($0.role == .button || $0.role == .link) &&
                 $0.visible && $0.enabled &&
-                ProbeSafety.isSafeToActivate($0) &&
+                ActionSafety.isSafeToActivate($0) &&
                 !alreadyTested.contains(ProbeNodes.probeKey($0)) &&
                 NavigationAction(node: $0).xpath != nil
             }
@@ -255,7 +234,7 @@ final class KeyboardActivationProbe {
 
 // MARK: - Error messages
 
-enum ErrorMessageHeuristics {
+nonisolated enum ErrorMessageHeuristics {
 
     private static let errorCues = [
         "error", "invalid", "incorrect", "required", "must", "cannot", "can't", "can not",
@@ -298,9 +277,12 @@ final class ErrorMessageProbe {
     /// Probe key of the submit control this run activated.
     private(set) var testedKeys = Set<String>()
 
+    /// Buttons whose empty submission only triggers validation. Buttons that
+    /// save, send, submit or confirm are never used: an empty optional field
+    /// does not mean the form is harmless to submit.
     private static let submitCues = [
-        "submit", "sign in", "log in", "login", "continue", "next", "save", "register",
-        "sign up", "send", "create account", "verify", "confirm", "apply"
+        "sign in", "log in", "login", "continue", "next", "register", "sign up",
+        "create account", "verify"
     ]
 
     init(appium: AppiumClient, alreadyTested: Set<String> = []) {
@@ -323,9 +305,13 @@ final class ErrorMessageProbe {
         }
         guard untouched else { return [] }
 
+        let topOfForm = inputs.map(\.frame.minY).min() ?? 0
+
         guard let submit = nodes.first(where: { node in
-            guard node.role == .button, node.enabled, ProbeSafety.isSafeToActivate(node),
+            guard node.role == .button, node.enabled, ActionSafety.isSafeToActivate(node),
                   NavigationAction(node: node).xpath != nil else { return false }
+            // The button must belong to the form: below its first field.
+            guard node.frame.minY >= topOfForm else { return false }
             let text = (node.label + " " + node.identifier).lowercased()
             return Self.submitCues.contains { text.contains($0) }
         }), let xpath = NavigationAction(node: submit).xpath else { return [] }
@@ -417,12 +403,15 @@ final class ErrorMessageProbe {
         }
     }
 
-    /// Closes a native alert so the next step starts from the form.
+    /// Closes a native alert so the next step starts from the form. Only a
+    /// Cancel/Close/OK-style button is pressed, never one that accepts
+    /// ("Submit anyway", "Allow", "Delete").
     private func dismissAlert(in root: AccessibilityNode) async {
-        guard let alert = ProbeNodes.all(in: root).first(where: { $0.type.contains("Alert") }),
-              let button = ProbeNodes.all(in: alert).first(where: {
-                  $0.role == .button && NavigationAction(node: $0).xpath != nil
-              }),
+        guard let alert = ProbeNodes.all(in: root).first(where: { $0.type.contains("Alert") }) else { return }
+        let buttons = ProbeNodes.all(in: alert).filter {
+            $0.role == .button && NavigationAction(node: $0).xpath != nil
+        }
+        guard let button = ActionSafety.dismissButton(in: buttons),
               let xpath = NavigationAction(node: button).xpath else { return }
 
         try? await appium.tapElement(usingXPath: xpath)

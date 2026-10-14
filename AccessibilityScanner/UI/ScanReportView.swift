@@ -168,7 +168,13 @@ struct ScanReportView: View {
                 HStack(spacing: 22) {
                     metadata(title: "Bundle ID", value: report.bundleID)
                     metadata(title: "Device", value: report.deviceName)
-                    metadata(title: "Checks", value: "\(report.automatedVerdictRuleCount) of \(report.rulesExecuted) rules gave results")
+                    if let environment = report.environment {
+                        metadata(title: "Platform", value: environment.osDescription)
+                        if let appVersion = environment.appVersionDescription {
+                            metadata(title: "App version", value: appVersion)
+                        }
+                    }
+                    metadata(title: "Checks", value: "\(report.automatedVerdictRuleCount) of \(report.verdictCapableRuleCount) \(report.platformName) rules gave results")
                     metadata(title: "Duration", value: formattedDuration)
                     metadata(
                         title: "Started",
@@ -177,6 +183,8 @@ struct ScanReportView: View {
                 }
                 .padding(.vertical, 2)
             }
+
+
         }
     }
 

@@ -8,7 +8,7 @@
 import Foundation
 import AppKit
 
-final class ScreenshotAnnotator {
+nonisolated final class ScreenshotAnnotator {
 
     // MARK: - Main Annotation Method
 
@@ -23,7 +23,7 @@ final class ScreenshotAnnotator {
 
 
         guard let sourceImage = NSImage(data: imageData) else {
-            print("ANNOTATOR: Could not decode source image.")
+            trace("ANNOTATOR: Could not decode source image.", Log.reports)
             return nil
         }
 
@@ -33,7 +33,7 @@ final class ScreenshotAnnotator {
             hierarchyWidth > 0,
             hierarchyHeight > 0
         else {
-            print("ANNOTATOR: Invalid dimensions.")
+            trace("ANNOTATOR: Invalid dimensions.", Log.reports)
             return nil
         }
 
@@ -42,7 +42,7 @@ final class ScreenshotAnnotator {
             context: nil,
             hints: nil
         ) else {
-            print("ANNOTATOR: Could not obtain CGImage.")
+            trace("ANNOTATOR: Could not obtain CGImage.", Log.reports)
             return nil
         }
 
@@ -50,11 +50,11 @@ final class ScreenshotAnnotator {
         let pixelHeight = sourceCGImage.height
 
         guard pixelWidth > 0, pixelHeight > 0 else {
-            print("ANNOTATOR: Invalid screenshot pixel dimensions.")
+            trace("ANNOTATOR: Invalid screenshot pixel dimensions.", Log.reports)
             return nil
         }
 
-        print("""
+        trace("""
         ==========================================
         SCREENSHOT ANNOTATOR
         ==========================================
@@ -70,18 +70,18 @@ final class ScreenshotAnnotator {
 
         Accessibility hierarchy:
             \(hierarchyWidth) × \(hierarchyHeight)
-        """)
+        """, Log.reports)
 
         let annotations = ScreenshotAnnotation.makeAnnotations(
             from: evaluations
         )
 
-        print("""
+        trace("""
         Issues:
             \(annotations.count)
 
         ==========================================
-        """)
+        """, Log.reports)
 
         // ---------------------------------------------------------
         // 4. Create bitmap
@@ -100,7 +100,7 @@ final class ScreenshotAnnotator {
             bytesPerRow: 0,
             bitsPerPixel: 0
         ) else {
-            print("ANNOTATOR: Could not create bitmap.")
+            trace("ANNOTATOR: Could not create bitmap.", Log.reports)
             return nil
         }
 
@@ -112,7 +112,7 @@ final class ScreenshotAnnotator {
         guard let graphicsContext =
                 NSGraphicsContext(bitmapImageRep: bitmap)
         else {
-            print("ANNOTATOR: Could not create graphics context.")
+            trace("ANNOTATOR: Could not create graphics context.", Log.reports)
             return nil
         }
 
@@ -163,7 +163,7 @@ final class ScreenshotAnnotator {
             height: screenshotPixelHeight
         )
 
-        print("""
+        trace("""
         ==========================================
         COORDINATE SYSTEM
         ==========================================
@@ -181,7 +181,7 @@ final class ScreenshotAnnotator {
             \(scaleY)
 
         ==========================================
-        """)
+        """, Log.reports)
 
         // ---------------------------------------------------------
         // 7. Draw every issue
@@ -191,7 +191,7 @@ final class ScreenshotAnnotator {
 
             let frame = annotation.frame
 
-            print("""
+            trace("""
             ==========================================
             ISSUE #\(annotation.number)
             ==========================================
@@ -207,7 +207,7 @@ final class ScreenshotAnnotator {
                 y = \(frame.origin.y)
                 width = \(frame.width)
                 height = \(frame.height)
-            """)
+            """, Log.reports)
 
             let convertedX =
                 frame.origin.x * scaleX
@@ -241,13 +241,13 @@ final class ScreenshotAnnotator {
                 height: convertedHeight
             )
 
-            print("""
+            trace("""
             Converted frame:
                 x = \(convertedRect.origin.x)
                 y = \(convertedRect.origin.y)
                 width = \(convertedRect.width)
                 height = \(convertedRect.height)
-            """)
+            """, Log.reports)
 
             // -----------------------------------------------------
             // Clip to screenshot
@@ -263,21 +263,21 @@ final class ScreenshotAnnotator {
                 clippedRect.width > 1,
                 clippedRect.height > 1
             else {
-                print(
+                trace(
                     "ANNOTATOR: Issue #\(annotation.number) " +
                     "is outside screenshot."
-                )
+                , Log.reports)
 
                 continue
             }
 
-            print("""
+            trace("""
             Clipped frame:
                 x = \(clippedRect.origin.x)
                 y = \(clippedRect.origin.y)
                 width = \(clippedRect.width)
                 height = \(clippedRect.height)
-            """)
+            """, Log.reports)
 
 
             drawRectangle(
@@ -293,9 +293,9 @@ final class ScreenshotAnnotator {
                 severity: annotation.severity
             )
 
-            print(
+            trace(
                 "ANNOTATOR: Issue #\(annotation.number) drawn."
-            )
+            , Log.reports)
         }
 
         graphicsContext.flushGraphics()
@@ -308,21 +308,21 @@ final class ScreenshotAnnotator {
                     properties: [:]
                 )
         else {
-            print(
+            trace(
                 "ANNOTATOR: Could not create PNG representation."
-            )
+            , Log.reports)
 
             return nil
         }
 
-        print("""
+        trace("""
 
         PNG bytes:
             \(pngData.count)
 
         Pixel dimensions:
             \(pixelWidth) × \(pixelHeight)
-        """)
+        """, Log.reports)
 
         return pngData
     }

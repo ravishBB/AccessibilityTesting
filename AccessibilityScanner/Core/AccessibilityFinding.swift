@@ -8,7 +8,7 @@
 import Foundation
 import CoreGraphics
 
-struct AccessibilityFinding {
+nonisolated struct AccessibilityFinding {
 
     let ruleID: String
     let severity: Severity

@@ -31,6 +31,8 @@ final class WDAElementParser: NSObject, XMLParserDelegate {
         let accessible: Bool
         let focused: Bool
 
+        var customActions: [String] = []
+
         var children: [MutableNode] = []
 
         init(
@@ -92,6 +94,8 @@ final class WDAElementParser: NSObject, XMLParserDelegate {
             if result.role == .other, let role = roleFromTraits(traits) {
                 result.roleOverride = role
             }
+
+            result.semantics.customActions = customActions
 
             return result
         }
@@ -254,6 +258,14 @@ final class WDAElementParser: NSObject, XMLParserDelegate {
             accessible: accessible,
             focused: focused
         )
+
+        // Present when includeCustomActionsInPageSource is on.
+        if let actions = attributeDict["customActions"], !actions.isEmpty {
+            node.customActions = actions
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
 
         if let parent = stack.last {
 

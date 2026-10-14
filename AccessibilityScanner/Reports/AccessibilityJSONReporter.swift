@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct AccessibilityJSONReporter {
+nonisolated struct AccessibilityJSONReporter {
 
     static func generateReport(
         findings: [AccessibilityFinding]
@@ -75,14 +75,14 @@ struct AccessibilityJSONReporter {
 
 // MARK: - JSON Models
 
-private struct JSONReport: Codable {
+private nonisolated struct JSONReport: Codable {
 
     let summary: Summary
 
     let violations: [JSONViolation]
 }
 
-private struct Summary: Codable {
+private nonisolated struct Summary: Codable {
 
     let totalViolations: Int
 
@@ -93,7 +93,7 @@ private struct Summary: Codable {
     let info: Int
 }
 
-private struct JSONViolation: Codable {
+private nonisolated struct JSONViolation: Codable {
 
     let ruleID: String
 
@@ -106,7 +106,7 @@ private struct JSONViolation: Codable {
     let remediation: String
 }
 
-private struct JSONElement: Codable {
+private nonisolated struct JSONElement: Codable {
 
     let type: String
 
@@ -119,7 +119,7 @@ private struct JSONElement: Codable {
     let frame: JSONFrame
 }
 
-private struct JSONFrame: Codable {
+private nonisolated struct JSONFrame: Codable {
 
     let x: Double
 

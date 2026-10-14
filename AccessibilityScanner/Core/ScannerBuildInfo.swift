@@ -5,7 +5,7 @@
 
 import Foundation
 
-enum ScannerBuildInfo {
+nonisolated enum ScannerBuildInfo {
 
     static let productName = "Accessibility Scanner"
 

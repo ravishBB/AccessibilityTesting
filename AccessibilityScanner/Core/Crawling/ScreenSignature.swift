@@ -8,7 +8,7 @@
 import Foundation
 import CoreGraphics
 
-struct ScreenSignature: Hashable {
+nonisolated struct ScreenSignature: Hashable {
 
     let value: String
 

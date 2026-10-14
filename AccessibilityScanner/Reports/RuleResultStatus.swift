@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum RuleResultStatus: String, Codable, CaseIterable {
+nonisolated enum RuleResultStatus: String, Codable, CaseIterable {
     case pass
     case fail
     case warning

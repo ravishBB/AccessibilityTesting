@@ -11,7 +11,7 @@ import Foundation
 
 // MARK: - Fingerprint
 
-enum FindingFingerprint {
+nonisolated enum FindingFingerprint {
 
     /// Stable 12-hex-character identifier for "this rule failing on this element
     /// on this screen". It deliberately ignores layout position, scan time and
@@ -60,7 +60,7 @@ enum FindingFingerprint {
 
 // MARK: - Models
 
-struct FindingOccurrence: Identifiable {
+nonisolated struct FindingOccurrence: Identifiable {
     var id: UUID { evaluation.id }
     let fingerprint: String
     let screenID: UUID
@@ -68,7 +68,7 @@ struct FindingOccurrence: Identifiable {
     let evaluation: AccessibilityRuleEvaluation
 }
 
-struct GroupedFinding: Identifiable {
+nonisolated struct GroupedFinding: Identifiable {
     let id: String
     let ruleID: String
     let ruleName: String
@@ -99,7 +99,7 @@ struct GroupedFinding: Identifiable {
 
 // MARK: - Grouping
 
-struct FindingGrouping {
+nonisolated struct FindingGrouping {
 
     /// Every non-pass group, most important first.
     let groups: [GroupedFinding]

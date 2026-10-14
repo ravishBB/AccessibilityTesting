@@ -4,13 +4,18 @@
 //  Created by Ravish Kumar on 22/09/26.
 
 import Foundation
+import os
 import CoreGraphics
 
 final class AppiumClient {
 
     private let baseURL: URL
     private(set) var sessionID: String?
+    #if DEBUG
     private let showXcodeLog = true
+    #else
+    private let showXcodeLog = false
+    #endif
 
     /// Platform of the active session. Set by `createSession`.
     private(set) var platform: MobilePlatform = .ios
@@ -18,10 +23,36 @@ final class AppiumClient {
     /// Pixels per dp on Android (1 on iOS, where WDA already reports points).
     private(set) var displayScale: CGFloat = 1
 
+    /// Reported by the server and session, for the report's environment.
+    private(set) var serverVersion: String?
+    private(set) var deviceOSVersion: String?
+    private(set) var deviceModel: String?
+    private(set) var automationName: String?
+
     init(baseURL: URL) {
         self.baseURL = baseURL
     }
     
+    /// Fails fast with a clear message when no Appium server is listening,
+    /// instead of a generic connection error after a long timeout.
+    func checkServer() async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("status"))
+        request.timeoutInterval = 5
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode < 500 else {
+                throw AppiumError.invalidResponse
+            }
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let value = json?["value"] as? [String: Any]
+            serverVersion = (value?["build"] as? [String: Any])?["version"] as? String
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw AppiumError.serverUnreachable(baseURL.absoluteString)
+        }
+    }
+
     func createSession(
         configuration: ScannerConfiguration
     ) async throws -> String {
@@ -44,8 +75,13 @@ final class AppiumClient {
                 "Content-Type"
         )
 
+        // The first WebDriverAgent build on a physical iPhone can take
+        // several minutes; UiAutomator2 installs its server on first use.
         request.timeoutInterval =
-            120
+            configuration.platform == .ios ? 600 : 240
+
+        // A session left by a crashed or stopped scan holds the device.
+        await releaseSessions(forUDID: configuration.udid)
 
         let body = sessionBody(for: configuration)
 
@@ -65,9 +101,9 @@ final class AppiumClient {
                     for: request
                 )
 
-            print(
+            trace(
                 "Appium response received."
-            )
+            , Log.appium)
 
             let statusCode =
                 (
@@ -75,9 +111,9 @@ final class AppiumClient {
                     as? HTTPURLResponse
                 )?.statusCode ?? 0
 
-            print(
+            trace(
                 "HTTP Status: \(statusCode)"
-            )
+            , Log.appium)
 
             if (200...299).contains(
                 statusCode
@@ -93,9 +129,9 @@ final class AppiumClient {
                     throw AppiumError.invalidResponse
                 }
 
-                print(
+                trace(
                     "Appium JSON response received."
-                )
+                , Log.appium)
 
                 if let value =
                     json["value"]
@@ -107,6 +143,8 @@ final class AppiumClient {
 
                     self.sessionID =
                         sessionID
+                    Self.openSessions.append((baseURL, sessionID))
+                    RememberedSessions.remember(sessionID, udid: configuration.udid)
 
                     configureSession(
                         capabilities: value["capabilities"] as? [String: Any],
@@ -122,6 +160,8 @@ final class AppiumClient {
 
                     self.sessionID =
                         sessionID
+                    Self.openSessions.append((baseURL, sessionID))
+                    RememberedSessions.remember(sessionID, udid: configuration.udid)
 
                     configureSession(
                         capabilities: json["capabilities"] as? [String: Any],
@@ -130,23 +170,31 @@ final class AppiumClient {
 
                     return sessionID
                 }
-                print(
+                trace(
                     String(
                         data: data,
                         encoding: .utf8
                     ) ?? ""
-                )
+                , Log.appium)
 
                 throw AppiumError.invalidResponse
             }
 
+            var message = extractErrorMessage(from: data)
+            Log.appium.error("Session could not be created (HTTP \(statusCode)): \(message, privacy: .public)")
+
+            // The usual physical-iPhone failure: WebDriverAgent cannot be
+            // signed because no team is configured.
+            let lower = message.lowercased()
+            if configuration.platform == .ios,
+               configuration.xcodeOrgID.isEmpty,
+               lower.contains("xcodebuild") || lower.contains("code 65") || lower.contains("signing") || lower.contains("webdriveragent") {
+                message += "\n\nWebDriverAgent could not be built for this device. For a physical iPhone, enter your Apple Team ID in Settings (⌘,) so it can be signed."
+            }
+
             throw AppiumError.appiumError(
-                statusCode:
-                    statusCode,
-                message:
-                    extractErrorMessage(
-                        from: data
-                    )
+                statusCode: statusCode,
+                message: message
             )
 
         } catch let error
@@ -156,11 +204,80 @@ final class AppiumClient {
 
         } catch {
 
+            // Timed out or stopped: Appium may still finish creating the
+            // session after we gave up. Release it so the device is not held.
+            let udid = configuration.udid
+            await DeviceRestore.run {
+                await self.releaseSessions(forUDID: udid)
+            }
             throw error
         }
     }
-    
+
+    /// Deletes sessions left on the device by an earlier scan: first the
+    /// ones this app created and remembered (always works), then any others
+    /// the server lists (Appium 3 only lists sessions when started with
+    /// `--allow-insecure session_discovery`).
+    func releaseSessions(forUDID udid: String) async {
+        for sessionID in RememberedSessions.ids(forUDID: udid) {
+            var delete = URLRequest(url: baseURL.appendingPathComponent("session").appendingPathComponent(sessionID))
+            delete.httpMethod = "DELETE"
+            delete.timeoutInterval = 30
+            _ = try? await URLSession.shared.data(for: delete)
+            RememberedSessions.forget(sessionID)
+            Log.appium.info("Released remembered Appium session \(sessionID, privacy: .public)")
+        }
+
+        for path in ["appium/sessions", "sessions"] {
+            var request = URLRequest(url: baseURL.appendingPathComponent(path))
+            request.timeoutInterval = 10
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let sessions = json["value"] as? [[String: Any]]
+            else { continue }
+
+            for session in sessions {
+                guard let id = session["id"] as? String,
+                      let capabilities = session["capabilities"] as? [String: Any],
+                      (capabilities["udid"] as? String ?? capabilities["appium:udid"] as? String) == udid
+                else { continue }
+                var delete = URLRequest(url: baseURL.appendingPathComponent("session").appendingPathComponent(id))
+                delete.httpMethod = "DELETE"
+                delete.timeoutInterval = 30
+                _ = try? await URLSession.shared.data(for: delete)
+                Log.appium.info("Released leftover Appium session \(id, privacy: .public) for \(udid, privacy: .private)")
+            }
+            return
+        }
+    }
+
+    // MARK: - Quit
+
+    /// Sessions open in this process, deleted when the app quits.
+    private static var openSessions: [(baseURL: URL, sessionID: String)] = []
+
+    /// Deletes open sessions before the app exits. Blocks for at most a few
+    /// seconds: it runs from the terminate notification, where async work
+    /// would never complete.
+    static func deleteOpenSessionsBeforeQuit() {
+        let group = DispatchGroup()
+        for (baseURL, sessionID) in openSessions {
+            var request = URLRequest(url: baseURL.appendingPathComponent("session").appendingPathComponent(sessionID))
+            request.httpMethod = "DELETE"
+            request.timeoutInterval = 3
+            group.enter()
+            URLSession.shared.dataTask(with: request) { _, _, _ in group.leave() }.resume()
+        }
+        _ = group.wait(timeout: .now() + 4)
+        openSessions.removeAll()
+    }
+
     func getScreenshot() async throws -> Data {
+        try await retryingTransientFailure { try await self.getScreenshotOnce() }
+    }
+
+    private func getScreenshotOnce() async throws -> Data {
 
         guard let sessionID = sessionID else {
             throw AppiumError.noActiveSession
@@ -214,6 +331,10 @@ final class AppiumClient {
 
     // MARK: - Get Source
     func getSource() async throws -> String {
+        try await retryingTransientFailure { try await self.getSourceOnce() }
+    }
+
+    private func getSourceOnce() async throws -> String {
 
         guard let sessionID else {
             throw AppiumError.noActiveSession
@@ -269,13 +390,13 @@ final class AppiumClient {
             throw AppiumError.invalidResponse
         }
 
-        print(
+        trace(
             "UI source received."
-        )
+        , Log.appium)
 
-        print(
+        trace(
             "Source length: \(source.count)"
-        )
+        , Log.appium)
 
         return source
     }
@@ -283,6 +404,10 @@ final class AppiumClient {
     // MARK: - Device Orientation
 
     func getOrientation() async throws -> String {
+        try await retryingTransientFailure { try await self.getOrientationOnce() }
+    }
+
+    private func getOrientationOnce() async throws -> String {
         guard let sessionID else {
             throw AppiumError.noActiveSession
         }
@@ -361,10 +486,10 @@ final class AppiumClient {
         request.timeoutInterval =
             30
 
-        print("")
-        print(
+        trace("", Log.appium)
+        trace(
             "Deleting Appium session..."
-        )
+        , Log.appium)
 
         let (
             data,
@@ -379,15 +504,41 @@ final class AppiumClient {
             data: data
         )
         
+        Self.openSessions.removeAll { $0.sessionID == sessionID }
+        RememberedSessions.forget(sessionID)
         self.sessionID =
             nil
 
-        print(
-            "Appium session deleted."
-        )
+        Log.appium.info("Appium session deleted.")
     }
 
     // MARK: - Validate Response
+    /// Retries a read-only request once after a transient failure: a dropped
+    /// connection, a timeout, or a 5xx from a WebDriverAgent/UiAutomator2
+    /// server that is restarting. One blip must not abort a 100-screen crawl.
+    private func retryingTransientFailure<T>(_ operation: () async throws -> T) async throws -> T {
+        do {
+            return try await operation()
+        } catch {
+            guard Self.isTransient(error) else { throw error }
+            Log.appium.info("Retrying after transient Appium error: \(error.localizedDescription, privacy: .public)")
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            return try await operation()
+        }
+    }
+
+    private static func isTransient(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let urlError = error as? URLError {
+            return [.timedOut, .networkConnectionLost, .cannotConnectToHost, .notConnectedToInternet]
+                .contains(urlError.code)
+        }
+        if case AppiumError.appiumError(let statusCode, _) = error {
+            return statusCode >= 500
+        }
+        return false
+    }
+
     private func validateResponse(
         _ response: URLResponse,
         data: Data
@@ -425,6 +576,39 @@ final class AppiumClient {
         }
     }
     
+    /// Presses at `start`, slides to `end` and releases there: the gesture a
+    /// user makes to cancel an accidental press (pointer cancellation).
+    func pressAndSlideAway(from start: CGPoint, to end: CGPoint) async throws {
+        guard let sessionID = sessionID else {
+            throw AppiumError.noActiveSession
+        }
+        var request = URLRequest(url: baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("actions"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15
+
+        let payload: [String: Any] = [
+            "actions": [[
+                "type": "pointer",
+                "id": "a11yCancellationPointer",
+                "parameters": ["pointerType": "touch"],
+                "actions": [
+                    ["type": "pointerMove", "duration": 0, "x": Int(start.x * displayScale), "y": Int(start.y * displayScale)],
+                    ["type": "pointerDown", "button": 0],
+                    ["type": "pause", "duration": 150],
+                    ["type": "pointerMove", "duration": 250, "x": Int(end.x * displayScale), "y": Int(end.y * displayScale)],
+                    ["type": "pointerUp", "button": 0]
+                ]
+            ]]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+    }
+
     func tap(at point: CGPoint) async throws {
 
         guard let sessionID = sessionID else {
@@ -815,7 +999,7 @@ final class AppiumClient {
             let (data, response) = try await URLSession.shared.data(for: request)
             try validateResponse(response, data: data)
         } catch {
-            print("Warning: could not activate app \(bundleID): \(error.localizedDescription)")
+            trace("Warning: could not activate app \(bundleID): \(error.localizedDescription)", Log.appium)
         }
     }
 
@@ -840,7 +1024,41 @@ final class AppiumClient {
         }
     }
 
-    private func executeMobile(_ script: String, arguments: [String: Any]) async throws {
+    /// Bundle ID (iOS) or package (Android) of the app in the foreground, or
+    /// nil when the driver cannot report it.
+    func foregroundAppID() async -> String? {
+        switch platform {
+        case .ios:
+            let info = try? await executeMobile("mobile: activeAppInfo", arguments: [:]) as? [String: Any]
+            return info?["bundleId"] as? String
+        case .android:
+            if let package = try? await executeMobile("mobile: getCurrentPackage", arguments: [:]) as? String {
+                return package
+            }
+            return try? await legacyCurrentPackage()
+        }
+    }
+
+    /// Older UiAutomator2 drivers only expose the current package here.
+    private func legacyCurrentPackage() async throws -> String? {
+        guard let sessionID else { throw AppiumError.noActiveSession }
+        let url = baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("appium")
+            .appendingPathComponent("device")
+            .appendingPathComponent("current_package")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return json?["value"] as? String
+    }
+
+    @discardableResult
+    private func executeMobile(_ script: String, arguments: [String: Any]) async throws -> Any? {
         guard let sessionID else {
             throw AppiumError.noActiveSession
         }
@@ -861,6 +1079,8 @@ final class AppiumClient {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return json?["value"]
     }
 
     // MARK: - Platform support
@@ -873,6 +1093,23 @@ final class AppiumClient {
         case .android:
             return AndroidElementParser(displayScale: displayScale)
         }
+    }
+
+    /// Simulator UDIDs are UUIDs (8-4-4-4-12); physical ones are not.
+    static func isSimulatorUDID(_ udid: String) -> Bool {
+        let parts = udid.split(separator: "-").map(\.count)
+        return parts == [8, 4, 4, 4, 12]
+    }
+
+    /// A stable port in 8101–8199 for this device (FNV-1a of the UDID).
+    /// Stays clear of 8200, UiAutomator2's default system port.
+    static func wdaPort(forUDID udid: String) -> Int {
+        var hash: UInt32 = 2_166_136_261
+        for byte in udid.utf8 {
+            hash ^= UInt32(byte)
+            hash = hash &* 16_777_619
+        }
+        return 8101 + Int(hash % 99)
     }
 
     private func sessionBody(
@@ -892,14 +1129,37 @@ final class AppiumClient {
                 "appium:bundleId": configuration.bundleID,
                 "appium:noReset": true,
                 "appium:autoLaunch": configuration.autoLaunch,
+                // Full and Limited scans start the app from its launch screen:
+                // with noReset alone, an app that is already running would
+                // resume on whatever page was open. Current Page mode
+                // (autoLaunch false) attaches to the open page instead.
+                "appium:forceAppLaunch": configuration.autoLaunch,
                 "appium:newCommandTimeout": 300,
-                "appium:xcodeOrgId": configuration.xcodeOrgID,
-                "appium:xcodeSigningId": configuration.xcodeSigningID,
                 "appium:showXcodeLog": showXcodeLog,
                 "appium:settings": [
-                    "includeHittableInPageSource": true
+                    "includeHittableInPageSource": true,
+                    // Custom accessibility actions are the VoiceOver
+                    // alternative to swipe and multi-finger gestures.
+                    "includeCustomActionsInPageSource": true
                 ]
             ]
+
+            // A physical iPhone's WebDriverAgent is forwarded to a port on
+            // this Mac (8100 by default). Simulators also use 8100 directly,
+            // so with both on 8100 a simulator scan reaches the phone. Give
+            // each physical device its own forwarding port; simulators keep
+            // 8100 (changing theirs would force a WebDriverAgent rebuild).
+            if !Self.isSimulatorUDID(configuration.udid) {
+                capabilities["appium:wdaLocalPort"] = Self.wdaPort(forUDID: configuration.udid)
+            }
+
+            // Only physical iPhones need WebDriverAgent signed. Sending an
+            // empty team ID would override a WebDriverAgent already set up
+            // in Xcode, so it is only sent once set in Settings.
+            if !configuration.xcodeOrgID.isEmpty {
+                capabilities["appium:xcodeOrgId"] = configuration.xcodeOrgID
+                capabilities["appium:xcodeSigningId"] = configuration.xcodeSigningID
+            }
 
         case .android:
             capabilities = [
@@ -947,6 +1207,17 @@ final class AppiumClient {
         platform = configuration.platform
         displayScale = 1
 
+        deviceOSVersion = capabilities?["platformVersion"] as? String
+            ?? capabilities?["appium:platformVersion"] as? String
+        automationName = capabilities?["automationName"] as? String
+            ?? capabilities?["appium:automationName"] as? String
+        if let manufacturer = capabilities?["deviceManufacturer"] as? String,
+           let model = capabilities?["deviceModel"] as? String {
+            deviceModel = "\(manufacturer) \(model)"
+        } else {
+            deviceModel = capabilities?["deviceModel"] as? String
+        }
+
         guard platform == .android else { return }
 
         func number(_ any: Any?) -> Double? {
@@ -963,10 +1234,10 @@ final class AppiumClient {
         } else if let dpi = configuration.displayDensity, dpi > 0 {
             displayScale = CGFloat(Double(dpi) / 160.0)
         } else {
-            print("Warning: Android display density unavailable; frames stay in pixels.")
+            trace("Warning: Android display density unavailable; frames stay in pixels.", Log.appium)
         }
 
-        print("Android display scale: \(displayScale)")
+        trace("Android display scale: \(displayScale)", Log.appium)
     }
 
     private func windowRectPixels() async throws -> CGRect {
@@ -1109,6 +1380,8 @@ enum AppiumError:
 
     case invalidResponse
 
+    case serverUnreachable(String)
+
     case appiumError(
         statusCode: Int,
         message: String
@@ -1126,6 +1399,10 @@ enum AppiumError:
 
             return "Appium returned an invalid response."
 
+        case .serverUnreachable(let url):
+
+            return "No Appium server is running at \(url). Start it in Terminal with `appium`, or change the server URL in Settings (⌘,)."
+
         case .appiumError(
             let statusCode,
             let message
@@ -1137,5 +1414,33 @@ enum AppiumError:
             \(message)
             """
         }
+    }
+}
+
+/// Session IDs this app created, per device, kept until the session is
+/// deleted. A crash or force-quit leaves them here so the next scan of the
+/// device can release them.
+nonisolated enum RememberedSessions {
+    private static let key = "appium.rememberedSessions"
+
+    private static var all: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: key) }
+    }
+
+    static func remember(_ sessionID: String, udid: String) {
+        var values = all
+        values[sessionID] = udid
+        all = values
+    }
+
+    static func forget(_ sessionID: String) {
+        var values = all
+        values.removeValue(forKey: sessionID)
+        all = values
+    }
+
+    static func ids(forUDID udid: String) -> [String] {
+        all.filter { $0.value == udid }.map(\.key)
     }
 }

@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct ScreenScanResult: Identifiable, Codable {
+nonisolated struct ScreenScanResult: Identifiable, Codable {
     let id: UUID
     let name: String
     let signature: String

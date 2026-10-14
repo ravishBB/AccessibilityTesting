@@ -8,7 +8,7 @@
 
 import Foundation
 
-protocol AccessibilityRule {
+nonisolated protocol AccessibilityRule {
 
     var id: String { get }
 
@@ -24,7 +24,7 @@ protocol AccessibilityRule {
 // Rules that require the complete accessibility hierarchy rather than a
 // single element implement this protocol. These rules are evaluated once
 // after the normal per-node rules have finished.
-protocol ScreenAccessibilityRule: AccessibilityRule {
+nonisolated protocol ScreenAccessibilityRule: AccessibilityRule {
 
     func evaluate(
         rootNode: AccessibilityNode
@@ -32,7 +32,7 @@ protocol ScreenAccessibilityRule: AccessibilityRule {
 }
 
 /// A screen-level rule that also needs the rendered screenshot.
-protocol ContextualScreenAccessibilityRule {
+nonisolated protocol ContextualScreenAccessibilityRule {
 
     func evaluate(
         rootNode: AccessibilityNode,
