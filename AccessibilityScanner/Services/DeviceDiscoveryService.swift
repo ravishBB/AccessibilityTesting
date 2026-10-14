@@ -7,7 +7,6 @@
 
 import Foundation
 
-/// Nonisolated: its xcrun/adb calls block, so callers run it off the main actor.
 nonisolated final class DeviceDiscoveryService {
 
     // MARK: - Public
@@ -16,9 +15,6 @@ nonisolated final class DeviceDiscoveryService {
 
         var devices: [Device] = []
         var firstError: Error?
-
-        // Each source is independent: a Mac without simctl/devicectl (Command
-        // Line Tools only) must still list its Android devices.
         do {
             devices.append(contentsOf: try discoverSimulators())
         } catch {
@@ -46,9 +42,6 @@ nonisolated final class DeviceDiscoveryService {
     }
 
     // MARK: - Simulators
-    /// iOS simulators from `simctl list -j`. Names such as
-    /// "iPad Pro (12.9-inch) (6th generation)" break the text output's
-    /// parentheses, and the text output also lists watchOS/tvOS devices.
     private func discoverSimulators() throws -> [Device] {
         let output = try runCommand(
             executable: "/usr/bin/xcrun",
@@ -167,10 +160,6 @@ nonisolated final class DeviceDiscoveryService {
     }
 
     // MARK: - Physical Devices
-
-    /// Physical iPhones and iPads from `devicectl --json-output`. Appium
-    /// needs the hardware UDID, which the table output does not show
-    /// reliably (it may show the CoreDevice identifier instead).
     private func discoverPhysicalDevices() throws -> [Device] {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("accessibility-scanner-devices-\(UUID().uuidString).json")
@@ -194,8 +183,6 @@ nonisolated final class DeviceDiscoveryService {
             let connection = entry["connectionProperties"] as? [String: Any] ?? [:]
 
             guard (hardware["platform"] as? String) == "iOS",
-                  // devicectl also lists booted simulators ("simulated");
-                  // those come from simctl.
                   (hardware["reality"] as? String) == "physical",
                   let udid = hardware["udid"] as? String
             else { return nil }

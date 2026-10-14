@@ -8,9 +8,6 @@ import Foundation
 import CoreGraphics
 
 extension ProbeNodes {
-
-    /// Fingerprint of the visible content, including control state, ignoring
-    /// the keyboard-focus flag so moving focus does not look like a change.
     static func contentSignature(in root: AccessibilityNode) -> Int {
         var hasher = Hasher()
         for node in all(in: root) where node.visible {
@@ -41,13 +38,7 @@ final class KeyboardActivationProbe {
     private let focusResult: KeyboardFocusTester.Result?
     private let alreadyTested: Set<String>
 
-    /// Probe keys of the controls this run activated.
     private(set) var testedKeys = Set<String>()
-
-    /// `focusResult` is the keyboard focus traversal of the same screen. When
-    /// given, only controls that traversal reached are tried, and the number of
-    /// Tabs per control is bounded by the traversal length: every Tab costs a
-    /// full hierarchy fetch.
     init(
         appium: AppiumClient,
         maximumControls: Int = 3,
@@ -160,8 +151,6 @@ final class KeyboardActivationProbe {
                 continue
             }
 
-            // 3. No visible response. Compare with a touch activation: if touch
-            // works and the keyboard did not, the control is not keyboard operable.
             guard let xpath = NavigationAction(node: control).xpath,
                   (try? await appium.tapElement(usingXPath: xpath)) != nil else {
                 results.append(ProbeEvaluation.make(
@@ -203,7 +192,6 @@ final class KeyboardActivationProbe {
         return results
     }
 
-    /// If the activation moved to another screen, go back to the original.
     private func restoreIfNavigated(
         from root: AccessibilityNode,
         baselineLabels: Set<String>,
@@ -274,12 +262,8 @@ final class ErrorMessageProbe {
     private let appium: AppiumClient
     private let alreadyTested: Set<String>
 
-    /// Probe key of the submit control this run activated.
     private(set) var testedKeys = Set<String>()
 
-    /// Buttons whose empty submission only triggers validation. Buttons that
-    /// save, send, submit or confirm are never used: an empty optional field
-    /// does not mean the form is harmless to submit.
     private static let submitCues = [
         "sign in", "log in", "login", "continue", "next", "register", "sign up",
         "create account", "verify"
@@ -290,8 +274,6 @@ final class ErrorMessageProbe {
         self.alreadyTested = alreadyTested
     }
 
-    /// Submits an untouched, empty form and checks the validation message that
-    /// appears. Forms that already contain input are left alone.
     func test(rootNode: AccessibilityNode) async throws -> [AccessibilityRuleEvaluation] {
 
         let nodes = ProbeNodes.all(in: rootNode).filter { $0.visible }
@@ -333,7 +315,6 @@ final class ErrorMessageProbe {
         guard let source = try? await appium.getSource(),
               let after = try? appium.makeParser().parse(source) else { return [] }
 
-        // The form submitted and moved on: nothing to evaluate. Go back.
         let afterLabels = ProbeNodes.contentLabels(in: after)
         if !beforeLabels.isEmpty {
             let missing = Double(beforeLabels.subtracting(afterLabels).count) / Double(beforeLabels.count)
@@ -360,8 +341,6 @@ final class ErrorMessageProbe {
         let messages = newMessages.filter { seen.insert($0).inserted }.prefix(6)
         guard !messages.isEmpty else { return [] }
 
-        // One result per rule, attached to the submit control: error text appears
-        // at positions that do not exist on the screenshot taken before submitting.
         let lacking = messages.filter { !ErrorMessageHeuristics.givesGuidance($0) }
         let sample = messages.first ?? ""
 

@@ -1,11 +1,7 @@
 //
 //  VisualOrder.swift
 //  AccessibilityScanner
-//
-//  Compares an observed traversal order (accessibility tree order or the
-//  runtime keyboard focus sequence) with the visual reading order: rows from
-//  top to bottom, then left to right within a row.
-//
+
 
 import Foundation
 import CoreGraphics
@@ -15,8 +11,7 @@ nonisolated enum VisualOrder {
     struct Assessment {
         /// Elements compared.
         let count: Int
-        /// Largest group of elements that appear in the same relative order
-        /// in both the observed traversal and the visual reading order.
+    
         let inOrder: Int
 
         var outOfOrder: Int { count - inOrder }
@@ -26,8 +21,6 @@ nonisolated enum VisualOrder {
     /// Elements whose tops are within one row band are treated as one row.
     private static let rowHeight: CGFloat = 20
 
-    /// `frames` must be in the observed traversal order. Returns nil when there
-    /// are too few elements for an order to mean anything.
     static func assess(frames: [CGRect]) -> Assessment? {
         guard frames.count >= 3 else { return nil }
 

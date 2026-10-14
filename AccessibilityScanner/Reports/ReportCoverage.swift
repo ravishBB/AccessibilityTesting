@@ -1,13 +1,7 @@
 //
 //  ReportCoverage.swift
 //  AccessibilityScanner
-//
-//  Answers "how much of the standard did this scan actually check?" so a clean
-//  report is never mistaken for a pass. It reports, for every rule, whether it
-//  produced a real automated verdict, only manual-review items, could not be
-//  tested, or found nothing applicable, and rolls that up per WCAG criterion
-//  for the whole Level A and AA set (including criteria no rule covers yet).
-//
+
 
 import Foundation
 
@@ -394,11 +388,6 @@ nonisolated struct ReportCoverage: Codable {
 // MARK: - Cheap helper for list rows and headers
 
 nonisolated extension AccessibilityScanResult {
-
-    /// Number of distinct rules that produced a pass, fail or warning. Cheaper
-    /// than building a full `ReportCoverage`, for use in headers and list rows.
-    /// Rules that can give pass/fail on the scanned platform: the honest
-    /// denominator for automatedVerdictRuleCount.
     var verdictCapableRuleCount: Int {
         AccessibilityRuleCatalog.verdictCapableRuleCount(on: BBCoverage.platform(of: self))
     }

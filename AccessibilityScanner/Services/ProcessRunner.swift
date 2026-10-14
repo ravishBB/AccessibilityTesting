@@ -1,14 +1,7 @@
 //
 //  ProcessRunner.swift
 //  AccessibilityScanner
-//
-//  Runs command-line tools (xcrun, adb). Both output pipes are drained while
-//  the process runs, so large output (simctl listapps is ~60 KB) cannot fill a
-//  pipe and deadlock, and a process that hangs (an unauthorised adb device, a
-//  locked iPhone) is terminated after a timeout.
-//
-//  Nonisolated: callers run it off the main actor so the UI stays responsive.
-//
+
 
 import Foundation
 
@@ -96,8 +89,6 @@ nonisolated enum ProcessRunner {
         )
     }
 
-    /// Runs blocking work on a background thread and awaits the result, so a
-    /// main-actor caller does not freeze the UI while a command runs.
     static func offMain<T: Sendable>(
         _ work: @escaping @Sendable () throws -> T
     ) async throws -> T {

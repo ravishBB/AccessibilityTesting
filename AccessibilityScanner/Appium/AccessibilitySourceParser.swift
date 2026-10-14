@@ -2,9 +2,7 @@
 //  AccessibilitySourceParser.swift
 //  AccessibilityScanner
 //
-//  Common interface for turning an Appium page-source XML string into the
-//  scanner's platform-neutral AccessibilityNode tree.
-//
+
 
 import Foundation
 

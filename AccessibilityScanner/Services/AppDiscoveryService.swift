@@ -7,7 +7,6 @@
 
 import Foundation
 
-/// Nonisolated: its xcrun calls block, so callers run it off the main actor.
 nonisolated final class AppDiscoveryService {
 
     // MARK: - Public

@@ -1,20 +1,7 @@
 //
 //  AndroidElementParser.swift
 //  AccessibilityScanner
-//
-//  Parses the UiAutomator2 page source (`GET /session/:id/source`) into an
-//  AccessibilityNode tree.
-//
-//  Conventions used so the existing rules keep working:
-//   - Frames are converted from pixels to dp (pixels / displayScale) so they
-//     are comparable with iOS points.
-//   - `label`      = accessible name as TalkBack announces it
-//                    (content-desc, falling back to text for non-input views).
-//   - `identifier` = resource-id.
-//   - `value`      = typed text for inputs, "1"/"0" for checkable controls.
-//   - `placeholderValue` = hint.
-//   - `traits`     = space separated Android state tokens (clickable, selected…).
-//
+
 
 import Foundation
 import CoreGraphics
@@ -339,11 +326,6 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
         }
 
         if node.clickable {
-            // A clickable leaf with a name behaves like a button.
-            // A clickable container (row/card) is a cell: its name comes from
-            // its children, so it is not subject to the button-name rules.
-            // A generic clickable leaf exposes no role: TalkBack says only
-            // "double-tap to activate". The rules report that as missing role.
             if isLeaf { node.roleInferred = true }
             return isLeaf ? .button : .cell
         }

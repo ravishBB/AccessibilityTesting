@@ -60,9 +60,6 @@ nonisolated struct AccessibilityNode {
         AccessibilityRole.controls.contains(role)
     }
 
-    /// Native/platform focusability exposed by Appium. This is especially
-    /// important for Flutter Semantics nodes and React Native `accessible`
-    /// views, where the raw Android class may remain a generic View.
     var isKeyboardFocusable: Bool {
         traits.localizedCaseInsensitiveContains("focusable")
     }

@@ -1,12 +1,6 @@
 //
 //  ScanEnvironment.swift
 //  AccessibilityScanner
-//
-//  What a report needs to be reproducible: which build of which app was
-//  scanned, on which OS, with which scanner, rule set and BB mapping. Also the
-//  notes that tell a reader what the scan could not do, so an incomplete scan
-//  is never mistaken for a complete one.
-//
 
 import Foundation
 

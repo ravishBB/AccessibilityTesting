@@ -11,7 +11,6 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
-        // Quitting mid-scan must not leave the device held by Appium.
         AppiumClient.deleteOpenSessionsBeforeQuit()
     }
 }
@@ -25,7 +24,6 @@ struct AccessibilityScannerApp: App {
         WindowGroup {
             ContentView()
                 .task {
-                    // Put back any Android font scale a crashed scan left changed.
                     await Task.detached {
                         AndroidFontScaleRecovery.restoreOutstanding()
                     }.value

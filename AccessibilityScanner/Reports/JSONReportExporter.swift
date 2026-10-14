@@ -20,11 +20,8 @@ nonisolated struct JSONReportExporter {
     }
 
     struct Options {
-        /// Embed downscaled screenshots as base64 JPEG. Turn off for lightweight CI artifacts.
         var includeScreenshots = true
         var maxScreenshotPixelSize = 900
-        /// Also embed the unannotated image when an annotated one exists.
-        /// Off by default: it doubles the file size for little extra value.
         var includeOriginalWhenAnnotated = false
     }
 

@@ -1,13 +1,10 @@
 //
 //  AndroidDeviceService.swift
 //  AccessibilityScanner
-//
-//  Discovers Android devices/emulators and installed apps through `adb`.
-//
+
 
 import Foundation
 
-/// Nonisolated: its adb calls block, so callers run it off the main actor.
 nonisolated final class AndroidDeviceService {
 
     // MARK: - Errors
@@ -28,7 +25,6 @@ nonisolated final class AndroidDeviceService {
     }
 
     // MARK: - adb location
-
     func adbPath() -> String? {
 
         var candidates: [String] = []
@@ -57,9 +53,6 @@ nonisolated final class AndroidDeviceService {
         } ?? Self.adbFromLoginShell
     }
 
-    /// An app opened from Finder does not get the user's shell PATH, so adb
-    /// installed through asdf, sdkman or a custom SDK folder is not found
-    /// above. Ask a login shell once, the way Terminal would resolve it.
     private static let adbFromLoginShell: String? = {
         guard let output = try? ProcessRunner.run("/bin/zsh", ["-lc", "command -v adb"], timeout: 10),
               output.status == 0
@@ -69,9 +62,6 @@ nonisolated final class AndroidDeviceService {
     }()
 
     // MARK: - Devices
-
-    /// Returns connected Android devices. Returns an empty list (never throws)
-    /// when adb is not installed so iOS-only setups keep working.
     func discoverDevices() -> [Device] {
 
         guard let adb = adbPath(),
@@ -115,7 +105,6 @@ nonisolated final class AndroidDeviceService {
         return devices
     }
 
-    /// Override density if set, otherwise the physical density.
     private func displayDensity(serial: String, adb: String) -> Int? {
 
         guard let output = try? run(adb, ["-s", serial, "shell", "wm", "density"]) else {
@@ -145,7 +134,6 @@ nonisolated final class AndroidDeviceService {
 
     // MARK: - Apps
 
-    /// Lists user-installed (third-party) packages.
     func discoverApps(for device: Device) throws -> [InstalledApp] {
 
         guard let adb = adbPath() else {
@@ -201,8 +189,6 @@ nonisolated final class AndroidDeviceService {
         return (value(after: "versionName="), value(after: "versionCode="))
     }
 
-    /// Resolves the launcher activity so Appium can start the app.
-    /// Returns nil if it cannot be resolved (Appium will try its own detection).
     func launchableActivity(package: String, serial: String) -> String? {
 
         guard let adb = adbPath(),
@@ -230,10 +216,6 @@ nonisolated final class AndroidDeviceService {
     }
 
     // MARK: - Process
-
-    // MARK: - Font scale (large-text probe)
-
-    /// Current system font scale, or nil when it has never been changed.
     func fontScale(serial: String) throws -> String? {
         guard let adb = adbPath() else { throw AndroidServiceError.adbNotFound }
         let output = try run(adb, ["-s", serial, "shell", "settings", "get", "system", "font_scale"])

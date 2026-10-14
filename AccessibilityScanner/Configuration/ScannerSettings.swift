@@ -1,10 +1,7 @@
 //
 //  ScannerSettings.swift
 //  AccessibilityScanner
-//
-//  Per-user settings that used to be hard-coded: the Appium server and the
-//  Apple signing details WebDriverAgent needs on a physical iPhone.
-//
+
 
 import SwiftUI
 
@@ -26,8 +23,6 @@ nonisolated enum ScannerSettings {
         return validAppiumURL(text) ?? URL(string: defaultAppiumURL)!
     }
 
-    /// Apple Developer team ID for signing WebDriverAgent. Empty when unset:
-    /// simulators and an already-signed WebDriverAgent do not need one.
     static var teamID: String {
         UserDefaults.standard.string(forKey: Key.teamID)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -39,7 +34,7 @@ nonisolated enum ScannerSettings {
         return value.isEmpty ? defaultSigningID : value
     }
 
-    /// Android SDK folder set by the user, or empty.
+
     static var androidSDKPath: String {
         let value = UserDefaults.standard.string(forKey: Key.androidSDKPath)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

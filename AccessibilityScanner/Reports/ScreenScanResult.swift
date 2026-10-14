@@ -21,9 +21,6 @@ nonisolated struct ScreenScanResult: Identifiable, Codable {
     // Elements highlighted on the screenshot
     let annotations: [ScreenshotAnnotation]
 
-    // Additional unique screenshots captured while scrolling this screen.
-    // The first viewport is represented here as well so the report can render
-    // one consistent viewport sequence without duplicating the top screenshot.
     let viewportScreenshots: [ScreenshotViewport]
 
     init(

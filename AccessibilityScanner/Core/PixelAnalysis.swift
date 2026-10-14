@@ -233,13 +233,9 @@ nonisolated enum PixelAnalyzer {
         let ratio: Double
         let inkLuminance: Double
         let backgroundLuminance: Double
-        /// True when the background is an image or gradient rather than a flat colour.
         let variedBackground: Bool
     }
 
-    /// Contrast between the strongest foreground pixels inside `frame` and the
-    /// background around it. `excluding` leaves a region out of the foreground
-    /// search (for example a link inside a paragraph).
     static func inkContrast(
         frame: CGRect,
         sampler: PixelSampler,
@@ -251,7 +247,6 @@ nonisolated enum PixelAnalyzer {
 
         var background = sampler.outerRingSamples(of: rect, offset: 2, maxSamples: 160)
         if background.count < 12 {
-            // Element touches the screen edge; fall back to the frame's own edges.
             for edge in [PixelEdge.top, .bottom, .left, .right] {
                 background += sampler.edgeSamples(of: rect, edge: edge, inset: 0)
             }
@@ -270,8 +265,6 @@ nonisolated enum PixelAnalyzer {
         let deltas = interior.map { abs($0.luminance - backgroundMedian) }
         guard let maxDelta = deltas.max(), maxDelta >= 0.02 else { return nil }
 
-        // Strongest ink pixels only: anti-aliased edge pixels are a blend of
-        // ink and background and would understate the contrast.
         var inkLuminances: [Double] = []
         for (index, delta) in deltas.enumerated() where delta >= 0.6 * maxDelta {
             inkLuminances.append(interior[index].luminance)
@@ -282,7 +275,6 @@ nonisolated enum PixelAnalyzer {
 
         let ratio: Double
         if varied {
-            // Worst-case contrast against the surrounding image or gradient.
             let ratios = backgroundLuminances.map { PixelMath.contrast(inkLuminance, $0) }
             ratio = PixelMath.percentile(ratios, 0.1)
         } else {
@@ -415,8 +407,6 @@ nonisolated enum TextRecognizer {
         return result
     }
 
-    /// Screenshots share identical PNG headers, so hash bytes sampled across
-    /// the whole file rather than relying on Data's hash of the first bytes.
     private static func fingerprint(_ data: Data) -> Int {
         var hasher = Hasher()
         hasher.combine(data.count)
@@ -439,9 +429,6 @@ nonisolated enum TextRecognizer {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        // Run on the CPU. On some Macs the Neural Engine copy of the model is
-        // missing or stale (E5RT "Missing E5 bundle resource"), which logs an
-        // error on every call; the crops are small, so the CPU is fast enough.
         if let devices = try? request.supportedComputeStageDevices {
             for (stage, stageDevices) in devices {
                 if let cpu = stageDevices.first(where: { if case .cpu = $0 { return true }; return false }) {

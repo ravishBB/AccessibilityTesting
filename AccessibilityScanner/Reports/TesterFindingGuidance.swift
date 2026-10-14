@@ -1,8 +1,13 @@
+//
+//  TesterFindingGuidance.swift
+//  AccessibilityScanner
+//
+//  Created by Ravish Kumar on 25/09/26.
+//
+
+
 import Foundation
 
-// Tester-focused interpretation of a rule result. This layer deliberately
-// uses only evidence already present in the scan; it never upgrades a
-// VALIDATE result into PASS/FAIL.
 nonisolated extension AccessibilityRuleEvaluation {
 
     enum TesterPriority: String {

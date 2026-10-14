@@ -136,10 +136,6 @@ nonisolated enum AccessibilityRuleCatalog {
     private static let contrastTest = "Inspect the element at normal brightness and confirm the text is clearly readable against its background."
     private static let targetTest = "Activate the control near its edges and confirm it is easy to hit without touching neighbouring controls."
 
-    /// Each rule's criterion follows the WCAG column of the BB issue sheet
-    /// (13 Oct 2026) for the rule's failure code. Individual BB codes that
-    /// differ (for example BB40078 under 1.3.1) carry their own criterion in
-    /// BBIssueCatalog.
     private static let entries: [(String, AccessibilityRuleMetadata)] = [
 
         // Name, role, value

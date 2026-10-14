@@ -1,15 +1,7 @@
 //
 //  RuntimeProbes.swift
 //  AccessibilityScanner
-//
-//  Runtime checks that exercise the app on the device instead of only reading
-//  one hierarchy snapshot. Result policy:
-//    1. a static check is tried first elsewhere in the rule set;
-//    2. these probes then try to observe the behaviour on the device;
-//    3. when a probe cannot run, it reports "Not tested" with the reason;
-//    4. "Validate" is used only when the probe ran but the evidence was
-//       ambiguous.
-//
+
 
 import Foundation
 import CoreGraphics
@@ -20,15 +12,7 @@ struct RuntimeProbeEnvironment {
     let bundleID: String
     let platform: MobilePlatform
     let udid: String
-
-    /// False when the tester attached to an already-open page ("Current Page"
-    /// mode). Relaunching the app would lose that page, so probes that need a
-    /// relaunch report Not tested instead.
     let allowAppRelaunch: Bool
-
-    /// False in Current Page mode: the open page may be mid-task (a checkout,
-    /// a half-filled form), so probes that tap, toggle, submit or rotate are
-    /// skipped and reported Not tested.
     let allowAppInteraction: Bool
 }
 
@@ -106,8 +90,6 @@ enum ProbeNodes {
         }
     }
 
-    /// Identifies the same control on different screens (tab bars, shared
-    /// toolbars) so runtime probes exercise it only once per scan.
     static func probeKey(_ node: AccessibilityNode) -> String {
         [node.type, clean(node.identifier), clean(node.label)].joined(separator: "|")
     }
@@ -579,11 +561,6 @@ final class TextSizeProbe {
 }
 
 // MARK: - Pointer cancellation (BB40136, BB40137)
-
-/// Presses a button, slides off it and releases. If that fires the action,
-/// the action runs on touch down and cannot be cancelled. A normal tap is
-/// then used to confirm the control responds at all, so "nothing happened"
-/// is only reported as a pass when the control does work.
 final class PointerCancellationProbe {
 
     private let appium: AppiumClient
@@ -601,8 +578,6 @@ final class PointerCancellationProbe {
         let screen = rootNode.frame
         guard let control = ProbeNodes.all(in: rootNode).first(where: { node in
             node.role == .button && node.visible && node.enabled &&
-            // The stricter crawler list: this probe may leave the control
-            // activated, so it must not change the app's data (bookmarks…).
             ActionSafety.isSafeToExplore(node) &&
             !alreadyTested.contains(ProbeNodes.probeKey(node)) &&
             node.frame.width >= 24 && node.frame.height >= 24 &&
@@ -657,8 +632,6 @@ final class PointerCancellationProbe {
         try appium.makeParser().parse(try await appium.getSource())
     }
 
-    /// Goes back if the activation opened another screen; otherwise taps
-    /// nothing (state changes from a button are left for the crawler).
     private func restore(from root: AccessibilityNode, baselineLabels: Set<String>) async {
         guard !baselineLabels.isEmpty else { return }
         let missing = Double(baselineLabels.subtracting(ProbeNodes.contentLabels(in: root)).count) / Double(baselineLabels.count)

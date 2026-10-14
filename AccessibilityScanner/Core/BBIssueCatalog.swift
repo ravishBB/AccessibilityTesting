@@ -1,15 +1,7 @@
 //
 //  BBIssueCatalog.swift
 //  AccessibilityScanner
-//
-//  Maps scanner results to BarrierBreak (BB) issue IDs. A rule can produce
-//  several BB issues: the pass, fail and manual-review results of one rule
-//  usually have different BB IDs, and some rules split further by element
-//  role or label (missing vs non-descriptive name, button vs link).
-//
-//  Mapped to the BB issue sheet of 13 Oct 2026 (Type column: Fail, Pass,
-//  Validate). Not-tested results never get a BB ID.
-//
+
 
 import Foundation
 
@@ -232,11 +224,6 @@ nonisolated enum BBIssueCatalog {
         }
     }
 
-
-    /// WCAG column of the BB sheet. BB40034 is listed twice (Pass under
-    /// 1.4.10, Fail under 3.3.2), so its criterion depends on the outcome and
-    /// is resolved in `issue(for:)`. BB40027 is listed under 2.4.5 in the
-    /// sheet; 2.5.5 (Target Size, Enhanced) is used. BB40307 has none.
     private static let wcag: [String: String] = [
         "BB40114": "2.1.1",
         "BB40075": "2.4.11",
@@ -356,9 +343,6 @@ nonisolated enum BBIssueCatalog {
     ]
 
     // MARK: - Titles
-
-    /// Titles from the BB issue sheet. BB40086, BB40180 and BB40181 are not
-    /// in the latest sheet and are kept from the earlier one until replaced.
     private static let titles: [String: String] = [
         "BB40114": "Modal dialog can be closed",
         "BB40075": "Check if focus indicator is obscured by another element",

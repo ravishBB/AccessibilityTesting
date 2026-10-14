@@ -1,13 +1,7 @@
 //
 //  ScreenResultBuilder.swift
 //  AccessibilityScanner
-//
-//  Turns one crawled screen into its report result: runs the screenshot
-//  rules on every viewport, annotates and compresses the screenshots, and
-//  merges static, viewport and runtime results. Nonisolated so the scanner
-//  can build the report off the main thread; a 100-screen report can take
-//  minutes of pixel work.
-//
+
 
 import Foundation
 import CoreGraphics

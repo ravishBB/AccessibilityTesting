@@ -83,9 +83,6 @@ nonisolated final class ScreenshotAnnotator {
         ==========================================
         """, Log.reports)
 
-        // ---------------------------------------------------------
-        // 4. Create bitmap
-        // ---------------------------------------------------------
 
         guard let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil,
@@ -217,15 +214,7 @@ nonisolated final class ScreenshotAnnotator {
 
             let convertedHeight =
                 frame.height * scaleY
-
-            /*
-             WDA/XCUITest uses a top-left coordinate origin.
-
-             AppKit uses a bottom-left coordinate origin.
-
-             Convert Y after scaling.
-             */
-
+            
             let convertedTopY =
                 frame.origin.y * scaleY
 

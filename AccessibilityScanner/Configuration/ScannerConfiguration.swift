@@ -10,25 +10,14 @@ import Foundation
 struct ScannerConfiguration {
 
     let appiumURL: URL
-
-    /// iOS bundle identifier or Android application package name.
     let bundleID: String
     let deviceName: String
     let udid: String
 
     let platform: MobilePlatform
-
-    /// Android launcher activity. Optional: Appium resolves it when omitted.
     let appActivity: String?
-
-    /// Android display density in dpi. Fallback when Appium does not report it.
     let displayDensity: Int?
-    /// Whether Appium should launch the application when creating the session.
-    /// False is used for Current Page mode so the scanner can attach to the page
-    /// the tester has already opened.
     let autoLaunch: Bool
-
-    /// iOS physical-device signing for WebDriverAgent.
     let xcodeOrgID: String
     let xcodeSigningID: String
 

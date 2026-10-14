@@ -1,10 +1,7 @@
 //
 //  ReportImageEncoder.swift
 //  AccessibilityScanner
-//
-//  Downscales screenshots so exported reports stay a reasonable size, and
-//  encodes them for embedding (data URI for HTML, base64 for JSON).
-//
+
 
 import Foundation
 import ImageIO

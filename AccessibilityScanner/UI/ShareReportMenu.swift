@@ -1,10 +1,7 @@
 //
 //  ShareReportMenu.swift
 //  AccessibilityScanner
-//
-//  Export menu for the quality report: HTML (opens in a browser, prints to
-//  PDF) and JSON (for CI and tooling).
-//
+
 
 import SwiftUI
 import AppKit

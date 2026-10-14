@@ -70,32 +70,15 @@ final class AppCrawler {
     private var discoveredScreens:
         [CrawledScreen] = []
 
-    /// Tab-bar and bottom-bar actions already tapped this scan, and those
-    /// on the first screen. Shared navigation appears on every screen;
-    /// tapping it everywhere re-traverses the whole app from each screen.
     private var exploredSharedActions = Set<String>()
     private var firstScreenSharedActions = Set<String>()
-
-    /// Controls already exercised by a runtime probe on an earlier screen.
     private var probedControlKeys = Set<String>()
 
-    /// Orientation support is normally app-wide, and every rotation costs a
-    /// re-layout plus a hierarchy fetch, so it is probed once per scan.
     private var orientationProbed = false
-
-    /// Pointer cancellation is sampled on the first screens only: each run
-    /// costs several hierarchy reads, and touch-down behaviour comes from
-    /// shared button components.
     private var pointerCancellationRuns = 0
     private let pointerCancellationScreens = 2
-
-    /// Set when back navigation landed somewhere unexpected. Parent screens
-    /// then check where they are instead of pressing Back blindly, which on
-    /// Android can exit the app.
     private var isLost = false
-
-    /// System UI that may appear over the app under test without meaning the
-    /// tap left it (runtime permission dialogs).
+    
     private static let overlayPackages: Set<String> = [
         "com.android.permissioncontroller",
         "com.google.android.permissioncontroller",
@@ -149,11 +132,6 @@ final class AppCrawler {
         return discoveredScreens
     }
 
-    /// Runtime probes that exercise the app on the device. They run after the
-    /// keyboard focus traversal and reuse it; each reports Not tested with a
-    /// reason if it cannot run. Controls exercised on an earlier screen are
-    /// skipped. Orientation runs once per scan, and the text-size probe
-    /// (which relaunches the app) runs only on the first screen.
     private func runtimeProbeEvaluations(
         rootNode: AccessibilityNode,
         isFirstScreen: Bool,
@@ -235,8 +213,6 @@ final class AppCrawler {
         return results
     }
 
-    /// Runs one probe, logs how long it took, and turns a failure into Not
-    /// tested results so one probe cannot stop the others.
     private func timedProbe(
         _ name: String,
         ruleIDs: [String],
@@ -417,8 +393,6 @@ final class AppCrawler {
                 )
             )
 
-        // The first screen owns the shared navigation it shows: record it
-        // before its first action opens a deeper screen that shows it too.
         if depth == 0 {
             firstScreenSharedActions = Set(actionsToExplore
                 .filter { isSharedNavigation($0, in: snapshot.rootNode) }
@@ -450,8 +424,6 @@ final class AppCrawler {
                     continue
                 }
 
-            // Shared navigation (tab bar, bottom bar) is explored once, from
-            // the first screen; elsewhere it only leads back to known screens.
             if isSharedNavigation(action, in: snapshot.rootNode) {
                 let alreadyExplored = exploredSharedActions.contains(xpath) ||
                     (depth > 0 && firstScreenSharedActions.contains(xpath))
@@ -551,8 +523,6 @@ final class AppCrawler {
                             nextSnapshot.rootNode
                     )
 
-                // Small changes (a toggled bookmark, a selected chip) are the
-                // same screen; only a mostly different screen is navigation.
                 let navigated = !isSameScreen(snapshot.rootNode, nextSnapshot.rootNode)
 
                 if navigated {
@@ -782,9 +752,6 @@ final class AppCrawler {
         return shared / total >= 0.6
     }
 
-    /// True when the app is on the screen with this fingerprint, after one
-    /// Back press if needed. Below the first screen, a failure marks the
-    /// crawler lost so the parent screens re-locate themselves.
     private func returnToScreen(
         _ screen: AccessibilityNode,
         depth: Int,
@@ -822,8 +789,6 @@ final class AppCrawler {
         return false
     }
 
-    /// Returns true when the last tap left the app under test, after bringing
-    /// that app back to the foreground.
     private func returnToTargetAppIfNeeded(
         after action: NavigationAction,
         statusHandler: @escaping (String) -> Void
@@ -861,10 +826,6 @@ final class AppCrawler {
 
         var seenEvaluationKeys:
             Set<String> = []
-
-        // Keep the actual screenshots captured for each unique viewport.
-        // The previous implementation only retained the first screenshot,
-        // which made every report view show the top of a scrollable screen.
         var viewportCaptures: [ScrollableViewportCapture] = []
         var seenScreenshotData: Set<Data> = []
 

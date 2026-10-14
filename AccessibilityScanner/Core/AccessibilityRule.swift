@@ -21,9 +21,6 @@ nonisolated protocol AccessibilityRule {
     ) -> AccessibilityRuleEvaluation?
 }
 
-// Rules that require the complete accessibility hierarchy rather than a
-// single element implement this protocol. These rules are evaluated once
-// after the normal per-node rules have finished.
 nonisolated protocol ScreenAccessibilityRule: AccessibilityRule {
 
     func evaluate(
@@ -31,7 +28,6 @@ nonisolated protocol ScreenAccessibilityRule: AccessibilityRule {
     ) -> [AccessibilityRuleEvaluation]
 }
 
-/// A screen-level rule that also needs the rendered screenshot.
 nonisolated protocol ContextualScreenAccessibilityRule {
 
     func evaluate(

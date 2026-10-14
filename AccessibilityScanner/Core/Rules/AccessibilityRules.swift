@@ -64,8 +64,6 @@ nonisolated struct AccessibilityRules {
             DuplicateInteractiveNameRule(),
             InteractiveTargetOverlapRule(),
 
-            // Evidence-driven rules. They may return PASS/FAIL when sufficient evidence
-            // is available; otherwise they remain VALIDATE or use a runtime probe.
             ContrastStandardTextRule(),
             ContrastLargeTextRule(),
             ContrastEnhancedStandardTextRule(),
@@ -115,8 +113,6 @@ nonisolated struct AccessibilityRules {
             LanguageChangeRule(),
             TextSpacingRule(),
             ModalFocusContainmentRule(),
-
-            // Platform semantics (data only some platforms expose)
             MissingRoleRule(),
             NameViaHintRule(),
             LabelInNameRule(),
@@ -129,7 +125,6 @@ nonisolated struct AccessibilityRules {
 }
 
 // MARK: - Core common rules
-
 nonisolated struct CommonAccessibleNameRule: AccessibilityRule {
     let id = "accessible-name"
     let title = "Accessible Name"
@@ -163,7 +158,6 @@ nonisolated struct CommonEnhancedTargetSizeRule: AccessibilityRule {
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard RuleHelper.controls.contains(node.role), node.visible, node.enabled else { return nil }
-        // iOS: 44pt (HIG). Android: 48dp. Android frames are normalised to dp.
         let target = node.platform.recommendedTargetSize
         let unit = node.platform.sizeUnit
         let size = "\(Int(target))×\(Int(target)) \(unit)"
@@ -222,8 +216,6 @@ private nonisolated enum RuleHelper {
         (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Lowercase words of the label and identifier; camelCase identifiers are
-    /// split ("btnClose" -> "btn", "close").
     static func words(_ node: AccessibilityNode) -> Set<String> {
         var spaced = ""
         var previous: Character?
@@ -245,8 +237,6 @@ private nonisolated enum RuleHelper {
         return !clean(node.semantics.hint ?? node.semantics.tooltip).isEmpty
     }
 
-    /// Text of static-text descendants, which is what a sighted user reads
-    /// inside a control (SwiftUI and Compose expose it this way).
     static func childText(of node: AccessibilityNode) -> String? {
         let parts = allNodes(node).dropFirst()
             .filter { $0.role == .staticText && $0.visible }
@@ -255,22 +245,19 @@ private nonisolated enum RuleHelper {
         return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
-    /// Lowercase words, letters and digits only.
     static func wordList(_ text: String) -> [String] {
         text.lowercased()
             .split { !$0.isLetter && !$0.isNumber }
             .map(String.init)
     }
 
-    /// True when `text` sits just below or beside `field`, where an error
-    /// message for that field would appear.
+
     static func isBelowOrBeside(_ text: AccessibilityNode, _ field: AccessibilityNode) -> Bool {
         let verticalGap = max(text.frame.minY - field.frame.maxY, field.frame.minY - text.frame.maxY, 0)
         let horizontalOverlap = min(text.frame.maxX, field.frame.maxX) - max(text.frame.minX, field.frame.minX)
         return verticalGap <= 60 && horizontalOverlap > 0
     }
 
-    /// Scroll views, lists, collections and carousels, on either platform.
     static func isScrollContainer(_ node: AccessibilityNode) -> Bool {
         node.role == .scrollView || node.role == .table ||
             node.type.contains("ScrollView") || node.type.contains("CollectionView") ||
@@ -282,8 +269,6 @@ private nonisolated enum RuleHelper {
         if normalized.isEmpty { return true }
 
         let generic = [
-            // Only names that say nothing about purpose. "OK", "Next",
-            // "Submit" or "More" are clear in context and are not flagged.
             "button", "btn", "click", "click here", "tap", "tap here",
             "image", "img", "icon", "action", "item", "cell", "link", "view", "label"
         ]
@@ -313,9 +298,6 @@ private nonisolated enum RuleHelper {
         let identifier = node.identifier.lowercased()
         let label = clean(node.label)
 
-        // A button that contains an image child is an image button even when
-        // the developer did not use an image/icon identifier. This is one of
-        // the strongest image-button signals available in the accessibility hierarchy.
         let containsImageChild = node.children.contains { child in
             child.role == .image
         }

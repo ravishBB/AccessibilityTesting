@@ -1,28 +1,16 @@
 //
 //  BBRuleset.swift
 //  AccessibilityScanner
-//
-//  Every row of the BB ruleset (iOS_Status_Report(Tracker).csv, 13 Oct 2026)
-//  and how this scanner can check it on each platform. Reports use it to
-//  account for every BB ID: found, passed, needs review, or why it could not
-//  be checked. Generated from Docs/BB_Platform_Coverage.csv; keep the two in
-//  step when either changes.
-//
 
 import Foundation
 
 nonisolated enum BBCapability: String, Codable {
-    /// Checked from the hierarchy and screenshot on every scanned screen.
+ 
     case automated
-    /// Checked by a runtime probe (Limited or Full App scans only).
     case runtime
-    /// Checked only for some controls or cases.
     case partial
-    /// Needs a person (or assistive technology) to judge.
     case manual
-    /// The platform's automation driver does not expose the evidence.
     case unavailable
-    /// AAA, on hold in the ruleset.
     case onHold
 }
 

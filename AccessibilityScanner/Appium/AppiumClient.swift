@@ -1129,33 +1129,18 @@ final class AppiumClient {
                 "appium:bundleId": configuration.bundleID,
                 "appium:noReset": true,
                 "appium:autoLaunch": configuration.autoLaunch,
-                // Full and Limited scans start the app from its launch screen:
-                // with noReset alone, an app that is already running would
-                // resume on whatever page was open. Current Page mode
-                // (autoLaunch false) attaches to the open page instead.
                 "appium:forceAppLaunch": configuration.autoLaunch,
                 "appium:newCommandTimeout": 300,
                 "appium:showXcodeLog": showXcodeLog,
                 "appium:settings": [
                     "includeHittableInPageSource": true,
-                    // Custom accessibility actions are the VoiceOver
-                    // alternative to swipe and multi-finger gestures.
                     "includeCustomActionsInPageSource": true
                 ]
             ]
 
-            // A physical iPhone's WebDriverAgent is forwarded to a port on
-            // this Mac (8100 by default). Simulators also use 8100 directly,
-            // so with both on 8100 a simulator scan reaches the phone. Give
-            // each physical device its own forwarding port; simulators keep
-            // 8100 (changing theirs would force a WebDriverAgent rebuild).
             if !Self.isSimulatorUDID(configuration.udid) {
                 capabilities["appium:wdaLocalPort"] = Self.wdaPort(forUDID: configuration.udid)
             }
-
-            // Only physical iPhones need WebDriverAgent signed. Sending an
-            // empty team ID would override a WebDriverAgent already set up
-            // in Xcode, so it is only sent once set in Settings.
             if !configuration.xcodeOrgID.isEmpty {
                 capabilities["appium:xcodeOrgId"] = configuration.xcodeOrgID
                 capabilities["appium:xcodeSigningId"] = configuration.xcodeSigningID
@@ -1171,15 +1156,10 @@ final class AppiumClient {
                 "appium:appWaitActivity": "*",
                 "appium:noReset": true,
                 "appium:newCommandTimeout": 300,
-                // Launch control is configurable so Current Page mode can attach
-                // without replacing the page the tester has already opened.
                 "appium:autoLaunch": configuration.autoLaunch,
-                // Launch the app as soon as the session starts, unless Current Page
-                // mode intentionally attaches to the page already on screen.
                 "appium:forceAppLaunch": configuration.autoLaunch,
                 "appium:shouldTerminateApp": true,
-                // Expose AccessibilityNodeInfo extras such as roleDescription
-                // used by React Native and other cross-platform semantics.
+             
                 "appium:settings": [
                     "includeExtrasInPageSource": true,
                     "includeA11yActionsInPageSource": true

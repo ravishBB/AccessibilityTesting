@@ -46,10 +46,6 @@ final class KeyboardFocusTester {
     }
 
     func test(rootNode: AccessibilityNode) async throws -> Result {
-        // WebDriverAgent never reports Full Keyboard Access focus on iOS
-        // (`focused` is tvOS-only, the active element is text-input focus),
-        // and Appium cannot send Tab to an iPhone. Tabbing would cost ~10 s a
-        // screen and prove nothing.
         if appium.platform == .ios {
             return Result(
                 evaluations: [baseEvaluation(
@@ -261,8 +257,6 @@ final class KeyboardFocusTester {
             }
         }
 
-        // 2. No keyboard trap: only report FAIL when a focus cycle is observed
-        // before the scanner can reach all controls on the screen.
         if trapDetected {
             evaluations.append(baseEvaluation(
                 ruleID: "modal-accessibility",
@@ -329,10 +323,6 @@ final class KeyboardFocusTester {
                 remediation: "Rerun the runtime focus probe with screenshot capture available for each reached control."
             ))
         }
-
-        // 3b. The focus indicator needs 3:1 against what it replaced
-        //     (1.4.11), and the focused control must not be hidden by sticky
-        //     bars (2.4.11).
         for (node, ratio) in indicatorContrast.values {
             let text = String(format: "%.2f:1", ratio)
             evaluations.append(ProbeEvaluation.make(
@@ -356,11 +346,6 @@ final class KeyboardFocusTester {
             ))
         }
 
-        // 4. Keyboard focus order is only marked PASS when the runtime sequence
-        // covers every interactive control exactly once in the accessibility
-        // tree order. We intentionally do not FAIL on a mismatch because a
-        // static tree/visual sort cannot prove that the alternative order is
-        // semantically wrong.
         let expectedKeys = controls.map(stableKey(for:))
         let observedControlKeys = sequence.filter { expectedKeys.contains($0) }
         let orderTitle = "Screen reader/keyboard focus order correct"

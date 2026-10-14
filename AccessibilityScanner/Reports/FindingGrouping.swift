@@ -2,10 +2,6 @@
 //  FindingGrouping.swift
 //  AccessibilityScanner
 //
-//  Groups per-element evaluations into one entry per rule (and status), and
-//  assigns every non-pass evaluation a stable fingerprint so the same issue
-//  can be tracked across scans, builds and report formats.
-//
 
 import Foundation
 
@@ -13,12 +9,6 @@ import Foundation
 
 nonisolated enum FindingFingerprint {
 
-    /// Stable 12-hex-character identifier for "this rule failing on this element
-    /// on this screen". It deliberately ignores layout position, scan time and
-    /// device so it survives re-scans of the same build. When a screen contains
-    /// several elements with the same identity (for example repeated "Add"
-    /// buttons without identifiers) the later ones, ordered top-to-bottom then
-    /// left-to-right, receive a "-2", "-3"... suffix.
     static func baseFingerprint(
         ruleID: String,
         screen: ScreenScanResult,
@@ -39,15 +29,12 @@ nonisolated enum FindingFingerprint {
         if !label.isEmpty {
             return "label|\(evaluation.elementType)|\(label)"
         }
-        // No name or identifier: fall back to coarse position (rounded to 8pt)
-        // so tiny layout shifts do not change the fingerprint.
+
         let x = Int((evaluation.frameX / 8).rounded()) * 8
         let y = Int((evaluation.frameY / 8).rounded()) * 8
         return "frame|\(evaluation.elementType)|\(x),\(y)"
     }
 
-    /// FNV-1a 64-bit. `Hasher` is randomly seeded per process, so it cannot be
-    /// used for identifiers that must be stable across launches.
     private static func fnv1a64(_ string: String) -> UInt64 {
         var hash: UInt64 = 0xcbf29ce484222325
         for byte in string.utf8 {

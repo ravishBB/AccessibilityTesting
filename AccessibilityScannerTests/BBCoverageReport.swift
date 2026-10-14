@@ -2,9 +2,6 @@
 //  BBCoverageReport.swift
 //  AccessibilityScannerTests
 //
-//  Lists every BB ID the scanner can actually produce, for comparing with the
-//  BB sheet. Written to $BB_COVERAGE_OUT when set; otherwise only checked.
-//
 
 import Testing
 import Foundation
@@ -15,8 +12,6 @@ import CoreGraphics
 @Suite("BB coverage")
 struct BBCoverageReport {
 
-    /// Outcomes each rule can really emit, from the static rules and the
-    /// runtime probes. Rules that only return Not tested are absent.
     static let producible: [String: [RuleResultStatus]] = [
         "accessible-name": [.fail, .pass],
         "adjustable-accessibility-value": [.fail, .pass, .validate],

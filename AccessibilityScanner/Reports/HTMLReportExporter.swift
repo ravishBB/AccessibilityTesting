@@ -2,9 +2,7 @@
 //  HTMLReportExporter.swift
 //  AccessibilityScanner
 //
-//  Produces a single self-contained HTML file (no external assets, screenshots
-//  embedded) that reads well on screen and prints cleanly to PDF.
-//
+
 
 import Foundation
 

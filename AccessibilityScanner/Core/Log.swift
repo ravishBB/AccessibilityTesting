@@ -21,9 +21,6 @@ nonisolated enum Log {
     static let reports = Logger(subsystem: subsystem, category: "reports")
 }
 
-/// Developer trace output. Goes to the unified log at debug level, which is
-/// not persisted and is off unless a developer streams it, instead of
-/// stdout, where it ships in release builds.
 nonisolated func trace(_ message: String, _ logger: Logger = Log.scan) {
     logger.debug("\(message, privacy: .private)")
 }
