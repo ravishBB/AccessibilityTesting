@@ -23,6 +23,8 @@ struct ScanReportView: View {
 
     @State private var selectedAnnotationID: UUID?
     @State private var selectedViewportID: UUID?
+    /// Scroll position of the failure list only (not the whole report).
+    @State private var listScrollID: UUID?
     @State private var selectedScreenID: UUID?
     @State private var showDetailedResults = false
     @State private var showDiff = false
@@ -689,26 +691,32 @@ struct ScanReportView: View {
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.06)))
             } else {
                 if let selected = selectedAnnotation(in: screen) {
+                    // Fixed minimum height: the detail text varies in length,
+                    // and a changing height shifts everything below it.
                     selectedFailureDetail(selected, in: screen)
+                        .frame(minHeight: 220, alignment: .topLeading)
                 }
 
-                ScrollViewReader { proxy in
-                    ScrollView(.vertical) {
-                        LazyVStack(alignment: .leading, spacing: 8) {
-                            ForEach(screen.annotations) { annotation in
-                                issueExplorerRow(annotation)
-                                    .id(annotation.id)
-                            }
+                // scrollPosition moves only this list. ScrollViewReader's
+                // scrollTo also scrolled the whole report page, so the view
+                // jumped up or down on every Next/Previous.
+                ScrollView(.vertical) {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(screen.annotations) { annotation in
+                            issueExplorerRow(annotation)
+                                .id(annotation.id)
                         }
-                        .padding(.trailing, 4)
                     }
-                    .frame(minWidth: 360, maxWidth: 500)
-                    .frame(height: 420)
-                    .onChange(of: selectedAnnotationID) { _, newID in
-                        guard let newID else { return }
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            proxy.scrollTo(newID, anchor: .center)
-                        }
+                    .scrollTargetLayout()
+                    .padding(.trailing, 4)
+                }
+                .scrollPosition(id: $listScrollID, anchor: .center)
+                .frame(minWidth: 360, maxWidth: 500)
+                .frame(height: 420)
+                .onChange(of: selectedAnnotationID) { _, newID in
+                    guard let newID else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        listScrollID = newID
                     }
                 }
             }

@@ -416,6 +416,25 @@ nonisolated final class AccessibilityRegressionStore {
         return directory?.appendingPathComponent(String(safe) + ".json")
     }
 
+    /// Moves baselines saved by earlier versions out of UserDefaults. While
+    /// they are there the preferences file is over the 4 MB limit and macOS
+    /// refuses every preference write, including Settings.
+    func migrateLegacyBaselines() {
+        guard let directory else { return }
+        let legacy = defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix(keyPrefix) }
+        guard !legacy.isEmpty else { return }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for key in legacy {
+            let bundleID = String(key.dropFirst(keyPrefix.count))
+            if let data = defaults.data(forKey: key), let url = fileURL(for: bundleID),
+               !FileManager.default.fileExists(atPath: url.path) {
+                try? data.write(to: url, options: .atomic)
+            }
+            defaults.removeObject(forKey: key)
+        }
+        Log.reports.info("Moved \(legacy.count) regression baselines out of UserDefaults")
+    }
+
     func load(bundleID: String) -> AccessibilityRegressionSnapshot? {
         let data: Data?
         if let url = fileURL(for: bundleID), let fileData = try? Data(contentsOf: url) {

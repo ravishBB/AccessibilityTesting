@@ -576,8 +576,12 @@ final class PointerCancellationProbe {
 
     func test(rootNode: AccessibilityNode) async throws -> [AccessibilityRuleEvaluation] {
         let screen = rootNode.frame
+        // Tab and bottom-bar buttons switch screens, so they cannot show
+        // cancellation and would move the crawl off this screen.
+        let bottomBarTop = screen.minY + screen.height * 0.85
         guard let control = ProbeNodes.all(in: rootNode).first(where: { node in
             node.role == .button && node.visible && node.enabled &&
+            node.frame.minY < bottomBarTop && !node.type.contains("TabBar") &&
             ActionSafety.isSafeToExplore(node) &&
             !alreadyTested.contains(ProbeNodes.probeKey(node)) &&
             node.frame.width >= 24 && node.frame.height >= 24 &&

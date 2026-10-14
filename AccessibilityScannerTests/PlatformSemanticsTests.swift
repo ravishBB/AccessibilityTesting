@@ -139,4 +139,22 @@ struct PlatformSemanticsTests {
         let emptyBar = makeNode(type: "XCUIElementTypeNavigationBar", label: "", frame: CGRect(x: 0, y: 59, width: 393, height: 44))
         #expect(ScreenTitleRule().evaluate(node: emptyBar)?.status == .fail)
     }
+
+    @Test func iOSScrollIndicatorsAreIgnored() throws {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <AppiumAUT>
+          <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" label="App" enabled="true" visible="true" accessible="false" x="0" y="0" width="393" height="852" index="0">
+            <XCUIElementTypeScrollView type="XCUIElementTypeScrollView" enabled="true" visible="true" accessible="false" x="0" y="100" width="393" height="600" index="0">
+              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="Title" label="Title" enabled="true" visible="true" accessible="true" x="16" y="120" width="200" height="20" index="0"/>
+              <XCUIElementTypeOther type="XCUIElementTypeOther" label="Vertical scroll bar, 3 pages" enabled="true" visible="true" accessible="true" x="360" y="165" width="30" height="604" index="1"/>
+              <XCUIElementTypeOther type="XCUIElementTypeOther" label="Horizontal scroll bar, 1 page" enabled="true" visible="true" accessible="true" x="55" y="736" width="283" height="30" index="2"/>
+            </XCUIElementTypeScrollView>
+          </XCUIElementTypeApplication>
+        </AppiumAUT>
+        """
+        let labels = ProbeNodes.all(in: try WDAElementParser().parse(xml)).map(\.label)
+        #expect(labels.contains("Title"))
+        #expect(!labels.contains { $0.contains("scroll bar") })
+    }
 }

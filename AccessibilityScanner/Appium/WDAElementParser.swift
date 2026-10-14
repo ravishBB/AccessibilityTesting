@@ -84,9 +84,11 @@ final class WDAElementParser: NSObject, XMLParserDelegate {
                 visible: visible,
                 accessible: accessible,
                 focused: focused,
-                children: children.map {
-                    $0.toAccessibilityNode()
-                }
+                // UIKit's scroll indicators are system chrome, not app
+                // content; rules would otherwise flag them on every scroll view.
+                children: children
+                    .filter { !$0.isScrollIndicator }
+                    .map { $0.toAccessibilityNode() }
             )
 
             // Cross-platform frameworks can expose a generic XCUI element
@@ -98,6 +100,11 @@ final class WDAElementParser: NSObject, XMLParserDelegate {
             result.semantics.customActions = customActions
 
             return result
+        }
+
+        var isScrollIndicator: Bool {
+            type == "XCUIElementTypeOther" &&
+                (label.hasPrefix("Vertical scroll bar") || label.hasPrefix("Horizontal scroll bar"))
         }
 
         private func roleFromTraits(_ traits: String) -> AccessibilityRole? {

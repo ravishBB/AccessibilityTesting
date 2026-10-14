@@ -615,6 +615,12 @@ final class AppCrawler {
                     statusHandler("Found the way back to the previous screen — continuing.")
                     continue
                 }
+                // On the first screen the remaining actions are mostly tabs,
+                // reachable from anywhere: keep going rather than end the scan.
+                if depth == 0 {
+                    isLost = false
+                    continue
+                }
                 return
             }
 
@@ -625,6 +631,19 @@ final class AppCrawler {
                 )
 
                 continue
+            }
+
+            // A tab has no Back: pressing it on a tab screen goes somewhere
+            // unpredictable. Return by re-selecting this screen's tab.
+            if isSharedNavigation(action, in: snapshot.rootNode) {
+                if try await returnViaTabBar(to: snapshot.rootNode) {
+                    statusHandler("Returned to the previous screen through its tab.")
+                    continue
+                }
+                notes.record(.lostNavigation, example: action.displayName)
+                isLost = true
+                if depth == 0 { isLost = false; continue }
+                return
             }
 
             do {
