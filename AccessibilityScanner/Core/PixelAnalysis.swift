@@ -429,6 +429,13 @@ nonisolated enum TextRecognizer {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
+        // Inside this app Vision's Neural Engine model fails to compile
+        // (ANECCompile FAILED) and retries on every call. usesCPUOnly turns
+        // the Neural Engine off entirely; it is deprecated, so it is set
+        // through KVC only when the request still supports it.
+        if request.responds(to: NSSelectorFromString("setUsesCPUOnly:")) {
+            request.setValue(true, forKey: "usesCPUOnly")
+        }
         if let devices = try? request.supportedComputeStageDevices {
             for (stage, stageDevices) in devices {
                 if let cpu = stageDevices.first(where: { if case .cpu = $0 { return true }; return false }) {

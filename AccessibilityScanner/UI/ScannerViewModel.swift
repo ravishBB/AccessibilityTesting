@@ -362,10 +362,19 @@ final class ScannerViewModel: ObservableObject {
 
             status = "Reading initial accessibility hierarchy..."
 
-            let initialSnapshot = try await captureStableSnapshot(
+            var initialSnapshot = try await captureStableSnapshot(
                 appium: appium,
                 notes: notes
             )
+            // Flutter builds its accessibility tree only once it is asked
+            // for, so the first read after launch can be nearly empty.
+            var waits = 0
+            while ProbeNodes.meaningfulCount(in: initialSnapshot.rootNode) < 3, waits < 4 {
+                waits += 1
+                status = "Waiting for the app's accessibility tree..."
+                try await Task.sleep(for: .seconds(2))
+                initialSnapshot = try await captureStableSnapshot(appium: appium, notes: notes)
+            }
 
             let scanner = AccessibilityScanner()
 

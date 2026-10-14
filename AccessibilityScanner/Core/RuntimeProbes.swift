@@ -90,6 +90,27 @@ enum ProbeNodes {
         }
     }
 
+    /// Visible named elements plus controls. Flutter builds its accessibility
+    /// tree only once something asks for it, so the first reads after a
+    /// launch can be nearly empty.
+    static func meaningfulCount(in root: AccessibilityNode) -> Int {
+        all(in: root).filter { node in
+            node.visible && (!clean(node.label).isEmpty || AccessibilityRole.controls.contains(node.role))
+        }.count
+    }
+
+    /// Re-reads the hierarchy while it exposes almost nothing, up to ~8 s.
+    static func readSettledRoot(using appium: AppiumClient) async throws -> AccessibilityNode? {
+        var root = try? appium.makeParser().parse(try await appium.getSource())
+        var attempts = 0
+        while let current = root, meaningfulCount(in: current) < 3, attempts < 4 {
+            attempts += 1
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+            root = try? appium.makeParser().parse(try await appium.getSource())
+        }
+        return root
+    }
+
     static func probeKey(_ node: AccessibilityNode) -> String {
         [node.type, clean(node.identifier), clean(node.label)].joined(separator: "|")
     }
@@ -403,9 +424,7 @@ final class TextSizeProbe {
         var largeRoot: AccessibilityNode?
         do {
             try await Task.sleep(nanoseconds: 2_000_000_000)
-            if let source = try? await appium.getSource() {
-                largeRoot = try? appium.makeParser().parse(source)
-            }
+            largeRoot = try await ProbeNodes.readSettledRoot(using: appium)
         } catch {
             await restore(originalAndroidScale: originalAndroidScale)
             throw error
