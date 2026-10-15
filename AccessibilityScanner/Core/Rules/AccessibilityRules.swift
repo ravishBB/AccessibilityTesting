@@ -44,7 +44,6 @@ nonisolated struct AccessibilityRules {
             CommonAccessibleNameRule(),
             DescriptiveButtonNameRule(),
             ImageButtonNameRule(),
-            CommonEnhancedTargetSizeRule(),
             CommonMinimumTargetSizeRule(),
             PlaceholderOnlyNameRule(),
             DescriptiveInteractiveNameRule(),
@@ -66,8 +65,6 @@ nonisolated struct AccessibilityRules {
 
             ContrastStandardTextRule(),
             ContrastLargeTextRule(),
-            ContrastEnhancedStandardTextRule(),
-            ContrastEnhancedLargeTextRule(),
             ContrastImageBackgroundRule(),
             ContrastOpacityRule(),
             TextResizeRule(),
@@ -131,7 +128,8 @@ nonisolated struct CommonAccessibleNameRule: AccessibilityRule {
     let description = "Interactive controls must expose a meaningful accessible name."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.role), node.visible, node.enabled else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible, node.enabled,
+              !node.semantics.mergedIntoAncestor else { return nil }
         // Buttons have a dedicated descriptive-name rule. Keeping the common
         // rule off buttons prevents duplicate PASS/FAIL records.
         guard node.role != .button else { return nil }
@@ -151,34 +149,14 @@ nonisolated struct CommonAccessibleNameRule: AccessibilityRule {
     }
 }
 
-nonisolated struct CommonEnhancedTargetSizeRule: AccessibilityRule {
-    let id = "touch-target-size-44"
-    let title = "Interactive controls meet the enhanced target size (44pt) requirement"
-    let description = "Interactive controls should provide at least a 44×44 point target."
-
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.role), node.visible, node.enabled else { return nil }
-        let target = node.platform.recommendedTargetSize
-        let unit = node.platform.sizeUnit
-        let size = "\(Int(target))×\(Int(target)) \(unit)"
-        if node.frame.width < target || node.frame.height < target {
-            // AAA (2.5.5): reported, but not a blocking failure.
-            return RuleHelper.warning(ruleID: id, name: title, description: description, node: node,
-                                   message: "Interactive control does not meet the \(size) target size.",
-                                   remediation: "Increase the interactive area to at least \(size).")
-        }
-        return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                               message: "Interactive control meets the \(size) target size.")
-    }
-}
-
 nonisolated struct CommonMinimumTargetSizeRule: AccessibilityRule {
     let id = "touch-target-size-24"
     let title = "Interactive controls meet the minimum target size (24pt) requirement"
     let description = "Interactive controls should provide at least a 24×24 point target."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.role), node.visible, node.enabled else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible, node.enabled,
+              RuleHelper.isWhollyMeasurable(node) else { return nil }
         if node.frame.width < 24 || node.frame.height < 24 {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Interactive control does not meet the 24×24 \(node.platform.sizeUnit) minimum target size.",
@@ -235,6 +213,28 @@ private nonisolated enum RuleHelper {
               clean(node.label).isEmpty
         else { return false }
         return !clean(node.semantics.hint ?? node.semantics.tooltip).isEmpty
+    }
+
+    /// A control checked on its own, whose frame in this snapshot is its
+    /// real size: not merged into a clickable parent, not cut off by scrolling.
+    static func isWhollyMeasurable(_ node: AccessibilityNode) -> Bool {
+        !node.semantics.mergedIntoAncestor && !node.semantics.partiallyVisible
+    }
+
+    /// A descendant that exposes a real control role (not guessed).
+    static func childControl(of node: AccessibilityNode) -> AccessibilityNode? {
+        let roles: Set<AccessibilityRole> = [.checkBox, .radioButton, .toggle, .button, .slider]
+        return allNodes(node).dropFirst().first {
+            $0.visible && roles.contains($0.role) && !$0.semantics.roleInferred
+        }
+    }
+
+    /// Text that reads as a sentence or description, not as the label of a
+    /// tappable item.
+    static func isDescriptiveText(_ text: String) -> Bool {
+        let value = clean(text)
+        if wordList(value).count > 5 { return true }
+        return value.contains("—") || value.contains("(") || value.hasSuffix(".") || value.contains(": ")
     }
 
     static func childText(of node: AccessibilityNode) -> String? {
@@ -512,7 +512,7 @@ nonisolated struct DescriptiveButtonNameRule: AccessibilityRule {
     let description = "Button names should identify the action or purpose."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.role == .button, node.visible else { return nil }
+        guard node.role == .button, node.visible, !node.semantics.mergedIntoAncestor else { return nil }
         // Image-only buttons are reported by the image-button-specific rule.
         guard !RuleHelper.isImageLikeButton(node) else { return nil }
         guard !RuleHelper.isNamedOnlyByHint(node) else { return nil }
@@ -532,7 +532,7 @@ nonisolated struct ImageButtonNameRule: AccessibilityRule {
     let description = "Image-only buttons need an accessible name."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.role == .button, node.visible else { return nil }
+        guard node.role == .button, node.visible, !node.semantics.mergedIntoAncestor else { return nil }
         let imageLike = RuleHelper.isImageLikeButton(node)
         guard imageLike, !RuleHelper.isNamedOnlyByHint(node) else { return nil }
         return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
@@ -562,7 +562,8 @@ nonisolated struct DescriptiveInteractiveNameRule: AccessibilityRule {
     let description = "Interactive elements should expose meaningful names."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.role), node.visible else { return nil }
+        guard RuleHelper.controls.contains(node.role), node.visible,
+              !node.semantics.mergedIntoAncestor else { return nil }
         guard node.role != .button else { return nil }
         // A missing name is reported once, by accessible-name.
         guard !RuleHelper.clean(node.label).isEmpty else { return nil }
@@ -1076,10 +1077,17 @@ private nonisolated enum ContrastRuleFactory {
         title: String,
         description: String,
         target: ContrastTarget,
-        background: ContrastBackground,
-        enhanced: Bool = false
+        background: ContrastBackground
     ) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.isText(node), node.visible, !node.label.isEmpty else { return nil }
+        guard RuleHelper.isText(node), node.visible, !node.label.isEmpty,
+              !node.semantics.partiallyVisible else { return nil }
+        // A text field's frame is the whole box. Its label, placeholder and
+        // typed text are drawn by child text nodes (measured themselves) or
+        // are absent when nothing has been typed.
+        if RuleHelper.textInputs.contains(node.role),
+           RuleHelper.childText(of: node) != nil || RuleHelper.clean(node.value).isEmpty {
+            return nil
+        }
 
         let sizeClass = TextSizeEstimate.classify(node)
         let threshold: Double
@@ -1136,18 +1144,21 @@ private nonisolated enum ContrastRuleFactory {
             : "measured rendered contrast"
 
         if measurement.ratio + 0.001 < threshold {
+            // Over an image or gradient the worst-case pixel decides the
+            // ratio, and a busy area of the image can sit under one letter
+            // only. A tester judges whether the text is readable.
+            if measurement.variedBackground {
+                return RuleHelper.validation(ruleID: ruleID, name: title, description: description, node: node,
+                                             message: "The \(basis) is \(measured) (\(sizeText)), below \(requirement). Check whether the text stays readable over the whole background.",
+                                             remediation: "If any part of the text is hard to read, add a scrim or solid backing so the contrast is at least \(requirement).")
+            }
             if let possiblyLargeThreshold, measurement.ratio + 0.001 >= possiblyLargeThreshold {
                 return RuleHelper.validation(ruleID: ruleID, name: title, description: description, node: node,
                                              message: "The \(basis) is \(measured) (\(sizeText)). This is below \(requirement) for standard text but meets \(ratioText(possiblyLargeThreshold)), which is enough if the text is bold.",
                                              remediation: "Confirm whether the text is bold. If it is not, increase the contrast to at least \(requirement).")
             }
-            // Enhanced contrast is AAA (1.4.6): reported, but not a blocking failure.
             let message = "The \(basis) is \(measured) (\(sizeText)), below the required \(requirement)."
             let remediation = "Increase the effective foreground/background contrast to at least \(requirement)\(measurement.variedBackground ? ", for example with a scrim or solid backing behind the text" : "")."
-            if enhanced {
-                return RuleHelper.warning(ruleID: ruleID, name: title, description: description, node: node,
-                                          message: message, remediation: remediation)
-            }
             return RuleHelper.fail(ruleID: ruleID, name: title, description: description, node: node,
                                    message: message, remediation: remediation)
         }
@@ -1175,28 +1186,6 @@ nonisolated struct ContrastLargeTextRule: AccessibilityRule, ContextualAccessibi
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
     func evaluate(node: AccessibilityNode, context: AccessibilityRuleContext) -> AccessibilityRuleEvaluation? {
         ContrastRuleFactory.result(node: node, context: context, ruleID: id, title: title, description: description, target: .large(threshold: 3), background: .flat)
-    }
-}
-
-nonisolated struct ContrastEnhancedStandardTextRule: AccessibilityRule, ContextualAccessibilityRule {
-    let id = "contrast-standard-text-7"
-    let title = "Check if the contrast ratio of standard text ... is 7:1"
-    let description = "Standard text enhanced contrast requirement."
-    /// Needs the screenshot: the result comes from the contextual evaluation below.
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
-    func evaluate(node: AccessibilityNode, context: AccessibilityRuleContext) -> AccessibilityRuleEvaluation? {
-        ContrastRuleFactory.result(node: node, context: context, ruleID: id, title: title, description: description, target: .standard(threshold: 7, largeThreshold: 4.5), background: .any, enhanced: true)
-    }
-}
-
-nonisolated struct ContrastEnhancedLargeTextRule: AccessibilityRule, ContextualAccessibilityRule {
-    let id = "contrast-large-text-4-5"
-    let title = "Check if the contrast ratio of large text ... is 4.5:1"
-    let description = "Large text enhanced contrast requirement."
-    /// Needs the screenshot: the result comes from the contextual evaluation below.
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
-    func evaluate(node: AccessibilityNode, context: AccessibilityRuleContext) -> AccessibilityRuleEvaluation? {
-        ContrastRuleFactory.result(node: node, context: context, ruleID: id, title: title, description: description, target: .large(threshold: 4.5), background: .any, enhanced: true)
     }
 }
 
@@ -1242,14 +1231,28 @@ nonisolated struct LinkRoleRule: AccessibilityRule {
             return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                    message: "Element exposes the link role.")
         }
-        guard node.role == .staticText else { return nil }
+        guard node.role == .staticText, !node.semantics.insideActionable else { return nil }
         let label = node.label.lowercased()
         let looksLikeURL = label.contains("http://") || label.contains("https://") || label.contains("www.")
-        guard looksLikeURL || RuleHelper.words(node).contains("link") else { return nil }
-        // Heuristic: displayed URLs are often not tappable at all.
-        return RuleHelper.warning(ruleID: id, name: title, description: description, node: node,
-                               message: "Text appears link-like but is exposed as static text.",
-                               remediation: "Expose link semantics if activating the text navigates somewhere.")
+        guard looksLikeURL || (RuleHelper.words(node).contains("link") && !RuleHelper.isDescriptiveText(node.label))
+        else { return nil }
+        // The name itself says it is a link ("…, opens link"), so screen
+        // reader users hear it; whether that is acceptable is a judgement.
+        if RuleHelper.hasTrait(node, ["clickable"]), RuleHelper.words(node).contains("link") {
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                         message: "Tappable text has no link role, but its accessible name says it is a link. Check whether the announcement is clear enough.",
+                                         remediation: "Prefer exposing the link role (Role/accessibilityRole link) instead of putting \"link\" in the name.")
+        }
+        if RuleHelper.hasTrait(node, ["clickable"]) {
+            return RuleHelper.warning(ruleID: id, name: title, description: description, node: node,
+                                      message: "Tappable text appears link-like but is exposed as static text.",
+                                      remediation: "Expose link semantics (Role/accessibilityRole link) for text that navigates somewhere.")
+        }
+        // Not marked tappable: it may be plain text, or a gesture handler
+        // the hierarchy cannot show.
+        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                     message: "Text appears link-like but is exposed as static text and is not marked tappable. Check whether activating it navigates somewhere.",
+                                     remediation: "If it is a link, expose link semantics and make it focusable; otherwise no change is needed.")
     }
 }
 
@@ -1263,16 +1266,21 @@ nonisolated struct ButtonRoleRule: AccessibilityRule {
             return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                    message: "Element exposes button semantics.")
         }
-        guard node.role == .staticText else { return nil }
+        guard node.role == .staticText, !node.semantics.insideActionable,
+              !RuleHelper.isDescriptiveText(node.label) else { return nil }
         // Whole words, so "Saved" or "Closed" are not read as "save"/"close".
         let words = RuleHelper.words(node)
         let actionWords: Set<String> = ["button", "btn", "submit", "save", "cancel", "continue", "login", "signin", "delete", "close"]
         let isAction = !words.isDisjoint(with: actionWords) || RuleHelper.clean(node.label).lowercased() == "sign in"
         guard isAction else { return nil }
-        // Heuristic: the text may not be tappable at all.
-        return RuleHelper.warning(ruleID: id, name: title, description: description, node: node,
-                               message: "Text appears action-oriented but is exposed as static text.",
-                               remediation: "Expose an appropriate button role when the text performs an action.")
+        if RuleHelper.hasTrait(node, ["clickable"]) {
+            return RuleHelper.warning(ruleID: id, name: title, description: description, node: node,
+                                      message: "Tappable text appears action-oriented but is exposed as static text.",
+                                      remediation: "Expose a button role for text that performs an action.")
+        }
+        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                     message: "Text appears action-oriented but is exposed as static text and is not marked tappable. Check whether tapping it performs an action.",
+                                     remediation: "If it performs an action, expose a button role and make it focusable; otherwise no change is needed.")
     }
 }
 
@@ -1463,7 +1471,11 @@ nonisolated struct NonTextContrastRule: AccessibilityRule, ContextualAccessibili
 
     func evaluate(node: AccessibilityNode, context: AccessibilityRuleContext) -> AccessibilityRuleEvaluation? {
         guard Self.measuredRoles.contains(node.role), node.visible,
+              RuleHelper.isWhollyMeasurable(node),
               node.frame.width >= 8, node.frame.height >= 8 else { return nil }
+        // A clickable row around a checkbox or radio: the child control is
+        // what shows the state, and it is measured itself.
+        if node.semantics.roleInferred, RuleHelper.childControl(of: node) != nil { return nil }
 
         guard let sampler = PixelSampler.make(context: context),
               let measurement = PixelAnalyzer.componentContrast(frame: node.frame, sampler: sampler)
@@ -1482,6 +1494,13 @@ nonisolated struct NonTextContrastRule: AccessibilityRule, ContextualAccessibili
             return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                    message: "The control's boundary or fill has a measured contrast of \(ratio) against its surroundings, meeting 3:1.")
         }
+        // The frame includes touch padding: the outline, thumb or check
+        // mark sits inside it. Those parts identify the control.
+        if measurement.hasStrongPart {
+            let part = String(format: "%.2f:1", measurement.strongPartRatio)
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "Parts of the control (outline, thumb, mark or icon) have a measured contrast of \(part) against the background, meeting 3:1.")
+        }
 
         // A labelled button is identified by its text, so a faint boundary is
         // only a risk. Switches, checkboxes, sliders and similar rely on their
@@ -1490,6 +1509,16 @@ nonisolated struct NonTextContrastRule: AccessibilityRule, ContextualAccessibili
             return RuleHelper.warning(ruleID: id, name: title, description: description, node: node,
                                       message: "The button's boundary or fill has a measured contrast of \(ratio) against its surroundings, below 3:1. This matters if the shape is needed to recognise it as a control.",
                                       remediation: "Give the control a boundary or fill with at least 3:1 contrast, or make sure a clear text label identifies it.")
+        }
+        // The measurement covers the whole frame. When the frame also holds
+        // the label (a checkbox row) or mostly empty track area (a slider),
+        // the low reading may be the background, not the control's glyph,
+        // track or thumb.
+        let wide = node.frame.width > node.frame.height * 2
+        if node.role == .slider || wide || node.semantics.roleInferred {
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                         message: "The control's frame has a measured contrast of \(ratio) against its surroundings, below 3:1, but the frame includes more than the control's \(node.role == .slider ? "track and thumb" : "visual indicator"). Check the indicator itself.",
+                                         remediation: "Make sure the parts that identify the control and its state (\(node.role == .slider ? "track and thumb" : "box, circle, switch track or border")) have at least 3:1 contrast.")
         }
         return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                message: "The control's boundary or fill has a measured contrast of \(ratio) against its surroundings, below the required 3:1.",
@@ -1506,6 +1535,7 @@ nonisolated struct FormBorderContrastRule: AccessibilityRule, ContextualAccessib
 
     func evaluate(node: AccessibilityNode, context: AccessibilityRuleContext) -> AccessibilityRuleEvaluation? {
         guard RuleHelper.textInputs.contains(node.role), node.visible,
+              RuleHelper.isWhollyMeasurable(node),
               node.frame.width >= 8, node.frame.height >= 8 else { return nil }
 
         guard let sampler = PixelSampler.make(context: context),
@@ -1978,7 +2008,10 @@ nonisolated struct TextSpacingRule: AccessibilityRule {
     let title = "Text spacing requirements met"
     let description = "Content should remain usable with increased text spacing."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.isText(node), node.visible, !node.label.isEmpty else { return nil }
+        // One result per screen: the check applies to all text together.
+        guard node.role == .application || node.type == "hierarchy" else { return nil }
+        guard RuleHelper.allNodes(node).contains(where: { RuleHelper.isText($0) && $0.visible && !$0.label.isEmpty })
+        else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Text spacing requires applying increased spacing styles and rescanning the rendered layout.",
                                      remediation: "Test increased line/paragraph/letter/word spacing and verify no clipping or overlap.")
@@ -2010,6 +2043,13 @@ nonisolated struct MissingRoleRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.visible, node.semantics.roleInferred else { return nil }
         let simpleClass = node.type.split(separator: ".").last.map(String.init) ?? node.type
+        // A toggleable Row around a Checkbox or RadioButton: TalkBack reads
+        // the child's role and state as part of the row.
+        if let child = RuleHelper.childControl(of: node), child.semantics.mergedIntoAncestor {
+            let childClass = child.type.split(separator: ".").last.map(String.init) ?? child.type
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "The \(simpleClass) has no role of its own, but it contains a \(childClass) whose role TalkBack announces with it.")
+        }
         let expected = node.role == .checkBox ? "checkbox or switch" : "button"
         return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                message: "This element can be activated but exposes no role (class \(simpleClass)), so TalkBack does not say it is a \(expected).",

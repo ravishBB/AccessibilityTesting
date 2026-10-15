@@ -5,6 +5,7 @@
 
 
 import Foundation
+import CoreGraphics
 
 nonisolated struct HTMLReportExporter {
 
@@ -456,6 +457,30 @@ private nonisolated struct HTMLReportRenderer {
 
     // MARK: Screens
 
+    /// Fail / Validate / Pass switch for the screenshot markers. CSS only
+    /// (radio buttons and :has), so it works where scripts are blocked.
+    private func checkFilterHTML() -> String {
+        let hasChecks = report.screens.contains { screen in
+            screen.viewportScreenshots.contains { $0.checks != nil }
+        }
+        guard hasChecks else {
+            return "<p class=\"note\">Numbered markers on screenshots highlight confirmed failures only.</p>\n"
+        }
+        let all = report.screens.flatMap { $0.viewportScreenshots.flatMap { $0.checks ?? [] } }
+        func count(_ filter: ScreenshotCheckFilter) -> Int {
+            all.filter { ScreenshotCheckFilter($0.displayStatus) == filter }.count
+        }
+        var out = "<fieldset class=\"check-filter\">\n<legend>Show components on screenshots</legend>\n"
+        for filter in ScreenshotCheckFilter.allCases {
+            let checked = filter == .fail ? " checked" : ""
+            out += "<input type=\"radio\" name=\"check-filter\" id=\"cf-\(filter.rawValue)\" value=\"\(filter.rawValue)\"\(checked)>"
+            out += "<label for=\"cf-\(filter.rawValue)\" class=\"\(filter.rawValue)\">\(esc(filter.title)) (\(count(filter)))</label>\n"
+        }
+        out += "</fieldset>\n"
+        out += "<p class=\"note\">Markers are numbered within each filter.</p>\n"
+        return out
+    }
+
     private func screensSection() -> String {
         var out = "<section id=\"screens\">\n<h2>Screens &amp; evidence</h2>\n"
 
@@ -465,7 +490,7 @@ private nonisolated struct HTMLReportRenderer {
         }
 
         if options.includeScreenshots {
-            out += "<p class=\"note\">Numbered markers on screenshots highlight confirmed failures only. Warnings and manual-review items are listed in their sections but not drawn.</p>\n"
+            out += checkFilterHTML()
         }
 
         for screen in report.screens {
@@ -488,6 +513,7 @@ private nonisolated struct HTMLReportRenderer {
         struct Shot {
             let screenshot: ScanScreenshot
             let annotations: [ScreenshotAnnotation]
+            var checks: [ScreenshotAnnotation]? = nil
             let caption: String
         }
 
@@ -499,7 +525,8 @@ private nonisolated struct HTMLReportRenderer {
                     Shot(
                         screenshot: viewport.screenshot,
                         annotations: viewport.annotations,
-                        caption: total > 1 ? "Viewport \(viewport.index + 1) of \(total)" : "Screenshot"
+                        checks: viewport.checks,
+                        caption: total > 1 ? "Viewport \(viewport.index) of \(total)" : "Screenshot"
                     )
                 )
             }
@@ -511,6 +538,10 @@ private nonisolated struct HTMLReportRenderer {
 
         var out = "<div class=\"shots\">\n"
         for shot in shots {
+            if let checks = shot.checks {
+                out += filterableShotHTML(screen: screen, screenshot: shot.screenshot, checks: checks, caption: shot.caption)
+                continue
+            }
             let bytes = shot.screenshot.annotatedImageData ?? shot.screenshot.imageData
             out += "<figure>\n"
             if let encoded = ReportImageEncoder.encode(bytes, maxPixelSize: options.maxScreenshotPixelSize) {
@@ -532,6 +563,49 @@ private nonisolated struct HTMLReportRenderer {
             out += "</figure>\n"
         }
         out += "</div>\n"
+        return out
+    }
+
+    private func filterableShotHTML(
+        screen: ScreenScanResult,
+        screenshot: ScanScreenshot,
+        checks: [ScreenshotAnnotation],
+        caption: String
+    ) -> String {
+        let width = max(screenshot.hierarchyWidth, 1)
+        let height = max(screenshot.hierarchyHeight, 1)
+        func percent(_ value: Double) -> String { String(format: "%.2f%%", value * 100) }
+        func statusClass(_ check: ScreenshotAnnotation) -> String {
+            "chk f-\(ScreenshotCheckFilter(check.displayStatus).rawValue)"
+        }
+        let ordered = checks.sorted {
+            let lhs = ScreenshotCheckFilter($0.displayStatus).rawValue, rhs = ScreenshotCheckFilter($1.displayStatus).rawValue
+            return lhs == rhs ? $0.number < $1.number : lhs < rhs
+        }
+
+        var out = "<figure>\n<div class=\"shot\">\n"
+        if let encoded = ReportImageEncoder.encode(screenshot.imageData, maxPixelSize: options.maxScreenshotPixelSize) {
+            out += "<img src=\"\(encoded.dataURI)\" alt=\"\(esc("\(screen.name), \(caption)"))\">\n"
+        }
+        for check in ordered {
+            let frame = check.frame.intersection(CGRect(x: 0, y: 0, width: width, height: height))
+            guard !frame.isNull, frame.width > 0, frame.height > 0 else { continue }
+            out += "<span class=\"mark \(statusClass(check))\" style=\"left:\(percent(frame.minX / width));top:\(percent(frame.minY / height));width:\(percent(frame.width / width));height:\(percent(frame.height / height))\" aria-hidden=\"true\"><i>\(check.number)</i></span>\n"
+        }
+        out += "</div>\n<figcaption>\(esc(caption))</figcaption>\n"
+
+        if !ordered.isEmpty {
+            out += "<ol class=\"markers\">\n"
+            for check in ordered {
+                let name = check.elementLabel.isEmpty
+                    ? check.elementType.replacingOccurrences(of: "XCUIElementType", with: "")
+                    : check.elementLabel
+                let code = check.bbIssueID.map { " <code>\(esc($0))</code>" } ?? ""
+                out += "<li class=\"\(statusClass(check))\" value=\"\(check.number)\"><strong>\(esc(check.ruleName))</strong>\(code) – \(esc(name))<br><span class=\"muted\">\(esc(check.message))</span></li>\n"
+            }
+            out += "</ol>\n"
+        }
+        out += "</figure>\n"
         return out
     }
 
@@ -566,7 +640,7 @@ private nonisolated struct HTMLReportRenderer {
         var out = "<section id=\"bb-coverage\">\n<h2>BB ruleset coverage</h2>\n"
         out += "<p>All \(entries.count) rows of the BB ruleset for this \(esc(platform)) scan: "
         out += "\(count([.found, .passed, .review, .coveredBySibling])) produced results, \(count([.nothingApplicable])) were checked with nothing applicable, "
-        out += "\(count([.manual])) need a manual check, \(count([.unavailable])) cannot be tested on \(esc(platform)) through Appium and \(count([.onHold])) are on hold.</p>\n"
+        out += "\(count([.manual])) need a manual check, \(count([.unavailable])) cannot be tested on \(esc(platform)) through Appium, \(count([.onHold])) are on hold and \(count([.outOfScope])) are Level AAA, which is out of scope.</p>\n"
         out += "<table class=\"data\">\n<thead><tr><th scope=\"col\">BB ID</th><th scope=\"col\">Issue</th><th scope=\"col\">Type</th><th scope=\"col\">WCAG</th><th scope=\"col\">Result</th><th scope=\"col\">Detail</th></tr></thead>\n<tbody>\n"
         for entry in entries {
             out += "<tr><td><code>\(esc(entry.id))</code></td><td>\(esc(entry.issue))</td><td>\(esc(entry.type))</td><td>\(esc(entry.wcag))</td>"
@@ -735,6 +809,25 @@ private nonisolated struct HTMLReportRenderer {
     figure { margin:0; width:260px; } figure img { width:100%; height:auto; border:1px solid var(--line); border-radius:6px; display:block; }
     figcaption { font-size:.8rem; color:var(--muted); margin:4px 0; }
     .markers { padding-left:22px; margin:4px 0; font-size:.8rem; }
+    .markers li { margin-bottom:4px; }
+    .check-filter { border:1px solid var(--line); border-radius:8px; background:var(--card); padding:8px 12px; margin:8px 0; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .check-filter legend { font-size:.8rem; color:var(--muted); padding:0 4px; }
+    .check-filter input { position:absolute; opacity:0; }
+    .check-filter label { cursor:pointer; padding:4px 12px; border-radius:999px; border:1px solid var(--line); font-weight:600; font-size:.85rem; }
+    .check-filter input:focus-visible + label { outline:2px solid #175cd3; outline-offset:2px; }
+    .check-filter input:checked + label.fail { background:var(--fail-bg); color:var(--fail); border-color:var(--fail); }
+    .check-filter input:checked + label.validate { background:var(--validate-bg); color:var(--validate); border-color:var(--validate); }
+    .check-filter input:checked + label.pass { background:var(--pass-bg); color:var(--pass); border-color:var(--pass); }
+    .shot { position:relative; }
+    .mark { position:absolute; border:2px solid var(--fail); background:rgba(217,45,32,.08); border-radius:3px; box-sizing:border-box; }
+    .mark i { position:absolute; top:-9px; left:-9px; min-width:16px; height:16px; padding:0 3px; border-radius:8px; font:700 10px/16px system-ui,sans-serif; font-style:normal; text-align:center; color:#fff; background:var(--fail); }
+    .mark.f-warning { border-color:var(--warning); background:rgba(220,104,3,.08); } .mark.f-warning i { background:var(--warning); }
+    .check-filter input:checked + label.warning { background:var(--warning-bg); color:var(--warning); border-color:var(--warning); }
+    .mark.f-validate { border-color:var(--validate); background:rgba(21,112,239,.08); } .mark.f-validate i { background:var(--validate); }
+    .mark.f-pass { border-color:var(--pass); background:rgba(7,148,85,.08); } .mark.f-pass i { background:var(--pass); }
+    #screens:has(#cf-fail:checked) .chk:not(.f-fail),
+    #screens:has(#cf-validate:checked) .chk:not(.f-validate),
+    #screens:has(#cf-pass:checked) .chk:not(.f-pass) { display:none; }
     .screen { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px 18px; margin:14px 0; }
     .screen h3 { margin-top:0; }
     ul { padding-left:20px; }

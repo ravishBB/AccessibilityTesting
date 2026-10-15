@@ -24,7 +24,8 @@ final class KeyboardFocusTester {
 
     init(
         appium: AppiumClient,
-        maxAdditionalTabs: Int = 24,
+        // A full cycle needs one Tab per control plus the wrap back.
+        maxAdditionalTabs: Int = 60,
         settleMilliseconds: UInt64 = 60
     ) {
         self.appium = appium
@@ -45,7 +46,9 @@ final class KeyboardFocusTester {
         )
     }
 
-    func test(rootNode: AccessibilityNode) async throws -> Result {
+    /// `viewportRoots`: the hierarchy at each scroll position of this screen,
+    /// top first, so controls below the fold are expected too.
+    func test(rootNode: AccessibilityNode, viewportRoots: [AccessibilityNode] = []) async throws -> Result {
         if appium.platform == .ios {
             return Result(
                 evaluations: [baseEvaluation(
@@ -66,7 +69,9 @@ final class KeyboardFocusTester {
         }
         let activeModal = modalNode(in: rootNode)
         let controlsRoot = activeModal ?? rootNode
-        let controls = interactiveControls(in: controlsRoot)
+        let controls = activeModal == nil
+            ? interactiveControls(in: [rootNode] + viewportRoots)
+            : interactiveControls(in: [controlsRoot])
         guard !controls.isEmpty else {
             // An open modal with nothing to focus traps keyboard users: they
             // cannot reach a close button.
@@ -84,28 +89,39 @@ final class KeyboardFocusTester {
 
         var reachedKeys = Set<String>()
         var sequence: [String] = []
-        var seenFocusedKeys = Set<String>()
         var observedFocusedElement = false
         var trapDetected = false
+        var trapNode: AccessibilityNode?
+        var scrolledSinceScreenshot = false
+        var scrolledDuringTraversal = false
         var visualEvidence: [String: Bool] = [:]
         var indicatorContrast: [String: (node: AccessibilityNode, ratio: Double)] = [:]
         var obscuredBy: [String: (node: AccessibilityNode, cover: AccessibilityNode)] = [:]
         var traversalCompleted = false
         var hiddenFocused: [String: AccessibilityNode] = [:]
         var nonInteractiveFocused: [String: AccessibilityNode] = [:]
-        let baselineLabels = ProbeNodes.contentLabels(in: rootNode)
+        var baselineLabels = ProbeNodes.contentLabels(in: rootNode)
+        var baselineRoot = rootNode
         var contextChanged = false
         var stepsObserved = 0
 
-        let maxTabs = min(maxAdditionalTabs, max(1, controls.count + 2))
-        let baselineScreenshot = try? await appium.getScreenshot()
+        // Enough Tabs to pass every control and wrap back to the first one.
+        let maxTabs = min(maxAdditionalTabs, max(4, controls.count * 2 + 4))
+        var baselineScreenshot = try? await appium.getScreenshot()
+
+        var textFieldsLeftByArrow = Set<String>()
+        var skipNextTab = false
 
         for tabIndex in 0..<maxTabs {
             try Task.checkCancellation()
             if !observedFocusedElement && hiddenFocused.isEmpty && tabIndex >= tabsBeforeGivingUp {
                 break
             }
-            try await appium.pressTab()
+            if skipNextTab {
+                skipNextTab = false
+            } else {
+                try await appium.pressTab()
+            }
 
             if settleMilliseconds > 0 {
                 try await Task.sleep(for: .milliseconds(settleMilliseconds))
@@ -125,9 +141,18 @@ final class KeyboardFocusTester {
                 let currentLabels = ProbeNodes.contentLabels(in: root)
                 let missing = Double(baselineLabels.subtracting(currentLabels).count) / Double(baselineLabels.count)
                 if missing > 0.6 {
-                    contextChanged = true
-                    try? await appium.goBack()
-                    break
+                    // Tabbing to an item below the fold scrolls the list to
+                    // it: the content changes but the screen is the same.
+                    if Self.scrolledWithinSameContainer(before: baselineRoot, after: root) {
+                        baselineLabels = currentLabels
+                        baselineRoot = root
+                        scrolledSinceScreenshot = true
+                        scrolledDuringTraversal = true
+                    } else {
+                        contextChanged = true
+                        try? await appium.goBack()
+                        break
+                    }
                 }
             }
 
@@ -142,46 +167,64 @@ final class KeyboardFocusTester {
 
             observedFocusedElement = true
             let key = stableKey(for: focused)
-            let isNewFocus = seenFocusedKeys.insert(key).inserted
 
-            if sequence.last != key {
-                sequence.append(key)
+            // Focus stayed put, or came back to an element it already
+            // visited: the traversal has ended. Back at the first element is
+            // a full cycle. Anywhere else is a trap if focusable controls
+            // after it were never reached; otherwise it is the end of a
+            // screen that does not wrap.
+            if key == sequence.last || sequence.contains(key) {
+                // Text fields can keep Tab (multi-line input, or Tab typed as
+                // a character). Android's arrow-key navigation is the
+                // standard way out; try it once before judging.
+                if Self.isTextInput(focused), textFieldsLeftByArrow.insert(key).inserted {
+                    try await appium.pressArrowDown()
+                    if settleMilliseconds > 0 {
+                        try await Task.sleep(for: .milliseconds(settleMilliseconds))
+                    }
+                    skipNextTab = true
+                    continue
+                }
+                if key != sequence.first,
+                   unreachedFocusableControl(after: key, controls: controls, reached: reachedKeys) {
+                    trapDetected = true
+                    trapNode = focused
+                } else {
+                    traversalCompleted = true
+                }
+                break
             }
+            sequence.append(key)
 
             if let matching = controls.first(where: { stableKey(for: $0) == key }) {
-                reachedKeys.insert(stableKey(for: matching))
+                reachedKeys.insert(key)
 
-                if isNewFocus, let baselineScreenshot {
+                // Compare against a screenshot of the same scroll position;
+                // after a scroll every pixel moved, so there is no evidence.
+                if scrolledSinceScreenshot {
+                    baselineScreenshot = try? await appium.getScreenshot()
+                    scrolledSinceScreenshot = false
+                } else if let baselineScreenshot {
                     let focusedScreenshot = try? await appium.getScreenshot()
                     visualEvidence[key] = focusRegionChanged(
                         before: baselineScreenshot,
                         after: focusedScreenshot,
-                        node: matching,
-                        hierarchySize: rootNode.frame.size
+                        node: focused,
+                        hierarchySize: root.frame.size
                     )
                     if visualEvidence[key] == true,
                        let ratio = indicatorContrastRatio(
                         before: baselineScreenshot,
                         after: focusedScreenshot,
-                        node: matching,
-                        hierarchySize: rootNode.frame.size
+                        node: focused,
+                        hierarchySize: root.frame.size
                        ) {
                         indicatorContrast[key] = (matching, ratio)
                     }
                 }
-                if isNewFocus, let cover = coveringElement(over: focused, in: root) {
+                if let cover = coveringElement(over: focused, in: root) {
                     obscuredBy[key] = (matching, cover)
                 }
-            }
-
-            if !isNewFocus && reachedKeys.count < controls.count {
-                trapDetected = true
-                break
-            }
-
-            if reachedKeys.count == controls.count {
-                traversalCompleted = true
-                break
             }
         }
 
@@ -232,7 +275,7 @@ final class KeyboardFocusTester {
                     message: "Keyboard focus reached this interactive element during runtime Tab navigation.",
                     remediation: ""
                 ))
-            } else if trapDetected {
+            } else if traversalCompleted {
                 evaluations.append(baseEvaluation(
                     ruleID: "keyboard-focus",
                     name: "Interactive elements focusable using a keyboard interface",
@@ -240,8 +283,19 @@ final class KeyboardFocusTester {
                     node: control,
                     status: .fail,
                     severity: .error,
-                    message: "Keyboard focus became trapped before this interactive element was reached.",
-                    remediation: "Make the control keyboard focusable and ensure keyboard focus can reach it without becoming trapped."
+                    message: "Tab moved through the whole screen without ever reaching this control, so keyboard users cannot reach it.",
+                    remediation: "Make the control keyboard focusable (Modifier.focusable / clickable in Compose, focusable in React Native, Focus in Flutter)."
+                ))
+            } else if trapDetected {
+                evaluations.append(baseEvaluation(
+                    ruleID: "keyboard-focus",
+                    name: "Interactive elements focusable using a keyboard interface",
+                    description: "Interactive controls should be reachable through the supported keyboard focus mechanism.",
+                    node: control,
+                    status: .notTested,
+                    severity: .warning,
+                    message: "A keyboard trap earlier on the screen stopped Tab before this control, so whether it is focusable could not be checked.",
+                    remediation: "Fix the keyboard trap, then check this control again."
                 ))
             } else {
                 evaluations.append(baseEvaluation(
@@ -262,11 +316,11 @@ final class KeyboardFocusTester {
                 ruleID: "modal-accessibility",
                 name: "No keyboard trap present",
                 description: "Keyboard focus must be able to move away from a focused component.",
-                node: rootNode,
+                node: trapNode ?? rootNode,
                 status: .fail,
                 severity: .error,
-                message: "Keyboard focus repeated before all reachable interactive elements were visited, indicating a possible keyboard trap.",
-                remediation: "Verify that keyboard focus can leave the component using standard keyboard navigation or an exposed exit mechanism."
+                message: "Keyboard focus could not move past this element: Tab kept returning to it while focusable controls further down were never reached.",
+                remediation: "Let Tab and Shift+Tab move focus out of this element. Do not move focus back to it from onFocusChanged or key handlers."
             ))
         } else if traversalCompleted {
             evaluations.append(baseEvaluation(
@@ -295,9 +349,9 @@ final class KeyboardFocusTester {
         // 3. Focus-visible requires rendered evidence. Do not infer it from
         // the focused attribute alone.
         let reachedControls = controls.filter { reachedKeys.contains(stableKey(for: $0)) }
-        if visualEvidence.count == reachedControls.count && !visualEvidence.isEmpty {
+        if !visualEvidence.isEmpty {
             for control in reachedControls {
-                let visible = visualEvidence[stableKey(for: control)] ?? false
+                guard let visible = visualEvidence[stableKey(for: control)] else { continue }
                 evaluations.append(baseEvaluation(
                     ruleID: "focus-indicator",
                     name: "Customized keyboard focus visible",
@@ -329,8 +383,8 @@ final class KeyboardFocusTester {
                 ruleID: "focus-indicator-contrast",
                 status: ratio >= 3 ? .pass : .fail,
                 message: ratio >= 3
-                    ? "The focus indicator contrasts \(text) with the colours it replaces."
-                    : "The focus indicator contrasts only \(text) with the colours it replaces; at least 3:1 is required.",
+                    ? "The focus indicator contrasts \(text) with the colours next to it."
+                    : "The focus indicator contrasts only \(text) with the colours next to it; at least 3:1 is required.",
                 remediation: ratio >= 3 ? "" : "Make the focus indicator at least 3:1 against adjacent colours, for example a thicker or darker outline.",
                 node: node
             ))
@@ -363,8 +417,13 @@ final class KeyboardFocusTester {
             ))
         } else {
             // Compare the order focus really moved in with the visual reading order.
-            let observedFrames = observedControlKeys.compactMap { key in
-                controls.first { stableKey(for: $0) == key }?.frame
+            // After scrolling, frames from different viewports are not
+            // comparable; the control's position in the screen's content is.
+            let observedFrames = observedControlKeys.compactMap { key -> CGRect? in
+                guard let index = controls.firstIndex(where: { stableKey(for: $0) == key }) else { return nil }
+                return scrolledDuringTraversal
+                    ? CGRect(x: 0, y: CGFloat(index) * 10, width: 1, height: 1)
+                    : controls[index].frame
             }
             if let assessment = VisualOrder.assess(frames: observedFrames) {
                 if assessment.ratio >= VisualOrder.passThreshold {
@@ -479,19 +538,58 @@ final class KeyboardFocusTester {
         )
     }
 
-    private func interactiveControls(in root: AccessibilityNode) -> [AccessibilityNode] {
+    /// Controls in content order across the given scroll positions. Controls
+    /// merged into a clickable parent or cut off by the viewport are left out:
+    /// the parent, or the viewport showing them whole, stands for them.
+    private func interactiveControls(in roots: [AccessibilityNode]) -> [AccessibilityNode] {
         var result: [AccessibilityNode] = []
         var seen = Set<String>()
 
         func walk(_ node: AccessibilityNode) {
-            if node.visible && node.enabled && node.exists && (node.isInteractive || node.isKeyboardFocusable) {
+            if node.visible && node.enabled && node.exists && (node.isInteractive || node.isKeyboardFocusable),
+               !node.semantics.mergedIntoAncestor, !node.semantics.partiallyVisible {
                 let key = stableKey(for: node)
                 if seen.insert(key).inserted { result.append(node) }
             }
             for child in node.children { walk(child) }
         }
-        walk(root)
+        roots.forEach(walk)
         return result
+    }
+
+    /// A control after `key` in content order that the hierarchy marks
+    /// keyboard-focusable but Tab never reached.
+    private func unreachedFocusableControl(after key: String, controls: [AccessibilityNode], reached: Set<String>) -> Bool {
+        let start = controls.firstIndex { stableKey(for: $0) == key } ?? -1
+        return controls.enumerated().contains { index, control in
+            index > start && control.isKeyboardFocusable && !reached.contains(stableKey(for: control))
+        }
+    }
+
+    /// Both snapshots have the same scrolling container (same class and
+    /// frame) and the focused element, if any, is inside it.
+    static func scrolledWithinSameContainer(before: AccessibilityNode, after: AccessibilityNode) -> Bool {
+        func scrollers(_ root: AccessibilityNode) -> [AccessibilityNode] {
+            ProbeNodes.all(in: root).filter { node in
+                node.visible && node.frame.width > 0 && node.frame.height > 0 &&
+                    (node.role == .scrollView || node.role == .table ||
+                     node.traits.split(separator: " ").contains("scrollable"))
+            }
+        }
+        func same(_ a: AccessibilityNode, _ b: AccessibilityNode) -> Bool {
+            a.type == b.type &&
+                abs(a.frame.minX - b.frame.minX) < 2 && abs(a.frame.minY - b.frame.minY) < 2 &&
+                abs(a.frame.width - b.frame.width) < 2 && abs(a.frame.height - b.frame.height) < 2
+        }
+        let previous = scrollers(before)
+        let shared = scrollers(after).filter { candidate in previous.contains { same($0, candidate) } }
+        guard !shared.isEmpty else { return false }
+        guard let focused = ProbeNodes.all(in: after).first(where: { $0.focused && $0.visible }) else { return true }
+        return shared.contains { $0.frame.intersects(focused.frame) }
+    }
+
+    private static func isTextInput(_ node: AccessibilityNode) -> Bool {
+        AccessibilityRole.textInputs.contains(node.role)
     }
 
     private func firstFocusedNode(in root: AccessibilityNode) -> AccessibilityNode? {
@@ -528,8 +626,9 @@ final class KeyboardFocusTester {
     private func stableKey(for node: AccessibilityNode) -> String {
         let identifier = node.identifier.trimmingCharacters(in: .whitespacesAndNewlines)
         let label = node.label.trimmingCharacters(in: .whitespacesAndNewlines)
-        let frame = "\(Int(node.frame.origin.x.rounded())):\(Int(node.frame.origin.y.rounded())):\(Int(node.frame.width.rounded())):\(Int(node.frame.height.rounded()))"
-        return [node.type, identifier, label, frame].joined(separator: "|")
+        // No position: Tab scrolls the screen, so the same control moves.
+        let size = "\(Int((node.frame.width / 4).rounded())):\(Int((node.frame.height / 4).rounded()))"
+        return [node.type, identifier, label, size].joined(separator: "|")
     }
 
     /// Contrast between the focus indicator and what it replaced: the median
@@ -560,20 +659,24 @@ final class KeyboardFocusTester {
             return 0.2126 * channel(p[i]) + 0.7152 * channel(p[i + 1]) + 0.0722 * channel(p[i + 2])
         }
 
-        var afterL: [Double] = []
-        var beforeL: [Double] = []
+        // WCAG 1.4.11 (AA): the indicator against the colours next to it,
+        // which are the pixels focus did not change. Comparing with the
+        // colours it replaced is the AAA Focus Appearance measure.
+        var indicatorL: [Double] = []
+        var adjacentL: [Double] = []
         for i in Swift.stride(from: 0, to: beforePixels.count - 3, by: 4) {
             let distance = abs(Int(beforePixels[i]) - Int(afterPixels[i]))
                 + abs(Int(beforePixels[i + 1]) - Int(afterPixels[i + 1]))
                 + abs(Int(beforePixels[i + 2]) - Int(afterPixels[i + 2]))
             if distance > 60 {
-                afterL.append(luminance(afterPixels, i))
-                beforeL.append(luminance(beforePixels, i))
+                indicatorL.append(luminance(afterPixels, i))
+            } else if distance < 12 {
+                adjacentL.append(luminance(afterPixels, i))
             }
         }
-        guard afterL.count >= 20 else { return nil }
-        let a = afterL.sorted()[afterL.count / 2]
-        let b = beforeL.sorted()[beforeL.count / 2]
+        guard indicatorL.count >= 20, adjacentL.count >= 20 else { return nil }
+        let a = indicatorL.sorted()[indicatorL.count / 2]
+        let b = adjacentL.sorted()[adjacentL.count / 2]
         return (max(a, b) + 0.05) / (min(a, b) + 0.05)
     }
 

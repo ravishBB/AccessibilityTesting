@@ -36,8 +36,15 @@ struct BBIssueCatalogTests {
 
     @Test func orientationLockedVersusMissingContent() {
         let root = makeNode(type: "XCUIElementTypeApplication")
-        #expect(bb("orientation-support", .warning, root, message: "The screen is locked in one orientation.") == "BB40056")
+        #expect(bb("orientation-support", .fail, root, message: "The screen is locked in one orientation.") == "BB40056")
         #expect(bb("orientation-support", .fail, root, message: "3 of 10 labels are not exposed") == "BB40055")
+    }
+
+    @Test func warningsBecomeValidateWithTheirBBCode() {
+        let link = makeNode(type: "XCUIElementTypeStaticText", label: "Privacy link")
+        let evaluation = makeEvaluation(ruleID: "text-link-role", status: .warning, node: link)
+        #expect(evaluation.status == .validate)
+        #expect(BBIssueCatalog.issue(for: evaluation)?.id == "BB40042")
     }
 
     @Test func placeholderAndTextDisplayShareBB40034() {
@@ -59,8 +66,6 @@ struct BBIssueCatalogTests {
     @Test func sheetRenumberingIsApplied() {
         // 13 Oct 2026 sheet: enhanced target size is back, state and role
         // codes were renumbered, missing names on other controls got BB30548.
-        #expect(bb("touch-target-size-44", .warning, makeNode()) == "BB40029")
-        #expect(bb("touch-target-size-44", .pass, makeNode()) == "BB40027")
         #expect(bb("state-updates-after-interaction", .fail, makeNode()) == "BB40280")
         #expect(bb("role-trait-consistency", .fail, makeNode()) == "BB40281")
         #expect(bb("state-trait-consistency", .fail, makeNode()) == "BB40069")

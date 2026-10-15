@@ -75,6 +75,12 @@ final class ScannerViewModel: ObservableObject {
 
                 devices = discoveredDevices
 
+                // A phone adb sees but cannot use is not in the list; say why.
+                let blocked = await Task.detached { AndroidDeviceService().blockedDeviceNotes() }.value
+                if !blocked.isEmpty {
+                    errorMessage = blocked.joined(separator: "\n")
+                }
+
                 if let bootedDevice =
                     discoveredDevices.first(
                         where: {

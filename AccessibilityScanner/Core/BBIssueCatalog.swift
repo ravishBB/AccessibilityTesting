@@ -15,7 +15,7 @@ nonisolated struct BBIssue: Codable, Hashable {
 nonisolated enum BBIssueCatalog {
 
     /// Bump whenever a mapping is added, removed or changed.
-    static let version = "2026.10.7"
+    static let version = "2026.10.15.1"
 
     // MARK: - Lookup
 
@@ -40,13 +40,24 @@ nonisolated enum BBIssueCatalog {
     }
 
     private static func issueID(for evaluation: AccessibilityRuleEvaluation) -> String? {
-        let outcome: Outcome
+        let id = mappedID(for: evaluation)
+        // A Validate result with no Validate-type code in the sheet carries
+        // the Fail code the tester records if the issue is confirmed.
+        if id == nil, evaluation.status == .validate {
+            return mappedID(for: evaluation, outcomeOverride: .fail)
+        }
+        return id
+    }
+
+    private static func mappedID(for evaluation: AccessibilityRuleEvaluation, outcomeOverride: Outcome? = nil) -> String? {
+        var outcome: Outcome
         switch evaluation.status {
         case .pass: outcome = .pass
         case .fail, .warning: outcome = .fail
         case .validate: outcome = .review
         case .notTested: return nil
         }
+        if let outcomeOverride { outcome = outcomeOverride }
 
         let role = evaluation.elementRole
         let missingName = evaluation.elementLabel
@@ -80,10 +91,6 @@ nonisolated enum BBIssueCatalog {
         case ("contrast-large-text-3", .fail): return "BB40020"
         case ("contrast-large-text-3", .pass): return "BB40022"
         case ("contrast-large-text-3", .review): return "BB40009"
-        case ("contrast-standard-text-7", .fail): return "BB40019"
-        case ("contrast-standard-text-7", .pass): return "BB40025"
-        case ("contrast-large-text-4-5", .fail): return "BB40021"
-        case ("contrast-large-text-4-5", .pass): return "BB40023"
         case ("contrast-text-over-image", .fail): return largeText ? "BB40020" : "BB40018"
         case ("contrast-text-over-image", .pass): return largeText ? "BB40022" : "BB40024"
         case ("contrast-text-over-image", .review): return largeText ? "BB40014" : "BB40010"
@@ -106,8 +113,6 @@ nonisolated enum BBIssueCatalog {
         // Target size
         case ("touch-target-size-24", .fail): return "BB40030"
         case ("touch-target-size-24", .pass): return "BB40028"
-        case ("touch-target-size-44", .fail): return "BB40029"
-        case ("touch-target-size-44", .pass): return "BB40027"
         case ("interactive-target-overlap", .fail): return "BB40180"
         case ("interactive-target-overlap", .pass): return "BB40181"
 
@@ -122,6 +127,7 @@ nonisolated enum BBIssueCatalog {
         case ("heading-quality", .review): return "BB40040"
         case ("heading-candidate", .review): return "BB40041"
         case ("missing-role", .fail): return "BB40282"
+        case ("missing-role", .pass): return "BB40275"
         case ("text-link-role", .fail): return "BB40042"
         case ("text-button-role", .fail): return "BB40043"
         case ("role-trait-consistency", .fail): return "BB40281"

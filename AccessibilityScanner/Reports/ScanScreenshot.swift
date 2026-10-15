@@ -38,16 +38,22 @@ nonisolated struct ScreenshotViewport: Identifiable, Codable {
     let id: UUID
     let index: Int
     let screenshot: ScanScreenshot
+    /// Failures, as marked on the annotated image.
     let annotations: [ScreenshotAnnotation]
+    /// Every component check in this viewport (pass, fail, warning,
+    /// validate), for the report view's status filter. nil in older reports.
+    let checks: [ScreenshotAnnotation]?
 
     init(
         index: Int,
         screenshot: ScanScreenshot,
-        annotations: [ScreenshotAnnotation] = []
+        annotations: [ScreenshotAnnotation] = [],
+        checks: [ScreenshotAnnotation]? = nil
     ) {
         self.id = UUID()
         self.index = index
         self.screenshot = screenshot
         self.annotations = annotations
+        self.checks = checks
     }
 }

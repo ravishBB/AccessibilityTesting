@@ -85,16 +85,16 @@ BB40140,Images,Missing textual description for map,Fail,1.1.1,A,Critical,Yes,Yes
 BB40141,Images,Map view has a text alternative,Pass,1.1.1,A,,Yes,Yes,Yes,Yes,,map-text-alternative,
 BB40278,Forms,Missing value for adjustable control,Fail,4.1.2,A,Major,Yes,Partial,iOS: Yes · Android: Partial,iOS: Yes · Android: Partial,,adjustable-accessibility-value,Android dump has no RangeInfo/stateDescription: review only.
 BB40279,Forms,Value is provided for adjustable control,Pass,4.1.2,A,,Yes,Partial,iOS: Yes · Android: Partial,iOS: Yes · Android: Partial,,adjustable-accessibility-value,
-BB40012,Color,Check if the contrast ratio of standard text between the foreground and background image is 7:1,Validate,1.4.3,AAA,Major,On hold (AAA),On hold (AAA),On hold (AAA),On hold (AAA),,—,
-BB40013,Color,Check if the contrast ratio of standard text between the foreground and background with opacity is 7:1,Validate,1.4.3,AAA,Major,On hold (AAA),On hold (AAA),On hold (AAA),On hold (AAA),,—,
-BB40015,Color,Check if the contrast ratio of Large text between the foreground and background with background image is 4.5:1,Validate,1.4.3,AAA,Major,On hold (AAA),On hold (AAA),On hold (AAA),On hold (AAA),,—,
-BB40017,Color,Check if the contrast ratio of Large text between the foreground and background with opacity is 4.5:1,Validate,1.4.3,AAA,Major,On hold (AAA),On hold (AAA),On hold (AAA),On hold (AAA),,—,
-BB40019,Color,Standard text does not have enhanced contrast with its background,Fail,1.4.6,AAA,Major,Yes,Yes,Yes,Yes,,contrast-standard-text-7,Tracker: On Hold (AAA). Scanner reports as warning.
-BB40021,Color,Large text does not have enhanced contrast with its background,Fail,1.4.6,AAA,Major,Yes,Yes,Yes,Yes,,contrast-large-text-4-5,Tracker: On Hold (AAA).
-BB40023,Color,Large text meets the required 4.5:1 contrast ratio between the foreground and background color,Pass,1.4.3,AAA,,Yes,Yes,Yes,Yes,,contrast-large-text-4-5,
-BB40025,Color,Standard text meets the required 7:1 contrast ratio between the foreground and background color,Pass,1.4.3,AAA,,Yes,Yes,Yes,Yes,,contrast-standard-text-7,
-BB40027,Target Size,Interactive controls meet the enhanced target size (44pt) requirement,Pass,2.4.5,AAA,,Yes,Yes,Yes,Yes,,touch-target-size-44,Tracker lists 2.4.5; scanner uses 2.5.5.
-BB40029,Target Size,Interactive control doesn't meet enhanced target size requirements,Fail,2.5.5,AAA,Major,Yes,Yes,Yes,Yes,,touch-target-size-44,Reported as warning (AAA).
+BB40012,Color,Check if the contrast ratio of standard text between the foreground and background image is 7:1,Validate,1.4.3,AAA,Major,Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),,,Level AAA is not part of the audit scope.
+BB40013,Color,Check if the contrast ratio of standard text between the foreground and background with opacity is 7:1,Validate,1.4.3,AAA,Major,Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),,,Level AAA is not part of the audit scope.
+BB40015,Color,Check if the contrast ratio of Large text between the foreground and background with background image is 4.5:1,Validate,1.4.3,AAA,Major,Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),,,Level AAA is not part of the audit scope.
+BB40017,Color,Check if the contrast ratio of Large text between the foreground and background with opacity is 4.5:1,Validate,1.4.3,AAA,Major,Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),,,Level AAA is not part of the audit scope.
+BB40019,Color,Standard text does not have enhanced contrast with its background,Fail,1.4.6,AAA,Major,Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),,,Level AAA is not part of the audit scope.
+BB40021,Color,Large text does not have enhanced contrast with its background,Fail,1.4.6,AAA,Major,Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),,,Level AAA is not part of the audit scope.
+BB40023,Color,Large text meets the required 4.5:1 contrast ratio between the foreground and background color,Pass,1.4.3,AAA,,Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),,,Level AAA is not part of the audit scope.
+BB40025,Color,Standard text meets the required 7:1 contrast ratio between the foreground and background color,Pass,1.4.3,AAA,,Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),,,Level AAA is not part of the audit scope.
+BB40027,Target Size,Interactive controls meet the enhanced target size (44pt) requirement,Pass,2.4.5,AAA,,Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),,,Level AAA is not part of the audit scope.
+BB40029,Target Size,Interactive control doesn't meet enhanced target size requirements,Fail,2.5.5,AAA,Major,Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),,,Level AAA is not part of the audit scope.
 BB40034,Text Resize,Text displays correctly,Pass,1.4.10,AA,,Yes,Yes,Yes,Yes,,text-clipping (Pass) / placeholder-only-name (Fail),Tracker comment plans to drop the Pass variant.
 BB40034,Forms,Placeholder text used as the only accessible name — no visible label present,Fail,3.3.2,A,Major,Yes,Yes,Yes,Yes,,text-clipping (Pass) / placeholder-only-name (Fail),Tracker comment plans to drop the Pass variant.
 BB40035,Tabs,Check if segmented controls needs to be interactive,Validate,2.1.1,A,Blocker,Yes,Yes,Yes,Partial,,segmented-control-interactive,
@@ -124,7 +124,7 @@ BB40128,Heading,Non-descriptive heading text,Fail,2.4.6,AA,Major,Yes,Yes,Yes,Yes
 BB40085,Images,Image has label,Pass,1.1.1,A,,Yes,Yes,Yes,Partial,,image-accessible-label,
 BB40071,Keyboard,Gesture-only control not operable with keyboard,Fail,2.1.1,A,Blocker,Manual only,Manual only,Manual only,Manual only,,gesture-keyboard-operable,See BB40190.
 BB40072,Keyboard,Gesture-only control is operable with keyboard,Pass,2.1.1,A,,Manual only,Manual only,Manual only,Manual only,,gesture-keyboard-operable,
-BB40077,Keyboard,Interactive control meets enhanced target size requirements,Pass,2.5.5,AAA,,Yes,Yes,Yes,Yes,BB40027,touch-target-size-44,Verdict given as BB40027. Duplicate of BB40027; scanner reports BB40027.
+BB40077,Keyboard,Interactive control meets enhanced target size requirements,Pass,2.5.5,AAA,,Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),Out of scope (AAA),BB40027,,Level AAA is not part of the audit scope.
 BB40078,Hidden,Button hidden from screen reader users,Fail,1.3.1,A,Critical,Yes,Yes,Yes,No,,interactive-screen-reader-hidden,See BB40046.
 BB40125,Forms,Accessible name for interactive element is descriptive,Pass,2.4.6,AA,,Yes,Yes,Yes,Yes,,button-name-descriptive / interactive-name-descriptive,
 BB40190,Keyboard,Complex gesture has no accessibility alternative,Fail,2.1.1,A,Blocker,Manual only,Manual only,Manual only,Manual only,,complex-gesture-alternative,Whether a gesture exists cannot be seen in the hierarchy.

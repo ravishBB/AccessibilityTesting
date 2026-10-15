@@ -153,7 +153,7 @@ final class WDAElementParser: NSObject, XMLParserDelegate {
             throw WDAParserError.noRootElement
         }
 
-        return root.toAccessibilityNode()
+        return root.toAccessibilityNode().annotatingLayout()
     }
 
     // MARK: - XML Start Element

@@ -77,7 +77,8 @@ nonisolated enum ScreenResultBuilder {
                         hierarchyWidth: capture.snapshot.rootNode.frame.width,
                         hierarchyHeight: capture.snapshot.rootNode.frame.height
                     ),
-                    annotations: annotations
+                    annotations: annotations,
+                    checks: ScreenshotAnnotation.makeAnnotations(from: evaluations, statuses: Self.checkStatuses)
                 )
             )
         }
@@ -114,12 +115,16 @@ nonisolated enum ScreenResultBuilder {
                         hierarchyWidth: crawledScreen.rootNode.frame.width,
                         hierarchyHeight: crawledScreen.rootNode.frame.height
                     ),
-                    annotations: annotations
+                    annotations: annotations,
+                    checks: ScreenshotAnnotation.makeAnnotations(from: contextualEvaluations, statuses: Self.checkStatuses)
                 )
             )
         }
 
         var nextAnnotationNumber = 1
+        // Checks are numbered within their filter (Fail, Validate, Pass), so
+        // the list for each filter reads 1, 2, 3… across all viewports.
+        var nextCheckNumber: [ScreenshotCheckFilter: Int] = [:]
         var normalizedViewports: [ScreenshotViewport] = []
         var allAnnotations: [ScreenshotAnnotation] = []
 
@@ -131,11 +136,19 @@ nonisolated enum ScreenResultBuilder {
                 return normalized
             }
 
+            let normalizedChecks = viewport.checks?.map { check -> ScreenshotAnnotation in
+                let filter = ScreenshotCheckFilter(check.displayStatus)
+                let number = nextCheckNumber[filter, default: 1]
+                nextCheckNumber[filter] = number + 1
+                return check.renumbered(number)
+            }
+
             normalizedViewports.append(
                 ScreenshotViewport(
                     index: viewport.index,
                     screenshot: viewport.screenshot,
-                    annotations: normalizedAnnotations
+                    annotations: normalizedAnnotations,
+                    checks: normalizedChecks
                 )
             )
         }
@@ -173,6 +186,8 @@ nonisolated enum ScreenResultBuilder {
     /// full-resolution PNG; what is kept is only shown or exported (both at
     /// most 900 px), so a 1600 px JPEG cuts memory and saved-report size by
     /// roughly 85% with no visible loss.
+    static let checkStatuses: Set<RuleResultStatus> = [.fail, .warning, .validate, .pass]
+
     static func storedImage(_ data: Data) -> Data {
         ReportImageEncoder.encode(data, maxPixelSize: 1600, quality: 0.82)?.data ?? data
     }

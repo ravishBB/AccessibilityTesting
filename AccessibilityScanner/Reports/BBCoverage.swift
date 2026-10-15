@@ -17,6 +17,8 @@ nonisolated struct BBCoverageEntry: Codable, Hashable {
         case coveredBySibling
         case nothingApplicable
         case manual, unavailable, onHold
+        /// AAA: not part of the audit scope.
+        case outOfScope
 
         var title: String {
             switch self {
@@ -28,6 +30,7 @@ nonisolated struct BBCoverageEntry: Codable, Hashable {
             case .manual: return "Manual check"
             case .unavailable: return "Not testable"
             case .onHold: return "On hold"
+            case .outOfScope: return "Out of scope (AAA)"
             }
         }
 
@@ -39,7 +42,7 @@ nonisolated struct BBCoverageEntry: Codable, Hashable {
             case .coveredBySibling: return "pass"
             case .nothingApplicable: return "neutral"
             case .manual: return "nottested"
-            case .unavailable, .onHold: return "norule"
+            case .unavailable, .onHold, .outOfScope: return "norule"
             }
         }
     }
@@ -73,12 +76,19 @@ nonisolated enum BBCoverage {
         }
 
         return BBRuleset.rules.map { rule in
+            // The audit covers Level A and AA only.
+            if rule.level.uppercased() == "AAA" {
+                return entry(rule, .outOfScope, 0, "Level AAA is not part of the audit scope, so the scanner does not check it.")
+            }
             let count: Int
             let outcome: BBCoverageEntry.Outcome
             switch rule.type {
             case .fail:
-                count = fails[rule.id] ?? 0
-                outcome = .found
+                // A Validate result can carry a Fail-type code: the code the
+                // tester records if it is confirmed.
+                let found = fails[rule.id] ?? 0
+                count = found > 0 ? found : reviews[rule.id] ?? 0
+                outcome = found > 0 ? .found : .review
             case .pass:
                 count = passes[rule.id] ?? 0
                 outcome = .passed

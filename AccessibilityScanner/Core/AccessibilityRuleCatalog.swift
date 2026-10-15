@@ -47,7 +47,7 @@ nonisolated struct AccessibilityRuleMetadata: Codable, Hashable {
 nonisolated enum AccessibilityRuleCatalog {
 
     /// Bump whenever a rule is added, removed, re-mapped or its logic changes.
-    static let version = "2026.10.13"
+    static let version = "2026.10.15"
 
     static func metadata(for ruleID: String) -> AccessibilityRuleMetadata {
         if let known = table[ruleID] { return known }
@@ -173,8 +173,6 @@ nonisolated enum AccessibilityRuleCatalog {
         e("contrast-large-text-3", "1.4.3", "Contrast (Minimum)", "AA", .serious, "Low-vision and colour-blind users", contrastTest),
         e("contrast-text-over-image", "1.4.3", "Contrast (Minimum)", "AA", .serious, "Low-vision users", contrastTest),
         e("contrast-opacity", "1.4.3", "Contrast (Minimum)", "AA", .moderate, "Low-vision users", contrastTest),
-        e("contrast-standard-text-7", "1.4.6", "Contrast (Enhanced)", "AAA", .minor, "Low-vision users", contrastTest),
-        e("contrast-large-text-4-5", "1.4.6", "Contrast (Enhanced)", "AAA", .minor, "Low-vision users", contrastTest),
         e("non-text-contrast", "1.4.11", "Non-text Contrast", "AA", .serious, "Low-vision users", "Inspect icons and control boundaries and confirm they are clearly distinguishable."),
         e("form-border-contrast", "1.4.11", "Non-text Contrast", "AA", .moderate, "Low-vision users", "Inspect the field border and confirm it is clearly visible against the background."),
         e("loading-indicator-contrast", "1.4.11", "Non-text Contrast", "AA", .minor, "Low-vision users", "Inspect the loading indicator and confirm it is clearly visible."),
@@ -219,7 +217,6 @@ nonisolated enum AccessibilityRuleCatalog {
         // Target size
         e("touch-target-size-24", "2.5.8", "Target Size (Minimum)", "AA", .moderate, "Users with motor disabilities", targetTest),
         e("interactive-target-overlap", "2.5.8", "Target Size (Minimum)", "AA", .serious, "Users with motor disabilities", "Try activating each overlapping control and confirm the intended one responds."),
-        e("touch-target-size-44", "2.5.5", "Target Size (Enhanced)", "AAA", .minor, "Users with motor disabilities", targetTest),
 
         // Navigation / labels
         e("screen-title", "2.4.2", "Page Titled / Screen Title", "A", .moderate, sr, "Open the screen and confirm a title that identifies it is announced."),

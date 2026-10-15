@@ -687,6 +687,11 @@ final class AppiumClient {
         try await pressKey(value: "\u{E004}")
     }
 
+    /// Moves keyboard focus out of a text field that keeps Tab for itself.
+    func pressArrowDown() async throws {
+        try await pressKey(value: "\u{E015}")
+    }
+
     /// Activates the keyboard-focused control: Space on iOS (Full Keyboard
     /// Access), Enter on Android.
     func pressActivate() async throws {

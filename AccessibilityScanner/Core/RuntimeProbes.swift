@@ -170,7 +170,7 @@ final class OrientationProbe {
             return [
                 ProbeEvaluation.make(
                     ruleID: ruleID,
-                    status: .warning,
+                    status: .fail,
                     message: "The screen stayed in \(original.lowercased()) when the device was rotated to \(target.lowercased()). The screen is locked in one orientation.",
                     remediation: "Support both orientations unless a single orientation is essential to the content.",
                     node: rootNode

@@ -22,6 +22,12 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
     let frameY: Double
     let frameWidth: Double
     let frameHeight: Double
+    /// nil in reports saved before the screenshot filter existed, which held
+    /// failures only.
+    let status: RuleResultStatus?
+    let bbIssueID: String?
+
+    var displayStatus: RuleResultStatus { status ?? .fail }
 
     init(
         number: Int,
@@ -40,6 +46,8 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
         self.frameY = evaluation.frameY
         self.frameWidth = evaluation.frameWidth
         self.frameHeight = evaluation.frameHeight
+        self.status = evaluation.status
+        self.bbIssueID = BBIssueCatalog.issue(for: evaluation)?.id
     }
 
     var frame: CGRect {
@@ -65,7 +73,9 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
             frameX: frameX,
             frameY: frameY,
             frameWidth: frameWidth,
-            frameHeight: frameHeight
+            frameHeight: frameHeight,
+            status: status,
+            bbIssueID: bbIssueID
         )
     }
 
@@ -82,7 +92,9 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
         frameX: Double,
         frameY: Double,
         frameWidth: Double,
-        frameHeight: Double
+        frameHeight: Double,
+        status: RuleResultStatus?,
+        bbIssueID: String?
     ) {
         self.id = id
         self.number = number
@@ -97,6 +109,8 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
         self.frameY = frameY
         self.frameWidth = frameWidth
         self.frameHeight = frameHeight
+        self.status = status
+        self.bbIssueID = bbIssueID
     }
 
     // MARK: - Stable Screenshot Ordering
@@ -109,14 +123,17 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
     /// top-to-bottom, then left-to-right. Exact ties are resolved by rule ID,
     /// rule name, message, and element type so the result remains deterministic.
     static func makeAnnotations(
-        from evaluations: [AccessibilityRuleEvaluation]
+        from evaluations: [AccessibilityRuleEvaluation],
+        statuses: Set<RuleResultStatus> = [.fail]
     ) -> [ScreenshotAnnotation] {
-        // Screenshot highlighting is reserved for actual failed checks.
-        // Warnings and manual-validation items remain available in the
-        // report, but they do not place a marker/highlight on the screenshot.
-        // This keeps the visual evidence focused on confirmed failures.
+        // The annotated screenshot image marks failures only; the report view
+        // filters the other statuses on demand. Screen-level checks (the
+        // whole hierarchy) have no single component to point at.
         let relevant = evaluations.filter {
-            $0.status == .fail
+            statuses.contains($0.status) &&
+                $0.frameWidth > 0 && $0.frameHeight > 0 &&
+                $0.elementType != "hierarchy" &&
+                $0.elementRole != .application
         }
 
         let sorted = relevant.sorted { lhs, rhs in
@@ -162,6 +179,33 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
                 number: index + 1,
                 evaluation: evaluation
             )
+        }
+    }
+}
+
+/// The report's screenshot filter: the three BB outcomes. Warnings in
+/// reports saved before Warning became Validate are shown under Validate.
+nonisolated enum ScreenshotCheckFilter: String, CaseIterable, Identifiable, Hashable {
+    case fail
+    case validate
+    case pass
+
+    var id: String { rawValue }
+
+    init(_ status: RuleResultStatus) {
+        switch status {
+        case .pass: self = .pass
+        case .validate, .notTested: self = .validate
+        case .fail: self = .fail
+        case .warning: self = .validate
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .fail: return "Fail"
+        case .validate: return "Validate"
+        case .pass: return "Pass"
         }
     }
 }

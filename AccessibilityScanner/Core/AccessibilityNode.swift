@@ -137,4 +137,81 @@ nonisolated struct PlatformSemantics: Hashable {
     /// True when the role was guessed from behaviour (a clickable generic
     /// view) rather than exposed by the app: the role is missing.
     var roleInferred: Bool = false
+
+    // Set by `annotatingLayout()` from the node's ancestors.
+
+    /// Cut off by the edge of a scrolling container, so its size and colours
+    /// in this snapshot are not the real ones. Another viewport shows it whole.
+    var partiallyVisible: Bool = false
+    /// Inside a control or clickable row, so its text is part of that
+    /// control's name rather than standalone text.
+    var insideActionable: Bool = false
+    /// Not focusable or clickable itself but inside one that is (a Compose
+    /// Checkbox inside a toggleable Row): screen readers and touch treat the
+    /// ancestor as the control, so this node is not checked on its own.
+    var mergedIntoAncestor: Bool = false
+}
+
+extension AccessibilityNode {
+
+    /// Fills the layout-dependent semantics that need the ancestors.
+    nonisolated func annotatingLayout() -> AccessibilityNode {
+        annotated(scrollFrame: nil, actionableAncestor: false, controlAncestor: false)
+    }
+
+    private nonisolated var isActionable: Bool {
+        if platform == .android {
+            let words = Set(traits.split(separator: " "))
+            return words.contains("clickable") || words.contains("long-clickable") || words.contains("focusable")
+        }
+        return hittable && AccessibilityRole.controls.contains(role)
+    }
+
+    private nonisolated var isScrollingContainer: Bool {
+        role == .scrollView || role == .table ||
+            type.contains("ScrollView") || type.contains("RecyclerView") ||
+            type.contains("CollectionView") || type.contains("ListView") ||
+            Set(traits.split(separator: " ")).contains("scrollable")
+    }
+
+    private nonisolated func annotated(
+        scrollFrame: CGRect?,
+        actionableAncestor: Bool,
+        controlAncestor: Bool
+    ) -> AccessibilityNode {
+        var node = self
+
+        if let scrollFrame, frame.width > 0, frame.height > 0, frame != scrollFrame {
+            if !scrollFrame.insetBy(dx: -0.5, dy: -0.5).contains(frame) {
+                node.semantics.partiallyVisible = true
+            } else if platform == .android {
+                // UiAutomator2 clips bounds to the visible area, so a node cut
+                // off by the container ends exactly on its edge.
+                let touchesVertical = abs(frame.minY - scrollFrame.minY) < 0.75 || abs(frame.maxY - scrollFrame.maxY) < 0.75
+                let touchesHorizontal = abs(frame.minX - scrollFrame.minX) < 0.75 || abs(frame.maxX - scrollFrame.maxX) < 0.75
+                let spansHeight = frame.height >= scrollFrame.height - 1
+                let spansWidth = frame.width >= scrollFrame.width - 1
+                node.semantics.partiallyVisible = (touchesVertical && !spansHeight) ||
+                    (touchesHorizontal && !spansWidth && frame.minX > scrollFrame.minX + 0.75)
+            }
+        }
+
+        // A line of text is never under 9 dp tall; shorter text bounds were
+        // clipped by a parent (a card or list item cut off by the viewport).
+        if platform == .android, role == .staticText, frame.height > 0, frame.height < 9 {
+            node.semantics.partiallyVisible = true
+        }
+
+        node.semantics.insideActionable = controlAncestor
+        node.semantics.mergedIntoAncestor = platform == .android && actionableAncestor && !isActionable
+
+        let childScroll = isScrollingContainer && frame.width > 0 && frame.height > 0 ? frame : scrollFrame
+        let childActionable = actionableAncestor || isActionable
+        let childControl = controlAncestor || isActionable ||
+            AccessibilityRole.controls.contains(role) || role == .cell
+        node.children = children.map {
+            $0.annotated(scrollFrame: childScroll, actionableAncestor: childActionable, controlAncestor: childControl)
+        }
+        return node
+    }
 }

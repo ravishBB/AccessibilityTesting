@@ -294,6 +294,15 @@ nonisolated enum PixelAnalyzer {
     struct ComponentMeasurement {
         let fillRatio: Double
         let borderRatio: Double
+        /// Share of the control's pixels at 3:1 or more against the
+        /// background: an outline, thumb, check mark or icon drawn inside
+        /// touch padding, where the frame's edge and centre miss it.
+        var strongPartShare: Double = 0
+        /// Typical contrast of those strong pixels.
+        var strongPartRatio: Double = 1
+
+        /// Enough of the control reaches 3:1 to identify it and its state.
+        var hasStrongPart: Bool { strongPartShare >= 0.02 }
 
         var best: Double { max(fillRatio, borderRatio) }
 
@@ -346,7 +355,15 @@ nonisolated enum PixelAnalyzer {
             }
         }
 
-        return ComponentMeasurement(fillRatio: fillRatio, borderRatio: borderRatio)
+        var measurement = ComponentMeasurement(fillRatio: fillRatio, borderRatio: borderRatio)
+        let dense = sampler.gridSamples(in: rect, maxSamples: 4000)
+        if !dense.isEmpty {
+            let ratios = dense.map { PixelMath.contrast($0.luminance, backgroundLuminance) }
+            let strong = ratios.filter { $0 >= 3 }.sorted()
+            measurement.strongPartShare = Double(strong.count) / Double(ratios.count)
+            if !strong.isEmpty { measurement.strongPartRatio = strong[strong.count / 2] }
+        }
+        return measurement
     }
 
     // MARK: Underline

@@ -628,15 +628,12 @@ nonisolated struct AccessibilityIntelligenceEngine {
         let visualRuleIDs: Set<String> = [
             "contrast-standard-text-4-5",
             "contrast-large-text-3",
-            "contrast-standard-text-7",
-            "contrast-large-text-4-5",
             "contrast-text-over-image",
             "contrast-opacity",
             "text-clipping",
             "text-resize",
             "non-text-contrast",
             "form-border-contrast",
-            "touch-target-size-44",
             "touch-target-size-24"
         ]
 

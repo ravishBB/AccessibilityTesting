@@ -105,6 +105,60 @@ nonisolated final class AndroidDeviceService {
         return devices
     }
 
+    /// Phones adb sees but cannot use yet, as instructions for the tester.
+    /// They are not listed as devices: nothing can be scanned on them.
+    func blockedDeviceNotes() -> [String] {
+        guard let adb = adbPath(),
+              let output = try? run(adb, ["devices", "-l"])
+        else { return [] }
+
+        let notes: [String] = output.components(separatedBy: .newlines).dropFirst().compactMap { line in
+            let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+            guard parts.count >= 2 else { return nil }
+            let model = parts.first { $0.hasPrefix("model:") }
+                .map { String($0.dropFirst("model:".count)).replacingOccurrences(of: "_", with: " ") }
+            let name = model.map { "\($0) (\(parts[0]))" } ?? parts[0]
+            switch parts[1] {
+            case "unauthorized":
+                return "\(name) is waiting for permission. Unlock the phone, tap Allow on \"Allow USB debugging?\", then refresh."
+            case "offline":
+                return "\(name) is offline to adb. Unplug and reconnect the cable, or toggle USB debugging off and on, then refresh."
+            case "no", "no permissions":
+                return "\(name) cannot be accessed by adb (no permissions). Reconnect the cable and refresh."
+            default:
+                return nil
+            }
+        }
+
+        let adbSerials = output.components(separatedBy: .newlines).dropFirst()
+            .compactMap { $0.split(whereSeparator: { $0 == " " || $0 == "\t" }).first.map(String.init) }
+        return notes + usbPhonesInvisibleToADB(knownSerials: Set(adbSerials))
+    }
+
+    /// Android phones plugged in over USB that adb cannot see at all: USB
+    /// debugging is off, or the phone is in a mode without the debugging
+    /// interface (USB tethering, charging only).
+    private func usbPhonesInvisibleToADB(knownSerials: Set<String>) -> [String] {
+        guard let output = try? ProcessRunner.run("/usr/sbin/ioreg", ["-p", "IOUSB", "-l", "-w0"], timeout: 10)
+        else { return [] }
+
+        var notes: [String] = []
+        var product: String?
+        for line in output.stdoutText.components(separatedBy: .newlines) {
+            if line.contains("\"USB Product Name\" = ") {
+                product = line.components(separatedBy: "= ").last?.trimmingCharacters(in: CharacterSet(charactersIn: "\" "))
+            } else if line.contains("\"USB Serial Number\" = "), let name = product,
+                      name.localizedCaseInsensitiveContains("android") {
+                let serial = line.components(separatedBy: "= ").last?.trimmingCharacters(in: CharacterSet(charactersIn: "\" ")) ?? ""
+                if !knownSerials.contains(serial) {
+                    notes.append("\(name.replacingOccurrences(of: "_", with: " ")) (\(serial)) is connected by USB but adb cannot see it. Turn off USB tethering, choose \"File transfer\" in the phone's USB notification, make sure USB debugging is on, then reconnect and tap Allow.")
+                }
+                product = nil
+            }
+        }
+        return notes
+    }
+
     private func displayDensity(serial: String, adb: String) -> Int? {
 
         guard let output = try? run(adb, ["-s", serial, "shell", "wm", "density"]) else {

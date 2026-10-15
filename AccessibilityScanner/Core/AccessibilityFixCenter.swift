@@ -176,7 +176,7 @@ nonisolated struct AccessibilityFixGuidance {
                 swiftUIExample: "Button(action: submit) {\n    Image(\"arrow.right\")\n}\n.accessibilityLabel(\"Submit\")",
                 uikitExample: "button.accessibilityLabel = \"Submit\""
             )
-        case "touch-target-size-44", "touch-target-size":
+        case "touch-target-size":
             return AccessibilityFixGuidance(
                 remediation: "Increase the interactive area to at least the scanner's configured target size without reducing the visible control.",
                 confidence: "High",
@@ -235,7 +235,7 @@ nonisolated struct AccessibilityFixGuidance {
                 swiftUIExample: "IconButton(onClick = onSubmit) {\n    Icon(\n        imageVector = Icons.Default.Send,\n        contentDescription = \"Submit\"\n    )\n}",
                 uikitExample: "imageButton.contentDescription = \"Submit\"\n// or in XML: android:contentDescription=\"@string/submit\""
             )
-        case "touch-target-size-44", "touch-target-size-24", "touch-target-size":
+        case "touch-target-size-24", "touch-target-size":
             return AccessibilityFixGuidance(
                 remediation: "Increase the touch target to at least 48dp x 48dp without changing the visible icon size.",
                 confidence: "High",

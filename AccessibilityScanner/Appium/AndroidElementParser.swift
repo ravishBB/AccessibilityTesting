@@ -54,6 +54,9 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
 
         var children: [MutableNode] = []
 
+        /// A separate stop for TalkBack and touch.
+        var isActionable: Bool { clickable || longClickable || focusable }
+
         init(
             className: String,
             resourceID: String,
@@ -124,7 +127,7 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
             throw AndroidParserError.noRootElement
         }
 
-        return build(root, isRoot: true)
+        return build(root, isRoot: true).annotatingLayout()
     }
 
     // MARK: - XMLParserDelegate
@@ -223,13 +226,20 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
         // text is the user's content, not the name.
         let label: String = {
             if !node.contentDesc.isEmpty { return node.contentDesc }
-            if isTextInput { return "" }
+            // The field's own text is its value; a label is a child (Compose).
+            if isTextInput { return mergedDescendantText(of: node) ?? "" }
             if !node.text.isEmpty { return node.text }
 
             // Clickable containers (rows/cards) and toolbars are announced
             // using their descendants' text; use the first one as the name.
             if role == .cell || role == .navigationBar {
                 return firstDescendantLabel(in: children) ?? ""
+            }
+            // TalkBack names a focusable control from the text of its
+            // descendants that are not focus stops themselves (a Compose
+            // Button's Text, a TextField's label, a toggleable Row's Text).
+            if node.isActionable || AccessibilityRole.controls.contains(role) {
+                return mergedDescendantText(of: node) ?? ""
             }
             return ""
         }()
@@ -419,6 +429,24 @@ final class AndroidElementParser: NSObject, XMLParserDelegate {
     }
 
     // MARK: - Helpers
+
+    private func mergedDescendantText(of node: MutableNode) -> String? {
+        var parts: [String] = []
+        func visit(_ child: MutableNode) {
+            guard child.displayed, !child.isActionable else { return }
+            let own = (child.contentDesc.isEmpty ? child.text : child.contentDesc)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !own.isEmpty, !parts.contains(own) {
+                parts.append(own)
+            }
+            // A content description replaces the subtree's text.
+            if child.contentDesc.isEmpty {
+                child.children.forEach(visit)
+            }
+        }
+        node.children.forEach(visit)
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
 
     private func firstDescendantLabel(in nodes: [AccessibilityNode]) -> String? {
 

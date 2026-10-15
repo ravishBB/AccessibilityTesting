@@ -18,9 +18,7 @@ struct BBCoverageReport {
         "button-disabled-state": [.pass],
         "button-name-descriptive": [.fail, .pass],
         "contrast-large-text-3": [.fail, .pass, .validate],
-        "contrast-large-text-4-5": [.warning, .pass, .validate],
         "contrast-standard-text-4-5": [.fail, .pass, .validate],
-        "contrast-standard-text-7": [.warning, .pass, .validate],
         "contrast-text-over-image": [.fail, .pass, .validate],
         "decorative-image": [.validate],
         "duplicate-interactive-name": [.warning],
@@ -76,8 +74,7 @@ struct BBCoverageReport {
         "text-resize": [.pass, .fail, .validate],
         "text-spacing": [.validate],
         "time-limited-ui": [.validate],
-        "touch-target-size-24": [.fail, .pass],
-        "touch-target-size-44": [.pass, .warning]
+        "touch-target-size-24": [.fail, .pass]
     ]
 
     @Test func producibleIDs() throws {
@@ -114,7 +111,8 @@ struct BBCoverageReport {
         // Every BB ID the ruleset says the scanner checks must be producible.
         for rule in BBRuleset.rules {
             let claimed: Set<BBCapability> = [.automated, .runtime, .partial]
-            guard claimed.contains(rule.ios) || claimed.contains(rule.android) else { continue }
+            guard claimed.contains(rule.ios) || claimed.contains(rule.android),
+                  rule.level.uppercased() != "AAA" else { continue }
             let producedHere = produced[rule.id] != nil || rule.coveredBy.contains { produced[$0] != nil }
             #expect(producedHere, "\(rule.id) is marked as checked but no rule produces it")
         }

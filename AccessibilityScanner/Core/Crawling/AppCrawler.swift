@@ -302,7 +302,10 @@ final class AppCrawler {
         var focusResult: KeyboardFocusTester.Result?
         let focusStarted = Date()
         do {
-            focusResult = try await KeyboardFocusTester(appium: appium).test(rootNode: topSnapshot.rootNode)
+            focusResult = try await KeyboardFocusTester(appium: appium).test(
+                rootNode: topSnapshot.rootNode,
+                viewportRoots: scrollResult.viewportCaptures.map(\.snapshot.rootNode)
+            )
             keyboardFocusEvaluations = focusResult?.evaluations ?? []
         } catch is CancellationError {
             throw CancellationError()
@@ -324,6 +327,12 @@ final class AppCrawler {
             isFirstScreen: discoveredScreens.isEmpty,
             focusResult: focusResult
         )
+
+        // Tab scrolls the screen to each focused control; the actions below
+        // use positions from the top of the screen.
+        if focusResult?.evidenceAvailable == true {
+            _ = try? await scrolledToTop(topSnapshot, statusHandler: statusHandler)
+        }
 
         let actions =
             navigationActions(
@@ -833,6 +842,11 @@ final class AppCrawler {
         statusHandler: @escaping (String) -> Void
     ) async throws -> ScrollableScreenScanResult {
 
+        // The screen may open part-way down (left scrolled by an earlier run
+        // or by keyboard focus). Capture starts from the top so nothing above
+        // the current position is missed.
+        let initialSnapshot = try await scrolledToTop(initialSnapshot, statusHandler: statusHandler)
+
         var currentSnapshot = initialSnapshot
 
         var collectedEvaluations:
@@ -1047,6 +1061,35 @@ final class AppCrawler {
         )
     }
     
+    private func scrolledToTop(
+        _ snapshot: StableScanSnapshot,
+        statusHandler: @escaping (String) -> Void
+    ) async throws -> StableScanSnapshot {
+        let scrolls = ProbeNodes.all(in: snapshot.rootNode).contains { node in
+            node.visible && (node.role == .scrollView || node.role == .table ||
+                node.traits.split(separator: " ").contains("scrollable"))
+        }
+        guard scrolls else { return snapshot }
+
+        var current = snapshot
+        var fingerprint = contentFingerprint(from: snapshot.rootNode)
+        for _ in 1...10 {
+            do {
+                try await appium.scrollUp()
+            } catch {
+                return current
+            }
+            try await Task.sleep(nanoseconds: configuration.settleDelayNanoseconds)
+            let next = try await captureStableSnapshot()
+            let nextFingerprint = contentFingerprint(from: next.rootNode)
+            if nextFingerprint == fingerprint { return next }
+            statusHandler("Screen opened part-way down; scrolling to the top...")
+            current = next
+            fingerprint = nextFingerprint
+        }
+        return current
+    }
+
     private func contentFingerprint(
         from rootNode: AccessibilityNode
     ) -> String {
