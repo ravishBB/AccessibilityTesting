@@ -599,7 +599,10 @@ final class AppiumClient {
                     ["type": "pointerMove", "duration": 0, "x": Int(start.x * displayScale), "y": Int(start.y * displayScale)],
                     ["type": "pointerDown", "button": 0],
                     ["type": "pause", "duration": 150],
-                    ["type": "pointerMove", "duration": 250, "x": Int(end.x * displayScale), "y": Int(end.y * displayScale)],
+                    // Slow enough that a scroll view under the finger does
+                    // not fling far, so a scroll can be recognised and undone.
+                    ["type": "pointerMove", "duration": 700, "x": Int(end.x * displayScale), "y": Int(end.y * displayScale)],
+                    ["type": "pause", "duration": 150],
                     ["type": "pointerUp", "button": 0]
                 ]
             ]]
@@ -1137,8 +1140,12 @@ final class AppiumClient {
                 "appium:forceAppLaunch": configuration.autoLaunch,
                 "appium:newCommandTimeout": 300,
                 "appium:showXcodeLog": showXcodeLog,
+                // includeHittableInPageSource makes WDA hit-test every
+                // element on every page-source read: 4-7 s per read on a
+                // SwiftUI screen instead of about 1 s. Set false explicitly,
+                // since WDA keeps settings from earlier sessions.
                 "appium:settings": [
-                    "includeHittableInPageSource": true,
+                    "includeHittableInPageSource": false,
                     "includeCustomActionsInPageSource": true
                 ]
             ]

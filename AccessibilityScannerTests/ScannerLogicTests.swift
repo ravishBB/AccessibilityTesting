@@ -219,4 +219,65 @@ struct RuleAvailabilityTests {
         #expect(iOS == total - AccessibilityRuleCatalog.cannotRun(on: .ios).count - AccessibilityRuleCatalog.reviewOnly.count)
         #expect(android > iOS)
     }
+
+    @Test func layoutContainerResizeKeepsSignature() {
+        let text = makeNode(type: "XCUIElementTypeStaticText", label: "Title", frame: CGRect(x: 16, y: 120, width: 200, height: 20))
+        func screen(containerHeight: CGFloat) -> AccessibilityNode {
+            let container = makeNode(type: "XCUIElementTypeOther", label: "", frame: CGRect(x: 0, y: -384, width: 393, height: containerHeight),
+                                     accessible: false, children: [text])
+            return makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852), children: [container])
+        }
+        #expect(ScreenSignature(rootNode: screen(containerHeight: 1154)) == ScreenSignature(rootNode: screen(containerHeight: 1186)))
+
+        let moved = makeNode(type: "XCUIElementTypeStaticText", label: "Title", frame: CGRect(x: 16, y: 60, width: 200, height: 20))
+        let scrolled = makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852), children: [moved])
+        #expect(ScreenSignature(rootNode: screen(containerHeight: 1154)) != ScreenSignature(rootNode: scrolled))
+    }
+
+    @Test func swiftUIToggleInnerSwitchIsNotCheckedAlone() {
+        let inner = makeNode(type: "XCUIElementTypeSwitch", label: "", frame: CGRect(x: 300, y: 218, width: 63, height: 29), accessible: false)
+        let toggle = makeNode(type: "XCUIElementTypeSwitch", label: "Low Contrast Text", frame: CGRect(x: 32, y: 218, width: 329, height: 29), children: [inner])
+        let app = makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852), accessible: false, children: [toggle])
+        let root = app.annotatingLayout()
+        let nodes = ProbeNodes.all(in: root)
+        let innerNode = nodes.first { $0.label.isEmpty && $0.type == "XCUIElementTypeSwitch" }!
+        #expect(innerNode.semantics.mergedIntoAncestor)
+        #expect(CommonAccessibleNameRule().evaluate(node: innerNode) == nil)
+        #expect(ScreenReaderHiddenInteractiveRule().evaluate(node: innerNode) == nil)
+    }
+
+    @Test func spacingExceptionForSmallIsolatedTargets() {
+        let bookmark = makeNode(type: "XCUIElementTypeButton", label: "Bookmark article", frame: CGRect(x: 346, y: 183, width: 18, height: 22))
+        let card = makeNode(type: "XCUIElementTypeButton", label: "Read story", frame: CGRect(x: 16, y: 300, width: 200, height: 44))
+        let heart = makeNode(type: "XCUIElementTypeButton", label: "Favourite", frame: CGRect(x: 152, y: 581, width: 21, height: 19))
+        let cart = makeNode(type: "XCUIElementTypeButton", label: "Add to cart", frame: CGRect(x: 175, y: 581, width: 20, height: 20))
+        let root = makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852), accessible: false,
+                            children: [bookmark, card, heart, cart])
+        let results = CommonMinimumTargetSizeRule().evaluate(rootNode: root)
+        func status(_ label: String) -> RuleResultStatus? { results.first { $0.elementLabel == label }?.status }
+        #expect(status("Bookmark article") == .pass, "isolated: spacing exception")
+        #expect(status("Favourite") == .fail, "another small target is within 24 pt")
+        #expect(status("Read story") == .pass)
+    }
+
+    @Test func slideThatScrollsIsDetectedAsScroll() {
+        func screen(offset: CGFloat) -> AccessibilityNode {
+            let texts = ["One", "Two", "Three", "Four", "Five"].enumerated().map { index, label in
+                makeNode(type: "XCUIElementTypeStaticText", label: label, frame: CGRect(x: 16, y: 100 + CGFloat(index) * 60 + offset, width: 200, height: 20))
+            }
+            return makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852), children: texts)
+        }
+        #expect(ProbeNodes.contentScrolled(from: screen(offset: 0), to: screen(offset: -160)))
+        #expect(!ProbeNodes.contentScrolled(from: screen(offset: 0), to: screen(offset: 0)))
+    }
+
+    @Test func cardLabelInNameUsesTheTitle() {
+        let texts = ["● LIVE", "WELLNESS", "Morning Routines That Actually Work", "By Sarah Chen  ·  5 min read"].map {
+            makeNode(type: "XCUIElementTypeStaticText", label: $0,
+                     frame: CGRect(x: 32, y: 400, width: 300, height: $0.hasPrefix("Morning") ? 28 : 16))
+        }
+        let card = makeNode(type: "XCUIElementTypeButton", label: "Wellness article: Morning Routines That Actually Work, by Sarah Chen, 5 minute read",
+                            frame: CGRect(x: 16, y: 304, width: 361, height: 241), children: texts)
+        #expect(LabelInNameRule().evaluate(node: card)?.status == .pass)
+    }
 }

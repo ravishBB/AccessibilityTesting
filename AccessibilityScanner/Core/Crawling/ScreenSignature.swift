@@ -57,8 +57,15 @@ nonisolated struct ScreenSignature: Hashable {
         let placeholder =
             normalize(node.placeholderValue)
 
-        let frame =
-            String(
+        // Unnamed layout containers that assistive technology skips resize
+        // while content settles (a SwiftUI page bouncing at the end of a
+        // scroll). Their geometry is noise: comparing it made a screen never
+        // look stable and the bottom of a list never look reached.
+        let isLayoutOnly = !node.accessible && label.isEmpty && identifier.isEmpty &&
+            !AccessibilityRole.controls.contains(node.role)
+        let frame = isLayoutOnly
+            ? ""
+            : String(
                 format: "%.0f,%.0f,%.0f,%.0f",
                 node.frame.origin.x,
                 node.frame.origin.y,

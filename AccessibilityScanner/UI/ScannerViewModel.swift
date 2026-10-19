@@ -172,8 +172,6 @@ final class ScannerViewModel: ObservableObject {
                     for: device
                 )
 
-            // A slower load for a device that is no longer selected must
-            // not replace the current device's apps.
             guard selectedDevice?.id == device.id else { return }
 
             applications = discoveredApps

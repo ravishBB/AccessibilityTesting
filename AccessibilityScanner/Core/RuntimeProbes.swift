@@ -93,6 +93,32 @@ enum ProbeNodes {
     /// Visible named elements plus controls. Flutter builds its accessibility
     /// tree only once something asks for it, so the first reads after a
     /// launch can be nearly empty.
+    /// The same content is still on screen, shifted by one common offset:
+    /// a scroll, not a change caused by activating something.
+    static func contentScrolled(from before: AccessibilityNode, to after: AccessibilityNode) -> Bool {
+        func positions(_ root: AccessibilityNode) -> [String: CGPoint] {
+            var result: [String: CGPoint] = [:]
+            var duplicates = Set<String>()
+            for node in all(in: root) where node.visible && !clean(node.label).isEmpty {
+                let key = node.type + "|" + clean(node.label)
+                if result[key] != nil { duplicates.insert(key) }
+                result[key] = node.frame.origin
+            }
+            duplicates.forEach { result[$0] = nil }
+            return result
+        }
+        let old = positions(before), new = positions(after)
+        let shared = old.keys.filter { new[$0] != nil }
+        guard old.count >= 4, Double(shared.count) / Double(old.count) >= 0.4 else { return false }
+
+        let shifts = shared.map { CGPoint(x: new[$0]!.x - old[$0]!.x, y: new[$0]!.y - old[$0]!.y) }
+        let dy = shifts.map(\.y).sorted()[shifts.count / 2]
+        let dx = shifts.map(\.x).sorted()[shifts.count / 2]
+        guard abs(dy) > 4 || abs(dx) > 4 else { return false }
+        let moved = shifts.filter { abs($0.y - dy) < 3 && abs($0.x - dx) < 3 }.count
+        return Double(moved) / Double(shifts.count) >= 0.6
+    }
+
     static func meaningfulCount(in root: AccessibilityNode) -> Int {
         all(in: root).filter { node in
             node.visible && (!clean(node.label).isEmpty || AccessibilityRole.controls.contains(node.role))
@@ -281,9 +307,21 @@ final class StateUpdateProbe {
             guard let xpath = NavigationAction(node: control).xpath else { continue }
             let name = control.hasAccessibleName ? control.label : control.identifier
             let before = ProbeNodes.stateSignature(control)
+            let switchPoint = Self.switchPoint(of: control)
+            let beforeShot = try? await appium.getScreenshot()
+
+            // A SwiftUI Toggle row only toggles on the switch itself; its
+            // label area ignores taps.
+            func activate() async throws {
+                if let switchPoint {
+                    try await appium.tap(at: switchPoint)
+                } else {
+                    try await appium.tapElement(usingXPath: xpath)
+                }
+            }
 
             do {
-                try await appium.tapElement(usingXPath: xpath)
+                try await activate()
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -302,17 +340,22 @@ final class StateUpdateProbe {
             // The control was tapped: read its new state, then always put it
             // back, even if reading failed or the scan was stopped.
             var updated: AccessibilityNode?
+            var updatedRoot: AccessibilityNode?
             var readError: Error?
+            var afterShot: Data?
             do {
                 try await Task.sleep(nanoseconds: 500_000_000)
+                afterShot = try? await appium.getScreenshot()
                 let source = try await appium.getSource()
-                updated = ProbeNodes.find(control, in: try appium.makeParser().parse(source))
+                let root = try appium.makeParser().parse(source)
+                updatedRoot = root
+                updated = ProbeNodes.find(control, in: root)
             } catch {
                 readError = error
             }
 
             await DeviceRestore.run {
-                try? await self.appium.tapElement(usingXPath: xpath)
+                try? await activate()
                 try? await Task.sleep(nanoseconds: 400_000_000)
             }
 
@@ -341,12 +384,27 @@ final class StateUpdateProbe {
                         node: control
                     )
                 )
+            } else if let beforeShot,
+                      !KeyboardFocusTester.focusRegionChanged(
+                        before: beforeShot, after: afterShot, node: control,
+                        hierarchySize: (updatedRoot ?? rootNode).frame.size) {
+                // Nothing changed on screen either: the tap did not reach the
+                // control, so there is no evidence of a defect.
+                results.append(
+                    ProbeEvaluation.make(
+                        ruleID: ruleID,
+                        status: .notTested,
+                        message: "Tapping \"\(name)\" changed neither its appearance nor its state, so the tap may not have reached it.",
+                        remediation: "Toggle the control manually and confirm VoiceOver/TalkBack announces the new state.",
+                        node: control
+                    )
+                )
             } else {
                 results.append(
                     ProbeEvaluation.make(
                         ruleID: ruleID,
                         status: .fail,
-                        message: "The state of \"\(name)\" did not change in the accessibility hierarchy after it was activated.",
+                        message: "\"\(name)\" changed on screen when activated, but its state in the accessibility hierarchy did not change, so screen readers announce the old state.",
                         remediation: "Update the control's value/selected/checked state when the user activates it.",
                         node: control
                     )
@@ -355,6 +413,16 @@ final class StateUpdateProbe {
         }
 
         return results
+    }
+
+    /// Where to tap a toggle: its inner switch, or the trailing end of a
+    /// wide toggle row (the switch sits there). nil: tap the element.
+    private static func switchPoint(of control: AccessibilityNode) -> CGPoint? {
+        if let inner = ProbeNodes.all(in: control).dropFirst().first(where: { $0.role == .toggle && $0.visible }) {
+            return CGPoint(x: inner.frame.midX, y: inner.frame.midY)
+        }
+        guard control.role == .toggle, control.frame.width > control.frame.height * 3 else { return nil }
+        return CGPoint(x: control.frame.maxX - 26, y: control.frame.midY)
     }
 }
 
@@ -624,7 +692,25 @@ final class PointerCancellationProbe {
         try await Task.sleep(nanoseconds: 700_000_000)
         guard let afterSlide = try? await currentRoot() else { return [] }
 
+        // In a scrolling screen the slide scrolls the content: the
+        // platform then cancels the touch, which says nothing about
+        // touch-down activation. Put the content back and report nothing.
+        if ProbeNodes.contentScrolled(from: before, to: afterSlide) {
+            try? await appium.pressAndSlideAway(from: end, to: start)
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            return []
+        }
+
         if ProbeNodes.contentSignature(in: afterSlide) != beforeSignature {
+            // Sliding back restores a scrolled screen but not a screen the
+            // control navigated to: only the latter is touch-down activation.
+            try? await appium.pressAndSlideAway(from: end, to: start)
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if let back = try? await currentRoot() {
+                let restored = ProbeNodes.contentLabels(in: back)
+                let shared = Double(beforeLabels.intersection(restored).count) / Double(max(beforeLabels.count, 1))
+                if shared >= 0.8 { return [] }
+            }
             await restore(from: afterSlide, baselineLabels: beforeLabels)
             return [ProbeEvaluation.make(
                 ruleID: ruleID,

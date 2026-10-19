@@ -206,7 +206,7 @@ final class KeyboardFocusTester {
                     scrolledSinceScreenshot = false
                 } else if let baselineScreenshot {
                     let focusedScreenshot = try? await appium.getScreenshot()
-                    visualEvidence[key] = focusRegionChanged(
+                    visualEvidence[key] = Self.focusRegionChanged(
                         before: baselineScreenshot,
                         after: focusedScreenshot,
                         node: focused,
@@ -647,8 +647,8 @@ final class KeyboardFocusTester {
         let w = min(width - x, max(1, Int((node.frame.width + 12) * scaleX)))
         let h = min(height - y, max(1, Int((node.frame.height + 12) * scaleY)))
         guard w > 1, h > 1,
-              let beforePixels = pixelBytes(beforeCG, x: x, y: y, width: w, height: h),
-              let afterPixels = pixelBytes(afterCG, x: x, y: y, width: w, height: h),
+              let beforePixels = Self.pixelBytes(beforeCG, x: x, y: y, width: w, height: h),
+              let afterPixels = Self.pixelBytes(afterCG, x: x, y: y, width: w, height: h),
               beforePixels.count == afterPixels.count else { return nil }
 
         func luminance(_ p: [UInt8], _ i: Int) -> Double {
@@ -703,7 +703,8 @@ final class KeyboardFocusTester {
         return result
     }
 
-    private func focusRegionChanged(before: Data, after: Data?, node: AccessibilityNode, hierarchySize: CGSize) -> Bool {
+    /// Whether the rendered pixels around `node` changed between two screenshots.
+    static func focusRegionChanged(before: Data, after: Data?, node: AccessibilityNode, hierarchySize: CGSize) -> Bool {
         guard let after, let beforeImage = NSImage(data: before), let afterImage = NSImage(data: after),
               let beforeCG = beforeImage.cgImage(forProposedRect: nil, context: nil, hints: nil),
               let afterCG = afterImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return false }
@@ -720,8 +721,8 @@ final class KeyboardFocusTester {
         let h = min(height - yFromTop, max(1, Int((node.frame.height + 12) * scaleY)))
         guard w > 1, h > 1 else { return false }
 
-        let beforePixels = pixelBytes(beforeCG, x: x, y: yFromTop, width: w, height: h)
-        let afterPixels = pixelBytes(afterCG, x: x, y: yFromTop, width: w, height: h)
+        let beforePixels = Self.pixelBytes(beforeCG, x: x, y: yFromTop, width: w, height: h)
+        let afterPixels = Self.pixelBytes(afterCG, x: x, y: yFromTop, width: w, height: h)
         guard let beforePixels, let afterPixels, beforePixels.count == afterPixels.count else { return false }
 
         var changed = 0
@@ -737,7 +738,7 @@ final class KeyboardFocusTester {
         return Double(changed) / Double(samples) >= 0.002
     }
 
-    private func pixelBytes(
+    static func pixelBytes(
         _ image: CGImage,
         x: Int,
         y: Int,

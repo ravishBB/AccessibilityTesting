@@ -156,7 +156,7 @@ extension AccessibilityNode {
 
     /// Fills the layout-dependent semantics that need the ancestors.
     nonisolated func annotatingLayout() -> AccessibilityNode {
-        annotated(scrollFrame: nil, actionableAncestor: false, controlAncestor: false)
+        annotated(scrollFrame: nil, actionableAncestor: false, controlAncestor: false, elementAncestor: false)
     }
 
     private nonisolated var isActionable: Bool {
@@ -177,7 +177,8 @@ extension AccessibilityNode {
     private nonisolated func annotated(
         scrollFrame: CGRect?,
         actionableAncestor: Bool,
-        controlAncestor: Bool
+        controlAncestor: Bool,
+        elementAncestor: Bool
     ) -> AccessibilityNode {
         var node = self
 
@@ -203,14 +204,23 @@ extension AccessibilityNode {
         }
 
         node.semantics.insideActionable = controlAncestor
-        node.semantics.mergedIntoAncestor = platform == .android && actionableAncestor && !isActionable
+        // Android: TalkBack and touch use the clickable parent. iOS: inside
+        // an accessibility element (a SwiftUI Toggle's inner UISwitch, a
+        // combined cell) VoiceOver only reaches the element itself.
+        node.semantics.mergedIntoAncestor = platform == .android
+            ? actionableAncestor && !isActionable
+            : elementAncestor
 
         let childScroll = isScrollingContainer && frame.width > 0 && frame.height > 0 ? frame : scrollFrame
         let childActionable = actionableAncestor || isActionable
         let childControl = controlAncestor || isActionable ||
             AccessibilityRole.controls.contains(role) || role == .cell
-        node.children = children.map {
-            $0.annotated(scrollFrame: childScroll, actionableAncestor: childActionable, controlAncestor: childControl)
+        let childElement = elementAncestor || (platform == .ios && accessible && type != "XCUIElementTypeApplication")
+        // The A11yInspect framework's floating scan button is a testing
+        // overlay, not part of the app under test.
+        node.children = children.filter { $0.identifier != "A11YScannerIgnore" }.map {
+            $0.annotated(scrollFrame: childScroll, actionableAncestor: childActionable, controlAncestor: childControl,
+                         elementAncestor: childElement)
         }
         return node
     }

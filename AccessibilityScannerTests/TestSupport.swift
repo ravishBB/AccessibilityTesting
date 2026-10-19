@@ -14,6 +14,7 @@ func makeNode(
     identifier: String = "",
     frame: CGRect = CGRect(x: 0, y: 0, width: 100, height: 44),
     enabled: Bool = true,
+    accessible: Bool = true,
     children: [AccessibilityNode] = []
 ) -> AccessibilityNode {
     AccessibilityNode(
@@ -28,7 +29,7 @@ func makeNode(
         hittable: true,
         enabled: enabled,
         visible: true,
-        accessible: true,
+        accessible: accessible,
         focused: false,
         children: children
     )

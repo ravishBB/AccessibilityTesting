@@ -149,21 +149,54 @@ nonisolated struct CommonAccessibleNameRule: AccessibilityRule {
     }
 }
 
-nonisolated struct CommonMinimumTargetSizeRule: AccessibilityRule {
+nonisolated struct CommonMinimumTargetSizeRule: ScreenAccessibilityRule {
     let id = "touch-target-size-24"
     let title = "Interactive controls meet the minimum target size (24pt) requirement"
     let description = "Interactive controls should provide at least a 24×24 point target."
 
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.role), node.visible, node.enabled,
-              RuleHelper.isWhollyMeasurable(node) else { return nil }
-        if node.frame.width < 24 || node.frame.height < 24 {
-            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "Interactive control does not meet the 24×24 \(node.platform.sizeUnit) minimum target size.",
-                                   remediation: "Increase the interactive area to at least 24×24 \(node.platform.sizeUnit) or provide adequate spacing.")
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+
+    /// WCAG 2.5.8: a target under 24×24 still passes when a 24-diameter circle
+    /// centred on it touches no other target and no other undersized
+    /// target's circle (the spacing exception).
+    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        let targets = RuleHelper.allNodes(rootNode).filter {
+            RuleHelper.controls.contains($0.role) && $0.visible && $0.enabled &&
+                RuleHelper.isWhollyMeasurable($0) && $0.frame.width > 0 && $0.frame.height > 0
         }
-        return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                               message: "Interactive control meets the 24×24 \(node.platform.sizeUnit) minimum target size.")
+        let unit = rootNode.platform.sizeUnit
+        func undersized(_ node: AccessibilityNode) -> Bool { node.frame.width < 24 || node.frame.height < 24 }
+        func center(_ node: AccessibilityNode) -> CGPoint { CGPoint(x: node.frame.midX, y: node.frame.midY) }
+        func distance(_ point: CGPoint, to rect: CGRect) -> CGFloat {
+            let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
+            let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
+            return (dx * dx + dy * dy).squareRoot()
+        }
+
+        return targets.map { node in
+            guard undersized(node) else {
+                return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                       message: "Interactive control meets the 24×24 \(unit) minimum target size.")
+            }
+            let point = center(node)
+            let crowding = targets.first { other in
+                guard other.frame != node.frame, !other.frame.contains(node.frame), !node.frame.contains(other.frame) else { return false }
+                if undersized(other) {
+                    let o = center(other)
+                    return ((o.x - point.x) * (o.x - point.x) + (o.y - point.y) * (o.y - point.y)).squareRoot() < 24
+                }
+                return distance(point, to: other.frame) < 12
+            }
+            let size = "\(Int(node.frame.width.rounded()))×\(Int(node.frame.height.rounded())) \(unit)"
+            guard let crowding else {
+                return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                       message: "The control is \(size), under 24×24, but nothing else is within the 24 \(unit) spacing circle, so it meets the spacing exception.")
+            }
+            let neighbour = crowding.label.isEmpty ? crowding.type.replacingOccurrences(of: "XCUIElementType", with: "") : crowding.label
+            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                                   message: "The control is \(size) and \"\(neighbour)\" is within its 24 \(unit) spacing circle, so it meets neither the minimum size nor the spacing exception.",
+                                   remediation: "Increase the target to at least 24×24 \(unit) (for example with a larger contentShape or padding), or move neighbouring targets further away.")
+        }
     }
 }
 
@@ -235,6 +268,28 @@ private nonisolated enum RuleHelper {
         let value = clean(text)
         if wordList(value).count > 5 { return true }
         return value.contains("—") || value.contains("(") || value.hasSuffix(".") || value.contains(": ")
+    }
+
+    /// The most prominent text inside a card: the tallest line of text,
+    /// which is the headline rather than a tag or byline.
+    static func titleText(of node: AccessibilityNode) -> String? {
+        let texts = allNodes(node).dropFirst().filter {
+            $0.role == .staticText && $0.visible && wordList(clean($0.label)).count >= 2
+        }
+        func lineHeight(_ text: AccessibilityNode) -> Double {
+            text.semantics.textSizePoints
+                ?? TextSizeEstimate.fontSize(frame: text.frame, text: text.label).map(Double.init)
+                ?? Double(text.frame.height)
+        }
+        return texts.max { lineHeight($0) < lineHeight($1) }.map { clean($0.label) }
+    }
+
+    static func childTextSegments(of node: AccessibilityNode) -> [String]? {
+        let parts = allNodes(node).dropFirst()
+            .filter { $0.role == .staticText && $0.visible }
+            .map { clean($0.label) }
+            .filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts
     }
 
     static func childText(of node: AccessibilityNode) -> String? {
@@ -686,7 +741,7 @@ nonisolated struct InteractiveTargetOverlapRule: ScreenAccessibilityRule {
     }
 
     func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
-        let controls = RuleHelper.visibleInteractiveNodes(rootNode)
+        let controls = RuleHelper.visibleInteractiveNodes(rootNode).filter { !$0.semantics.mergedIntoAncestor }
         var results: [AccessibilityRuleEvaluation] = []
         var reported = Set<String>()
 
@@ -897,8 +952,14 @@ nonisolated struct HeadingQualityRule: AccessibilityRule {
     let description = "Headings should provide meaningful section context."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.hasTrait(node, RuleHelper.headingsTraits), node.visible else { return nil }
-        let label = RuleHelper.clean(node.label)
+        // VoiceOver skips a container that is not an accessibility element;
+        // the text inside it (checked itself) is what users hear.
+        guard RuleHelper.hasTrait(node, RuleHelper.headingsTraits), node.visible,
+              node.accessible || RuleHelper.isText(node),
+              !node.semantics.mergedIntoAncestor else { return nil }
+        let label = RuleHelper.clean(node.label).isEmpty
+            ? RuleHelper.childText(of: node) ?? ""
+            : RuleHelper.clean(node.label)
         // A "heading" that reads like body text (long, or a full sentence)
         // may be marked as a heading by mistake.
         if label.count > 80 || RuleHelper.wordList(label).count > 12 || label.hasSuffix(".") {
@@ -906,7 +967,7 @@ nonisolated struct HeadingQualityRule: AccessibilityRule {
                                          message: "This text is marked as a heading but reads like body text (\(RuleHelper.wordList(label).count) words).",
                                          remediation: "Mark only text that introduces a section as a heading.")
         }
-        if RuleHelper.isGenericName(node.label) {
+        if RuleHelper.isGenericName(label) {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Heading text is missing or generic.",
                                    remediation: "Use concise text that identifies the section.")
@@ -1089,6 +1150,12 @@ private nonisolated enum ContrastRuleFactory {
             return nil
         }
 
+        // Emoji are pictographs drawn in their own colours, not text.
+        let glyphs = node.label.unicodeScalars.filter { !$0.properties.isWhitespace }
+        if !glyphs.isEmpty, glyphs.allSatisfy({ $0.properties.isEmojiPresentation || $0.properties.isEmojiModifier || $0.value == 0xFE0F || $0.value == 0x200D }) {
+            return nil
+        }
+
         let sizeClass = TextSizeEstimate.classify(node)
         let threshold: Double
         var possiblyLargeThreshold: Double?
@@ -1151,6 +1218,20 @@ private nonisolated enum ContrastRuleFactory {
                 return RuleHelper.validation(ruleID: ruleID, name: title, description: description, node: node,
                                              message: "The \(basis) is \(measured) (\(sizeText)), below \(requirement). Check whether the text stays readable over the whole background.",
                                              remediation: "If any part of the text is hard to read, add a scrim or solid backing so the contrast is at least \(requirement).")
+            }
+            // About 1:1 means no text is drawn at this position: it is
+            // covered (a bar, a sheet) or rendered elsewhere.
+            if measurement.ratio < 1.15 {
+                return RuleHelper.validation(ruleID: ruleID, name: title, description: description, node: node,
+                                             message: "No text could be seen at this element's position in the screenshot (\(measured)). It may be covered by a bar or overlay, or drawn somewhere else.",
+                                             remediation: "Check where this text appears on screen and measure its contrast there.")
+            }
+            // Within 5% of the threshold the screenshot's compression and
+            // anti-aliasing decide the result, not the colours.
+            if measurement.ratio >= threshold * 0.95 {
+                return RuleHelper.validation(ruleID: ruleID, name: title, description: description, node: node,
+                                             message: "The \(basis) is \(measured) (\(sizeText)), just under \(requirement). Measure the exact foreground and background colours.",
+                                             remediation: "If the design colours are below \(requirement), darken the text or lighten the background.")
             }
             if let possiblyLargeThreshold, measurement.ratio + 0.001 >= possiblyLargeThreshold {
                 return RuleHelper.validation(ruleID: ruleID, name: title, description: description, node: node,
@@ -1284,15 +1365,27 @@ nonisolated struct ButtonRoleRule: AccessibilityRule {
     }
 }
 
-nonisolated struct DecorativeImageRule: AccessibilityRule {
+nonisolated struct DecorativeImageRule: ScreenAccessibilityRule {
     let id = "decorative-image"
     let title = "Check if Image should be marked as decorative"
     let description = "Decorative images should not add redundant screen-reader content."
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.role == .image, node.visible else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Only product/design intent can determine whether this image is decorative.",
-                                     remediation: "If decorative, hide it from assistive technology; otherwise provide a useful description.")
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+
+    /// One question per distinct image a screen reader reaches on its own.
+    /// Icons inside a button or tab are part of that control's name, and a
+    /// repeated icon (rating stars, list bullets) is asked about once.
+    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        var seen = Set<String>()
+        return RuleHelper.allNodes(rootNode).compactMap { node in
+            guard node.role == .image, node.visible, node.accessible,
+                  !node.semantics.mergedIntoAncestor, !node.semantics.insideActionable,
+                  seen.insert(node.identifier + "|" + RuleHelper.clean(node.label)).inserted
+            else { return nil }
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                         message: "Screen readers announce this image as \"\(RuleHelper.clean(node.label).isEmpty ? "image" : RuleHelper.clean(node.label))\". Only the design intent decides whether it adds information or is decorative.",
+                                         remediation: "If decorative, hide it from assistive technology (.accessibilityHidden(true) / importantForAccessibility=no); otherwise keep a description of what it conveys.")
+        }
     }
 }
 
@@ -1301,7 +1394,9 @@ nonisolated struct ScreenReaderHiddenInteractiveRule: AccessibilityRule {
     let title = "Check if interactive control needs to be hidden for screen reader user"
     let description = "Interactive controls should not be unintentionally hidden from assistive technology."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.role), node.visible else { return nil }
+        // Inside an accessibility element: the element represents it.
+        guard RuleHelper.controls.contains(node.role), node.visible,
+              !node.semantics.mergedIntoAncestor else { return nil }
         if node.hittable && !node.accessible {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Control is hittable but not exposed as accessible.",
@@ -1354,11 +1449,17 @@ nonisolated struct ScreenReaderContentRule: AccessibilityRule {
     let title = "Content can be accessed by screen reader user"
     let description = "Meaningful content should be exposed to assistive technology."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.visible else { return nil }
+        guard node.visible, !node.semantics.mergedIntoAncestor else { return nil }
         if node.accessible {
             return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                    message: "Element is exposed to assistive technology.")
         }
+        // A layout container with no text, image or control inside has no
+        // content to expose.
+        let hasContent = Self.flatten(node.children).contains {
+            $0.visible && (!RuleHelper.clean($0.label).isEmpty || $0.role == .image || RuleHelper.controls.contains($0.role))
+        }
+        guard hasContent || RuleHelper.isText(node) || RuleHelper.controls.contains(node.role) else { return nil }
         let hasAccessibleDescendant = Self.flatten(node.children).contains { $0.visible && $0.accessible && (!RuleHelper.clean($0.label).isEmpty || RuleHelper.controls.contains($0.role)) }
         guard !node.children.isEmpty else { return nil }
         if hasAccessibleDescendant {
@@ -1443,7 +1544,7 @@ nonisolated struct TimeLimitedUIRule: AccessibilityRule {
     let description = "Time-limited content should provide a user-controlled extension or equivalent mechanism."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.role == .application else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+        return RuleHelper.notTested(ruleID: id, name: title, description: description, node: node,
                                      message: "Timing behavior cannot be inferred from one hierarchy snapshot.",
                                      remediation: "Exercise timed UI and verify a visible mechanism to extend or disable the time limit.")
     }
@@ -1646,12 +1747,9 @@ nonisolated struct MapAlternativeRule: AccessibilityRule {
                                    remediation: "Label the map and its markers, or provide the same information as a list.")
         }
 
-        // Something named like a map: the type cannot be confirmed.
-        let text = (node.identifier + " " + node.label).lowercased()
-        guard RuleHelper.wordList(text).contains("map") else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "Map content is detected by naming only; verify an equivalent textual representation exists.",
-                                     remediation: "Provide an accessible textual alternative for important map information.")
+        // Something only named like a map ("Show Map", a map.fill icon) is
+        // not a map view: nothing to check.
+        return nil
     }
 }
 
@@ -1820,7 +1918,8 @@ nonisolated struct ScreenReaderFocusOrderRule: ScreenAccessibilityRule {
             $0.visible && $0.accessible && !RuleHelper.clean($0.label).isEmpty
         }
         guard meaningful.count >= 2 else { return [] }
-        return [RuleHelper.validation(ruleID: id, name: title, description: description, node: rootNode,
+        // Not a finding about this screen: a check the scanner cannot run.
+        return [RuleHelper.notTested(ruleID: id, name: title, description: description, node: rootNode,
                                       message: "Screen reader focus order cannot be observed through Appium. The accessibility tree order is reported under Reading order.",
                                       remediation: "Swipe through the screen with VoiceOver/TalkBack and confirm focus follows the intended order.")]
     }
@@ -2012,7 +2111,7 @@ nonisolated struct TextSpacingRule: AccessibilityRule {
         guard node.role == .application || node.type == "hierarchy" else { return nil }
         guard RuleHelper.allNodes(node).contains(where: { RuleHelper.isText($0) && $0.visible && !$0.label.isEmpty })
         else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+        return RuleHelper.notTested(ruleID: id, name: title, description: description, node: node,
                                      message: "Text spacing requires applying increased spacing styles and rescanning the rendered layout.",
                                      remediation: "Test increased line/paragraph/letter/word spacing and verify no clipping or overlap.")
     }
@@ -2101,8 +2200,14 @@ nonisolated struct LabelInNameRule: AccessibilityRule, ContextualAccessibilityRu
         let fromScreenshot: Bool
         if let text = node.semantics.visibleText {
             visible = text; fromScreenshot = false
-        } else if let text = RuleHelper.childText(of: node) {
-            visible = text; fromScreenshot = false
+        } else if let segments = RuleHelper.childTextSegments(of: node) {
+            // A card shows several texts (tag, title, byline, read time).
+            // Its visible label is the title, the longest of them; the name
+            // need not repeat badges such as "LIVE" or "NEW".
+            visible = segments.count == 1
+                ? segments[0]
+                : RuleHelper.titleText(of: node) ?? segments[0]
+            fromScreenshot = false
         } else if let context, let text = TextRecognizer.text(in: node.frame, context: context) {
             visible = text; fromScreenshot = true
         } else {
@@ -2155,6 +2260,13 @@ nonisolated struct HeadingCandidateRule: ScreenAccessibilityRule {
                   let points = size(node), points >= max(20, median * 1.3)
             else { return false }
             let label = RuleHelper.clean(node.label)
+            // Not headings: emoji and prices (no letters), sentences
+            // (Latin or CJK punctuation), and text inside a button or card,
+            // which is that control's name.
+            guard !node.semantics.insideActionable,
+                  label.unicodeScalars.contains(where: { $0.properties.isAlphabetic }),
+                  !label.contains(where: { "。，、！？；：".contains($0) })
+            else { return false }
             return label.count <= 60 && RuleHelper.wordList(label).count <= 8 && !label.hasSuffix(".")
         }
 
