@@ -18,47 +18,51 @@ nonisolated enum VisualOrder {
         var ratio: Double { count == 0 ? 1 : Double(inOrder) / Double(count) }
     }
 
-    /// Elements whose tops are within one row band are treated as one row.
-    private static let rowHeight: CGFloat = 20
+    /// Slack for frames that touch or overlap by a hair.
+    private static let tolerance: CGFloat = 4
+
+    /// Whether `a` must be read before `b`. Only unambiguous pairs count:
+    /// `a` above `b` in the same column, or left of `b` on the same line.
+    /// Elements in different columns and rows (a row's trailing bookmark
+    /// and the author line under the title, say) may be read either way,
+    /// as VoiceOver reads a list row's text column before its trailing
+    /// button.
+    static func mustPrecede(_ a: CGRect, _ b: CGRect) -> Bool {
+        let horizontalOverlap = min(a.maxX, b.maxX) - max(a.minX, b.minX)
+        let verticalOverlap = min(a.maxY, b.maxY) - max(a.minY, b.minY)
+        if horizontalOverlap > tolerance, a.maxY <= b.minY + tolerance {
+            return true
+        }
+        if verticalOverlap > min(a.height, b.height) * 0.5, a.maxX <= b.minX + tolerance {
+            return true
+        }
+        return false
+    }
 
     static func assess(frames: [CGRect]) -> Assessment? {
         guard frames.count >= 3 else { return nil }
 
-        let visualOrder = frames.indices.sorted { a, b in
-            let rowA = Int((frames[a].minY / rowHeight).rounded(.down))
-            let rowB = Int((frames[b].minY / rowHeight).rounded(.down))
-            if rowA != rowB { return rowA < rowB }
-            if frames[a].minX != frames[b].minX { return frames[a].minX < frames[b].minX }
-            return a < b
-        }
-
-        // rank[i] = visual position of the i-th element in traversal order.
-        var rank = [Int](repeating: 0, count: frames.count)
-        for (position, index) in visualOrder.enumerated() {
-            rank[index] = position
-        }
-
-        // Longest increasing subsequence of the ranks.
-        var tails: [Int] = []
-        for value in rank {
-            var low = 0
-            var high = tails.count
-            while low < high {
-                let mid = (low + high) / 2
-                if tails[mid] < value {
-                    low = mid + 1
-                } else {
-                    high = mid
+        // Longest run, in traversal order, in which no element is read
+        // after one it must precede.
+        // Each run is checked as a whole: the pair rule is not transitive.
+        var longest = [Int](repeating: 1, count: frames.count)
+        var previous = [Int?](repeating: nil, count: frames.count)
+        for j in frames.indices {
+            for i in 0..<j where longest[i] + 1 > longest[j] {
+                var member: Int? = i
+                var fits = true
+                while let m = member {
+                    if mustPrecede(frames[j], frames[m]) { fits = false; break }
+                    member = previous[m]
+                }
+                if fits {
+                    longest[j] = longest[i] + 1
+                    previous[j] = i
                 }
             }
-            if low == tails.count {
-                tails.append(value)
-            } else {
-                tails[low] = value
-            }
         }
 
-        return Assessment(count: frames.count, inOrder: tails.count)
+        return Assessment(count: frames.count, inOrder: longest.max() ?? frames.count)
     }
 
     /// At or above this share of elements in order, the order is reported as correct.

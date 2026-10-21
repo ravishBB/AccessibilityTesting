@@ -370,7 +370,6 @@ struct RuleAvailabilityTests {
         let nodes = ProbeNodes.all(in: root)
         #expect(nodes.first { $0.label.hasPrefix("Food") }?.semantics.partiallyVisible == true)
         #expect(nodes.first { $0.label == "Home" }?.semantics.partiallyVisible == false)
-        #expect(InteractiveTargetOverlapRule().evaluate(rootNode: root).isEmpty)
     }
 
     @Test func backButtonIsNeverTappedByProbes() {
@@ -467,5 +466,39 @@ struct RuleAvailabilityTests {
 
         let screens = ["Article", "Home", "Article"].map { ScreenScanResult(name: $0, elementCount: 0, evaluations: []) }
         #expect(ScreenNaming.uniquified(screens).map(\.name) == ["Article", "Home", "Article 2"])
+    }
+}
+
+@MainActor
+@Suite("Visual reading order")
+struct VisualOrderTests {
+
+    /// An article row as UIKit lays it out: image on the left, a text
+    /// column (category, title, author), a bookmark button on the right.
+    private func articleRow(top y: CGFloat) -> [CGRect] {
+        [CGRect(x: 16, y: y, width: 80, height: 100),        // image
+         CGRect(x: 108, y: y + 4, width: 60, height: 14),     // category
+         CGRect(x: 108, y: y + 24, width: 220, height: 40),   // title
+         CGRect(x: 108, y: y + 72, width: 140, height: 16),   // author
+         CGRect(x: 340, y: y + 30, width: 30, height: 30)]    // bookmark
+    }
+
+    @Test func listRowsReadTextColumnBeforeTrailingButton() throws {
+        let frames = [CGRect(x: 16, y: 60, width: 343, height: 30)]  // heading
+            + articleRow(top: 110) + articleRow(top: 230) + articleRow(top: 350)
+        let assessment = try #require(VisualOrder.assess(frames: frames))
+        #expect(assessment.outOfOrder == 0)
+    }
+
+    @Test func reversedStackIsOutOfOrder() throws {
+        let stacked = (0..<6).map { CGRect(x: 16, y: CGFloat($0) * 50, width: 300, height: 30) }
+        let assessment = try #require(VisualOrder.assess(frames: stacked.reversed()))
+        #expect(assessment.ratio < VisualOrder.passThreshold)
+    }
+
+    @Test func swappedRowsAreOutOfOrder() throws {
+        let frames = articleRow(top: 230) + articleRow(top: 110)
+        let assessment = try #require(VisualOrder.assess(frames: frames))
+        #expect(assessment.ratio < VisualOrder.passThreshold)
     }
 }

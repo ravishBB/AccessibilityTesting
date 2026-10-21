@@ -61,7 +61,6 @@ nonisolated struct AccessibilityRules {
             InputPurposeRule(),
             ScreenTitleRule(),
             DuplicateInteractiveNameRule(),
-            InteractiveTargetOverlapRule(),
 
             ContrastStandardTextRule(),
             ContrastLargeTextRule(),
@@ -671,8 +670,11 @@ nonisolated struct DescriptiveImageRule: AccessibilityRule {
                                    message: "Image accessible name is generic.",
                                    remediation: "Describe the meaningful content or purpose of the image.")
         }
-        return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                               message: "Image has a descriptive-looking accessible name.")
+        // Whether a label describes the image needs a person: the sheet's
+        // Validate row, as A11yInspect reports it.
+        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                     message: "Image is labelled \"\(RuleHelper.clean(node.label))\". Verify the label accurately describes the image.",
+                                     remediation: "If the label does not convey the image's content or purpose, rewrite it; if the image is decorative, hide it from assistive technology.")
     }
 }
 
@@ -738,64 +740,6 @@ nonisolated struct DuplicateInteractiveNameRule: ScreenAccessibilityRule {
                     )
                 }
             }
-    }
-}
-
-nonisolated struct InteractiveTargetOverlapRule: ScreenAccessibilityRule {
-    let id = "interactive-target-overlap"
-    let title = "Interactive targets do not improperly overlap"
-    let description = "Interactive controls should not substantially overlap in a way that can make activation ambiguous."
-
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        nil
-    }
-
-    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
-        let controls = RuleHelper.visibleInteractiveNodes(rootNode).filter {
-            !$0.semantics.mergedIntoAncestor && !$0.semantics.partiallyVisible
-        }
-        var results: [AccessibilityRuleEvaluation] = []
-        var reported = Set<String>()
-
-        for index in controls.indices {
-            for otherIndex in controls.indices where otherIndex > index {
-                let first = controls[index]
-                let second = controls[otherIndex]
-                let intersection = first.frame.intersection(second.frame)
-
-                guard !intersection.isNull, intersection.width > 0, intersection.height > 0 else { continue }
-
-                let firstArea = max(first.frame.width * first.frame.height, 1)
-                let secondArea = max(second.frame.width * second.frame.height, 1)
-                let overlapRatio = max(
-                    (intersection.width * intersection.height) / firstArea,
-                    (intersection.width * intersection.height) / secondArea
-                )
-
-                // Ignore tiny boundary/contact intersections. A 25% overlap of
-                // either target is a meaningful black-box warning.
-                guard overlapRatio >= 0.25 else { continue }
-
-                let pairKey = [
-                    RuleHelper.nodeKey(first),
-                    RuleHelper.nodeKey(second)
-                ].sorted().joined(separator: "|")
-                guard reported.insert(pairKey).inserted else { continue }
-
-                results.append(
-                    RuleHelper.warning(
-                        ruleID: id,
-                        name: title,
-                        description: description,
-                        node: first,
-                        message: "Interactive target overlaps another interactive target by approximately \(Int(overlapRatio * 100))% of one of the affected targets.",
-                        remediation: "Ensure interactive hit areas do not overlap unintentionally. If the overlap is intentional, verify that each action remains independently discoverable and operable."
-                    )
-                )
-            }
-        }
-
-        return results
     }
 }
 

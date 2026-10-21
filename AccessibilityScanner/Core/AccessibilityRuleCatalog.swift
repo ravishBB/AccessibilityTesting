@@ -225,7 +225,6 @@ nonisolated enum AccessibilityRuleCatalog {
 
         // Target size
         e("touch-target-size-24", "2.5.8", "Target Size (Minimum)", "AA", .moderate, "Users with motor disabilities", targetTest),
-        e("interactive-target-overlap", "2.5.8", "Target Size (Minimum)", "AA", .serious, "Users with motor disabilities", "Try activating each overlapping control and confirm the intended one responds."),
 
         // Navigation / labels
         e("screen-title", "2.4.2", "Page Titled / Screen Title", "A", .moderate, sr, "Open the screen and confirm a title that identifies it is announced."),
