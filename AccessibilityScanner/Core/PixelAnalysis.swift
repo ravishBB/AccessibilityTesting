@@ -1,9 +1,6 @@
 //
 //  PixelAnalysis.swift
 //  AccessibilityScanner
-//
-//  Measures rendered colours from the screenshot. Shared by the text contrast
-//  rules, non-text contrast, form borders, loading indicators and link colour.
 
 
 import AppKit
@@ -198,8 +195,6 @@ nonisolated final class PixelSampler {
         return result
     }
 
-    /// Samples along one edge, `inset` pixels inside it, skipping the outer 20%
-    /// at each end so rounded corners do not count as the border.
     func edgeSamples(of rect: PixelRect, edge: PixelEdge, inset: Int) -> [PixelColor] {
         var result: [PixelColor] = []
 
@@ -395,13 +390,51 @@ nonisolated enum PixelAnalyzer {
 
 // MARK: - Text recognition
 
-/// Reads the visible text of a control from the screenshot (Vision OCR).
-/// Used where the hierarchy does not expose the visible label separately
-/// from the accessible name: iOS, and Flutter/Compose on Android.
 nonisolated enum TextRecognizer {
 
     private static let lock = NSLock()
     private static var cache: [String: String?] = [:]
+    private static var warmedUp = false
+
+    /// Loads Vision's text model in the background. The first recognition
+    /// in a process takes up to a minute while the model loads; doing it
+    /// while the Appium session starts keeps it out of the scan.
+    static func warmUp() {
+        lock.lock()
+        let started = warmedUp
+        warmedUp = true
+        lock.unlock()
+        guard !started else { return }
+        DispatchQueue.global(qos: .utility).async {
+            guard let context = CGContext(data: nil, width: 64, height: 24, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+                  let image = context.makeImage() else { return }
+            let request = makeRequest()
+            try? VNImageRequestHandler(cgImage: image).perform([request])
+        }
+    }
+
+    private static func makeRequest() -> VNRecognizeTextRequest {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        // Inside this app Vision's Neural Engine model fails to compile
+        // (ANECCompile FAILED) and retries on every call. usesCPUOnly turns
+        // the Neural Engine off entirely; it is deprecated, so it is set
+        // through KVC only when the request still supports it.
+        if request.responds(to: NSSelectorFromString("setUsesCPUOnly:")) {
+            request.setValue(true, forKey: "usesCPUOnly")
+        }
+        if let devices = try? request.supportedComputeStageDevices {
+            for (stage, stageDevices) in devices {
+                if let cpu = stageDevices.first(where: { if case .cpu = $0 { return true }; return false }) {
+                    request.setComputeDevice(cpu, for: stage)
+                }
+            }
+        }
+        return request
+    }
 
     /// Text rendered inside `frame`, or nil when none is legible. Results are
     /// cached per screenshot and frame: viewports repeat the same controls.
@@ -443,24 +476,7 @@ nonisolated enum TextRecognizer {
               let image = sampler.image(cropping: frame)
         else { return nil }
 
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-        // Inside this app Vision's Neural Engine model fails to compile
-        // (ANECCompile FAILED) and retries on every call. usesCPUOnly turns
-        // the Neural Engine off entirely; it is deprecated, so it is set
-        // through KVC only when the request still supports it.
-        if request.responds(to: NSSelectorFromString("setUsesCPUOnly:")) {
-            request.setValue(true, forKey: "usesCPUOnly")
-        }
-        if let devices = try? request.supportedComputeStageDevices {
-            for (stage, stageDevices) in devices {
-                if let cpu = stageDevices.first(where: { if case .cpu = $0 { return true }; return false }) {
-                    request.setComputeDevice(cpu, for: stage)
-                }
-            }
-        }
-
+        let request = makeRequest()
         let handler = VNImageRequestHandler(cgImage: image)
         do {
             try handler.perform([request])

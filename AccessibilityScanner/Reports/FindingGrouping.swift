@@ -65,6 +65,8 @@ nonisolated struct GroupedFinding: Identifiable {
     let metadata: AccessibilityRuleMetadata
     /// BarrierBreak issue this group maps to, if any.
     let bbIssue: BBIssue?
+    /// Validate only: the Fail code to log if the tester confirms it.
+    let bbIfConfirmed: BBIssue?
     let occurrences: [FindingOccurrence]
 
     var count: Int { occurrences.count }
@@ -218,6 +220,7 @@ nonisolated struct FindingGrouping {
                 severity: worstSeverity,
                 metadata: AccessibilityRuleCatalog.metadata(for: first.ruleID),
                 bbIssue: BBIssueCatalog.issue(for: first),
+                bbIfConfirmed: BBIssueCatalog.ifConfirmed(for: first),
                 occurrences: occurrences
             )
         }

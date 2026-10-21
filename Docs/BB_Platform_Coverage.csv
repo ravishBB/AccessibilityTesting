@@ -39,7 +39,7 @@ BB40028,Target Size,Interactive controls meet the minimum target size requiremen
 BB40030,Target Size,Interactive control doesn't meet minimum target size requirements,Fail,2.5.8,AA,Major,Yes,Yes,Yes,Yes,,touch-target-size-24,
 BB40031,Text Resize,Text fails to resize,Fail,1.4.4,AA,Major,Yes (runtime),Yes (runtime),Yes (runtime),Yes (runtime),,text-resize (TextSizeProbe),iOS: relaunch with largest Dynamic Type; Android: font_scale 2.0. First screen only; not in Current Page mode.
 BB40032,Text Resize,Text can be resized,Pass,1.4.4,AA,,Yes (runtime),Yes (runtime),Yes (runtime),Yes (runtime),,text-resize,
-BB40033,Text Resize,Text content is clipped at larger font sizes,Fail,1.4.4,AA,Major,Yes (runtime),Yes (runtime),Yes (runtime),Yes (runtime),,text-clipping,
+BB40033,Text Resize,Text content is clipped at larger font sizes,Fail,1.4.4,AA,Major,Yes (runtime),Yes (runtime),Yes (runtime),Yes (runtime),,"text-clipping, text-truncation, text-overlap",
 BB40099,Screen Title,Title is specified for screen,Pass,2.4.2,A,,Yes,Partial,iOS: Yes · Android: Partial,iOS: Yes · Android: Partial,,screen-title,Android: toolbar title or pane-title. Screens with neither give no result.
 BB40134,Reading Order,Inaccurate reading order,Fail,1.3.2,A,Major,Yes,Partial,iOS: Yes · Android: Partial,iOS: Yes · Android: Partial,,reading-order,"Android dump order is view order, not TalkBack traversal order (traversalBefore/After not exposed)."
 BB40135,Reading Order,Reading order is accurate,Pass,1.3.2,A,,Yes,Partial,iOS: Yes · Android: Partial,iOS: Yes · Android: Partial,,reading-order,
@@ -75,7 +75,7 @@ BB40053,Focus Order,Check if the focus order on the screen is correct,Validate,2
 BB40054,Focus Order,Screen has correct focus order,Pass,2.4.3,A,,No,Yes (runtime),iOS: No · Android: Yes (runtime),iOS: No · Android: Yes (runtime),,focus-order,
 BB40095,Forms,Error message not announced for screen reader users,Fail,4.1.3,AA,,No,Yes,iOS: No · Android: Yes,iOS: No · Android: Yes,,error-message-accessibility,Android: error text next to a field that is neither set on the field nor a live region. iOS exposes neither.
 BB40096,Forms,Check if error message for form field is descriptive,Validate,3.3.1,A,Major,Yes (runtime),Yes (runtime),Yes (runtime),Yes (runtime),,error-message-suggestion,Submits empty sign-in/registration forms only.
-BB40119,Color,Color alone used to indicate focus,Fail,1.4.1,A,,Manual only,Manual only,Manual only,Manual only,,—,Telling a colour-only focus change from an outline needs human judgement.
+BB40119,Color,Color alone used to indicate focus,Fail,1.4.1,A,,Manual only,Runtime,Runtime,Runtime,,focus-indicator-color-only,Android: Tab probe screenshots. iOS: keyboard focus is not observable.
 BB40306,Color,Check if color alone is used to distinguish link,Validate,1.4.1,A,Major,Yes,Yes,Yes,Yes,,link-color-differentiation,
 BB40102,Motion,Accessible alternative control is available for motion-based action,Pass,2.5.4,A,,Manual only,Manual only,Manual only,Manual only,,motion-alternative,
 BB40275,Forms,Correct role provided for interactive element,Pass,4.1.2,A,,Yes,Yes,Yes,Yes,,role-trait-consistency,
@@ -111,7 +111,7 @@ BB40245,Dialogs,Modal contains keyboard-focusable controls — keyboard focus ca
 BB40110,Language,Missing language attribute for content,Fail,3.1.2,AA,Minor,No,No,No,No,,—,See BB40105.
 BB40075,Focus,Check if focus indicator is obscured by another element,Validate,2.4.11,AA,Major,No,Yes (runtime),iOS: No · Android: Yes (runtime),iOS: No · Android: Yes (runtime),,focus-not-obscured,Focused control under a navigation/tab bar.
 BB40118,Focus,Focus indicator has sufficient contrast with its background,Pass,1.4.11,AA,,No,Yes (runtime),iOS: No · Android: Yes (runtime),iOS: No · Android: Yes (runtime),,focus-indicator-contrast,
-BB40120,Focus,Focus indicator uses more than color alone,Pass,1.4.1,A,,Manual only,Manual only,Manual only,Manual only,,—,
+BB40120,Focus,Focus indicator uses more than color alone,Pass,1.4.1,A,,Manual only,Runtime,Runtime,Runtime,,focus-indicator-color-only,Android: Tab probe screenshots. iOS: keyboard focus is not observable.
 BB40061,Forms,Non-text element has sufficient contrast with its background,Pass,1.4.11,AA,,Yes,Yes,Yes,Yes,,non-text-contrast,
 BB40062,Forms,Insufficient color contrast for border of form controls,Fail,1.4.11,AA,Major,Yes,Yes,Yes,Yes,,form-border-contrast,
 BB40063,Forms,Border of form controls has sufficient contrast with its background,Pass,1.4.11,AA,,Yes,Yes,Yes,Yes,,form-border-contrast,

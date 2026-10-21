@@ -116,7 +116,13 @@ nonisolated struct AccessibilityRules {
             HeadingCandidateRule(),
             FocusIndicatorContrastRule(),
             FocusNotObscuredRule(),
-            ModalClosableRule()
+            ModalClosableRule(),
+            TextTruncationRule(),
+            TextInImageRule(),
+            ImageRoleRule(),
+            ListItemsNavigableRule(),
+            TextOverlapRule(),
+            FocusIndicatorColorOnlyRule()
         ]
     }
 }
@@ -741,7 +747,9 @@ nonisolated struct InteractiveTargetOverlapRule: ScreenAccessibilityRule {
     }
 
     func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
-        let controls = RuleHelper.visibleInteractiveNodes(rootNode).filter { !$0.semantics.mergedIntoAncestor }
+        let controls = RuleHelper.visibleInteractiveNodes(rootNode).filter {
+            !$0.semantics.mergedIntoAncestor && !$0.semantics.partiallyVisible
+        }
         var results: [AccessibilityRuleEvaluation] = []
         var reported = Set<String>()
 
@@ -940,7 +948,7 @@ nonisolated struct TextClippingRule: ScreenAccessibilityRule {
                 name: title,
                 description: description,
                 node: node,
-                message: "Text element is within the current screen bounds; rendered glyph clipping still requires visual validation."
+                message: "Text element is within the current screen bounds."
             )
         }
     }
@@ -1210,6 +1218,14 @@ private nonisolated enum ContrastRuleFactory {
             ? "worst-case contrast over a varied (image or gradient) background"
             : "measured rendered contrast"
 
+        // About 1:1 means no text is drawn at this position (covered by an
+        // overlay or drawn elsewhere): nothing was measured.
+        if measurement.ratio < 1.15 {
+            return RuleHelper.notTested(ruleID: ruleID, name: title, description: description, node: node,
+                                        message: "No text could be seen at this element's position in the screenshot, so its contrast was not measured.",
+                                        remediation: "Check where this text appears on screen and measure its contrast there.")
+        }
+
         if measurement.ratio + 0.001 < threshold {
             // Over an image or gradient the worst-case pixel decides the
             // ratio, and a busy area of the image can sit under one letter
@@ -1218,13 +1234,6 @@ private nonisolated enum ContrastRuleFactory {
                 return RuleHelper.validation(ruleID: ruleID, name: title, description: description, node: node,
                                              message: "The \(basis) is \(measured) (\(sizeText)), below \(requirement). Check whether the text stays readable over the whole background.",
                                              remediation: "If any part of the text is hard to read, add a scrim or solid backing so the contrast is at least \(requirement).")
-            }
-            // About 1:1 means no text is drawn at this position: it is
-            // covered (a bar, a sheet) or rendered elsewhere.
-            if measurement.ratio < 1.15 {
-                return RuleHelper.validation(ruleID: ruleID, name: title, description: description, node: node,
-                                             message: "No text could be seen at this element's position in the screenshot (\(measured)). It may be covered by a bar or overlay, or drawn somewhere else.",
-                                             remediation: "Check where this text appears on screen and measure its contrast there.")
             }
             // Within 5% of the threshold the screenshot's compression and
             // anti-aliasing decide the result, not the colours.
@@ -1667,7 +1676,8 @@ nonisolated struct ErrorSuggestionRule: AccessibilityRule {
     /// Static path: error text already on screen. The probe covers errors
     /// triggered by submitting an empty form.
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.role == .staticText, node.visible else { return nil }
+        // Text inside a control is that control's label, not an error.
+        guard node.role == .staticText, node.visible, !node.semantics.insideActionable else { return nil }
         let text = RuleHelper.clean(node.label)
         guard ErrorMessageHeuristics.looksLikeStrictError(text) else { return nil }
 
@@ -1686,6 +1696,131 @@ nonisolated struct FocusIndicatorContrastRule: AccessibilityRule {
     let id = "focus-indicator-contrast"
     let title = "Focus indicator has sufficient contrast"
     let description = "The keyboard focus indicator must have at least 3:1 contrast with adjacent colours."
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+}
+
+/// Abra "Text presented as plain text" (1.4.5). Words drawn inside an image.
+/// Logos and essential images are allowed, so this is for a tester to judge.
+nonisolated struct TextInImageRule: AccessibilityRule, ContextualAccessibilityRule {
+    let id = "text-in-image"
+    let title = "Text presented as plain text"
+    let description = "Text should be real text, not part of an image, unless it is a logo or essential."
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+
+    func evaluate(node: AccessibilityNode, context: AccessibilityRuleContext) -> AccessibilityRuleEvaluation? {
+        guard node.role == .image, node.visible, !node.semantics.partiallyVisible,
+              node.frame.width >= 40, node.frame.height >= 16,
+              let text = TextRecognizer.text(in: node.frame, context: context)
+        else { return nil }
+        let words = RuleHelper.wordList(text)
+        let letters = text.filter(\.isLetter).count
+        guard words.count >= 2 || letters >= 5 else { return nil }
+        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                     message: "This image shows the text \"\(RuleHelper.clean(text))\". Images of text cannot be resized, recoloured or reflowed, unless the image is a logo or the presentation is essential.",
+                                     remediation: "Render the words as real text styled over the image, or confirm the image is a logo or essential.")
+    }
+}
+
+/// Abra "Image role present". A picture exposed without the image role.
+nonisolated struct ImageRoleRule: AccessibilityRule {
+    let id = "image-role"
+    let title = "Image role present"
+    let description = "Pictures should be exposed with the image role so screen readers say what they are."
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        guard node.role == .other, node.visible, node.accessible, node.children.isEmpty,
+              !node.semantics.mergedIntoAncestor, !node.semantics.insideActionable,
+              !RuleHelper.clean(node.label).isEmpty,
+              node.frame.width >= 24, node.frame.height >= 24,
+              !RuleHelper.hasTrait(node, ["clickable", "checkable", "scrollable", "focusable", "heading"])
+        else { return nil }
+        let looksLikeImage: Bool
+        switch node.platform {
+        case .android:
+            // Named only by a content description, with no text of its own:
+            // how Compose, Flutter and React Native expose an untagged picture.
+            looksLikeImage = node.semantics.visibleText == nil && !node.type.contains("Text")
+        case .ios:
+            let hint = (node.identifier + " " + node.label).lowercased()
+            looksLikeImage = ["image", "photo", "picture", "illustration", "icon", "logo", "avatar", "thumbnail"]
+                .contains { hint.contains($0) }
+        }
+        guard looksLikeImage else { return nil }
+        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                     message: "\"\(RuleHelper.clean(node.label))\" looks like a picture but is not exposed with the image role, so screen readers do not say it is an image.",
+                                     remediation: "If it is a picture, give it the image role (.accessibilityAddTraits(.isImage), Role.Image, accessibilityRole=\"image\", Semantics(image: true)); if it is decorative, hide it.")
+    }
+}
+
+/// Abra "List items separately navigable" (1.3.1). Several list items merged
+/// into one screen-reader stop.
+nonisolated struct ListItemsNavigableRule: AccessibilityRule {
+    let id = "list-items-navigable"
+    let title = "List items separately navigable"
+    let description = "Each item in a list should be a separate stop for screen readers."
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        // One stop for screen readers: an iOS accessibility element, or an
+        // Android element TalkBack focuses as a whole.
+        let isOneStop = node.platform == .ios
+            ? node.accessible && node.role != .application
+            : RuleHelper.hasTrait(node, ["clickable", "focusable"])
+        guard isOneStop, node.visible, !node.semantics.mergedIntoAncestor else { return nil }
+
+        // Repeated item groups: siblings of the same kind and similar size,
+        // stacked or side by side, each with its own text.
+        let groups = Self.itemGroups(in: node)
+        guard groups.count >= 3 else { return nil }
+        let examples = groups.prefix(3).compactMap { RuleHelper.childTextSegments(of: $0)?.first ?? RuleHelper.clean($0.label) }
+        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                     message: "\(groups.count) separate items (for example: \(examples.map { "\"\($0)\"" }.joined(separator: ", "))) are read as one screen-reader stop, so users cannot move between them one at a time.",
+                                     remediation: "Make each list item its own accessibility element instead of combining the whole list.")
+    }
+
+    private static func itemGroups(in node: AccessibilityNode) -> [AccessibilityNode] {
+        var container = node
+        // Look through single wrapper layers.
+        while container.children.count == 1, let only = container.children.first { container = only }
+        let withText = container.children.filter { child in
+            child.visible && child.frame.width > 0 && child.frame.height > 0 &&
+                (RuleHelper.childTextSegments(of: child) != nil || (RuleHelper.isText(child) && !RuleHelper.clean(child.label).isEmpty))
+        }
+        guard withText.count >= 3 else { return [] }
+        let sameKind = Dictionary(grouping: withText, by: \.type).values.max { $0.count < $1.count } ?? []
+        guard sameKind.count >= 3 else { return [] }
+        let heights = sameKind.map(\.frame.height).sorted()
+        let median = heights[heights.count / 2]
+        let similar = sameKind.filter { abs($0.frame.height - median) <= median * 0.3 }
+        // Items, not lines of one paragraph: each group has more than one
+        // line of text or is a container of its own.
+        let structured = similar.filter { !$0.children.isEmpty }
+        let distinctTexts = Set(structured.compactMap { RuleHelper.childTextSegments(of: $0)?.joined(separator: " ") })
+        return structured.count >= 3 && distinctTexts.count >= 3 ? structured : []
+    }
+}
+
+/// Runtime-only: checked by TextSizeProbe at the largest text size.
+nonisolated struct TextTruncationRule: AccessibilityRule {
+    let id = "text-truncation"
+    let title = "Scaled text not truncated"
+    let description = "Text should not be shortened with an ellipsis when it is scaled up."
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+}
+
+/// Runtime-only: checked by TextSizeProbe at the largest text size.
+nonisolated struct TextOverlapRule: AccessibilityRule {
+    let id = "text-overlap"
+    let title = "Scaled text not obscured"
+    let description = "Text should not overlap other text when it is scaled up."
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+}
+
+/// Runtime-only: checked by KeyboardFocusTester during Tab traversal.
+nonisolated struct FocusIndicatorColorOnlyRule: AccessibilityRule {
+    let id = "focus-indicator-color-only"
+    let title = "Colour of keyboard focus indicator is not the only cue"
+    let description = "Keyboard focus should be shown by more than a change of colour."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 

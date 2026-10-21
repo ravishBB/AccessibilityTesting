@@ -47,7 +47,7 @@ nonisolated struct AccessibilityRuleMetadata: Codable, Hashable {
 nonisolated enum AccessibilityRuleCatalog {
 
     /// Bump whenever a rule is added, removed, re-mapped or its logic changes.
-    static let version = "2026.10.15"
+    static let version = "2026.10.19"
 
     static func metadata(for ruleID: String) -> AccessibilityRuleMetadata {
         if let known = table[ruleID] { return known }
@@ -87,14 +87,15 @@ nonisolated enum AccessibilityRuleCatalog {
         "live-region", "form-autocomplete", "missing-role", "name-via-hint",
         "keyboard-focus", "keyboard-activation", "keyboard-focus-hidden-content",
         "keyboard-focus-noninteractive", "keyboard-focus-context-change",
-        "focus-indicator", "focus-order", "focus-indicator-contrast", "focus-not-obscured",
+        "focus-indicator", "focus-order", "focus-indicator-contrast", "focus-not-obscured", "focus-indicator-color-only",
         "modal-accessibility", "modal-focus-containment"
     ]
 
     /// Rules that by design only raise manual-review items, never pass/fail.
     static let reviewOnly: Set<String> = [
         "decorative-image", "segmented-control-interactive", "tab-accessibility",
-        "screen-reader-focus-order", "text-spacing", "time-limited-ui", "heading-candidate"
+        "screen-reader-focus-order", "text-spacing", "time-limited-ui", "heading-candidate",
+        "text-in-image", "image-role", "list-items-navigable"
     ]
 
     static func cannotRun(on platform: MobilePlatform) -> Set<String> {
@@ -158,6 +159,9 @@ nonisolated enum AccessibilityRuleCatalog {
         e("image-accessible-label", "1.1.1", "Non-text Content", "A", .serious, sr, "Focus the image and confirm the announced text conveys the same information."),
         e("image-name-descriptive", "1.1.1", "Non-text Content", "A", .moderate, sr, "Focus the image and confirm the label is meaningful and not a file name."),
         e("decorative-image", "1.1.1", "Non-text Content", "A", .minor, sr, "Swipe through the screen and confirm purely decorative images are skipped."),
+        e("text-in-image", "1.4.5", "Images of Text", "AA", .moderate, "Low-vision users", "Find images that show words and confirm the text is real text, unless it is a logo or essential."),
+        e("image-role", "4.1.2", "Name, Role, Value", "A", .moderate, sr, "Move VoiceOver/TalkBack to each picture and confirm it is announced as an image."),
+        e("list-items-navigable", "1.3.1", "Info and Relationships", "A", .moderate, sr, "Swipe through lists with VoiceOver/TalkBack and confirm each item is a separate stop."),
         e("map-text-alternative", "1.1.1", "Non-text Content", "A", .serious, "\(sr), users who cannot see the map", "Confirm the same information shown on the map is available as text or a list."),
 
         // Info and relationships / sequence
@@ -180,6 +184,8 @@ nonisolated enum AccessibilityRuleCatalog {
         // Text resizing and spacing
         e("text-resize", "1.4.4", "Resize Text", "AA", .serious, "Low-vision users", "Increase the system text size to the maximum and confirm text stays readable without clipping or overlap."),
         e("text-clipping", "1.4.4", "Resize Text", "AA", .serious, "Low-vision users", "Increase the system text size and confirm no text is cut off or truncated."),
+        e("text-truncation", "1.4.4", "Resize Text", "AA", .serious, "Low-vision users", "Set the largest text size and confirm no text is shortened with an ellipsis (…)."),
+        e("text-overlap", "1.4.4", "Resize Text", "AA", .serious, "Low-vision users", "Set the largest text size and confirm no text overlaps other text."),
         e("text-spacing", "1.4.12", "Text Spacing", "AA", .moderate, "Users with dyslexia or low vision", "Increase text spacing settings and confirm content does not overlap or get cut off."),
 
         // Keyboard / focus / gestures
@@ -205,6 +211,7 @@ nonisolated enum AccessibilityRuleCatalog {
         e("path-based-gesture-alternative", "2.1.1", "Keyboard", "A", .serious, "Users with motor disabilities", "Confirm path-based gestures have an equivalent simple alternative."),
         e("touch-up-cancellation", "2.5.2", "Pointer Cancellation", "A", .moderate, "Users with motor disabilities", "Press on the control, slide away and release; confirm the action does not fire."),
         e("motion-alternative", "2.5.4", "Motion Actuation", "A", .moderate, "Users with motor disabilities", "Perform the motion interaction and confirm an equivalent non-motion control exists."),
+        e("focus-indicator-color-only", "1.4.1", "Use of Color", "A", .serious, "Keyboard users with colour-vision deficiency", "Tab to each control and confirm focus is shown by more than a change of colour (an outline, border or clear change in lightness)."),
         e("focus-indicator-contrast", "1.4.11", "Non-text Contrast", "AA", .serious, "Keyboard users with low vision", "Tab to each control and confirm the focus outline is clearly visible against its surroundings."),
         e("focus-not-obscured", "2.4.11", "Focus Not Obscured (Minimum)", "AA", .serious, "Keyboard users", "Tab through the screen and confirm the focused control is never hidden behind a sticky header, footer or banner."),
         e("modal-closable", "2.1.1", "Keyboard", "A", .serious, "\(sr), keyboard users", "Open the dialog and confirm it can be closed with a screen reader and a keyboard."),

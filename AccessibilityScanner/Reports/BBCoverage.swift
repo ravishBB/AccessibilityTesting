@@ -65,7 +65,11 @@ nonisolated enum BBCoverage {
 
         // Results per BB ID, by outcome.
         var fails: [String: Int] = [:], passes: [String: Int] = [:], reviews: [String: Int] = [:]
+        var toConfirm: [String: Int] = [:]
         for evaluation in report.allEvaluations {
+            if let pending = BBIssueCatalog.ifConfirmed(for: evaluation) {
+                toConfirm[pending.id, default: 0] += 1
+            }
             guard let id = BBIssueCatalog.issue(for: evaluation)?.id else { continue }
             switch evaluation.status {
             case .fail, .warning: fails[id, default: 0] += 1
@@ -84,10 +88,10 @@ nonisolated enum BBCoverage {
             let outcome: BBCoverageEntry.Outcome
             switch rule.type {
             case .fail:
-                // A Validate result can carry a Fail-type code: the code the
-                // tester records if it is confirmed.
+                // Validate results that become this code if the tester
+                // confirms them are listed as Review, not as found.
                 let found = fails[rule.id] ?? 0
-                count = found > 0 ? found : reviews[rule.id] ?? 0
+                count = found > 0 ? found : toConfirm[rule.id] ?? 0
                 outcome = found > 0 ? .found : .review
             case .pass:
                 count = passes[rule.id] ?? 0

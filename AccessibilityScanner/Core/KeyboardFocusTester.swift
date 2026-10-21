@@ -96,6 +96,7 @@ final class KeyboardFocusTester {
         var scrolledDuringTraversal = false
         var visualEvidence: [String: Bool] = [:]
         var indicatorContrast: [String: (node: AccessibilityNode, ratio: Double)] = [:]
+        var focusCues: [String: (node: AccessibilityNode, cue: FocusCue)] = [:]
         var obscuredBy: [String: (node: AccessibilityNode, cover: AccessibilityNode)] = [:]
         var traversalCompleted = false
         var hiddenFocused: [String: AccessibilityNode] = [:]
@@ -220,6 +221,11 @@ final class KeyboardFocusTester {
                         hierarchySize: root.frame.size
                        ) {
                         indicatorContrast[key] = (matching, ratio)
+                    }
+                    if visualEvidence[key] == true,
+                       let cue = Self.focusCue(before: baselineScreenshot, after: focusedScreenshot,
+                                               node: focused, hierarchySize: root.frame.size) {
+                        focusCues[key] = (matching, cue)
                     }
                 }
                 if let cover = coveringElement(over: focused, in: root) {
@@ -389,6 +395,28 @@ final class KeyboardFocusTester {
                 node: node
             ))
         }
+        // 1.4.1: focus shown only by a change of colour.
+        for (node, cue) in focusCues.values {
+            let ratio = String(format: "%.2f:1", cue.stateRatio)
+            if cue.hasOutline {
+                evaluations.append(ProbeEvaluation.make(
+                    ruleID: "focus-indicator-color-only", status: .pass,
+                    message: "Focus adds an outline or border around the control, so it does not rely on colour alone.",
+                    node: node))
+            } else if cue.stateRatio >= 3 {
+                evaluations.append(ProbeEvaluation.make(
+                    ruleID: "focus-indicator-color-only", status: .pass,
+                    message: "Focus changes the control's lightness by \(ratio), which is visible without colour perception.",
+                    node: node))
+            } else {
+                evaluations.append(ProbeEvaluation.make(
+                    ruleID: "focus-indicator-color-only", status: .fail,
+                    message: "Focus is shown only by a change of colour: no outline or border is added and the lightness changes by \(ratio), under 3:1, so users who cannot tell the colours apart cannot see where focus is.",
+                    remediation: "Add a non-colour cue such as an outline, border or underline, or change the lightness by at least 3:1.",
+                    node: node))
+            }
+        }
+
         for (node, cover) in obscuredBy.values {
             let coverName = cover.label.isEmpty ? (cover.identifier.isEmpty ? cover.type : cover.identifier) : cover.label
             evaluations.append(ProbeEvaluation.make(
@@ -701,6 +729,66 @@ final class KeyboardFocusTester {
         }
         walk(root)
         return result
+    }
+
+    struct FocusCue {
+        /// An outline, border or ring appears at the control's edge.
+        let hasOutline: Bool
+        /// Lightness contrast between the focused and unfocused colours of
+        /// the pixels focus changed.
+        let stateRatio: Double
+    }
+
+    /// How focus changed the control's appearance: a shape at its edge, or
+    /// only the colour of what was already there.
+    static func focusCue(before: Data, after: Data?, node: AccessibilityNode, hierarchySize: CGSize) -> FocusCue? {
+        guard let after, let beforeImage = NSImage(data: before), let afterImage = NSImage(data: after),
+              let beforeCG = beforeImage.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let afterCG = afterImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let width = min(beforeCG.width, afterCG.width), height = min(beforeCG.height, afterCG.height)
+        let scale = CGFloat(width) / max(1, hierarchySize.width)
+        let margin = Int((6 * scale).rounded())
+        let band = max(2, Int((3 * scale).rounded()))
+        let x0 = max(0, Int(node.frame.minX * scale) - margin), y0 = max(0, Int(node.frame.minY * scale) - margin)
+        let x1 = min(width, Int(node.frame.maxX * scale) + margin), y1 = min(height, Int(node.frame.maxY * scale) + margin)
+        let w = x1 - x0, h = y1 - y0
+        guard w > 2 * margin + 4, h > 2 * margin + 4,
+              let b = pixelBytes(beforeCG, x: x0, y: y0, width: w, height: h),
+              let a = pixelBytes(afterCG, x: x0, y: y0, width: w, height: h), a.count == b.count else { return nil }
+
+        func luminance(_ p: [UInt8], _ i: Int) -> Double {
+            func c(_ v: UInt8) -> Double { let x = Double(v) / 255; return x <= 0.03928 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4) }
+            return 0.2126 * c(p[i]) + 0.7152 * c(p[i + 1]) + 0.0722 * c(p[i + 2])
+        }
+        // Control edges inside the crop.
+        let left = margin, top = margin, right = w - margin, bottom = h - margin
+        var outsideTotal = 0, outsideChanged = 0, edgeTotal = 0, edgeChanged = 0, innerTotal = 0, innerChanged = 0
+        var beforeL: [Double] = [], afterL: [Double] = []
+        for y in 0..<h {
+            for x in 0..<w {
+                let i = (y * w + x) * 4
+                let changed = abs(Int(b[i]) - Int(a[i])) + abs(Int(b[i + 1]) - Int(a[i + 1])) + abs(Int(b[i + 2]) - Int(a[i + 2])) > 60
+                if changed { beforeL.append(luminance(b, i)); afterL.append(luminance(a, i)) }
+                let inside = x >= left && x < right && y >= top && y < bottom
+                if !inside {
+                    outsideTotal += 1; if changed { outsideChanged += 1 }
+                } else if x < left + band || x >= right - band || y < top + band || y >= bottom - band {
+                    edgeTotal += 1; if changed { edgeChanged += 1 }
+                } else {
+                    innerTotal += 1; if changed { innerChanged += 1 }
+                }
+            }
+        }
+        guard beforeL.count >= 20 else { return nil }
+        let outside = Double(outsideChanged) / Double(max(outsideTotal, 1))
+        let edge = Double(edgeChanged) / Double(max(edgeTotal, 1))
+        let inner = Double(innerChanged) / Double(max(innerTotal, 1))
+        // A ring drawn just outside the control, or at its edge while the
+        // inside stays the same. A changed fill reaches the edge too, so it
+        // only counts when the inside did not change.
+        let hasOutline = outside >= 0.3 || (edge >= 0.5 && inner < 0.3)
+        let lb = beforeL.sorted()[beforeL.count / 2], la = afterL.sorted()[afterL.count / 2]
+        return FocusCue(hasOutline: hasOutline, stateRatio: (max(la, lb) + 0.05) / (min(la, lb) + 0.05))
     }
 
     /// Whether the rendered pixels around `node` changed between two screenshots.

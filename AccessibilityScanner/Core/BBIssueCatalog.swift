@@ -15,7 +15,7 @@ nonisolated struct BBIssue: Codable, Hashable {
 nonisolated enum BBIssueCatalog {
 
     /// Bump whenever a mapping is added, removed or changed.
-    static let version = "2026.10.15.1"
+    static let version = "2026.10.19.1"
 
     // MARK: - Lookup
 
@@ -39,14 +39,19 @@ nonisolated enum BBIssueCatalog {
         case pass, fail, review
     }
 
+    /// The code a result is reported under. Its Type in the BB sheet always
+    /// equals the result's status: a Validate result never shows a Fail code.
     private static func issueID(for evaluation: AccessibilityRuleEvaluation) -> String? {
-        let id = mappedID(for: evaluation)
-        // A Validate result with no Validate-type code in the sheet carries
-        // the Fail code the tester records if the issue is confirmed.
-        if id == nil, evaluation.status == .validate {
-            return mappedID(for: evaluation, outcomeOverride: .fail)
-        }
-        return id
+        mappedID(for: evaluation)
+    }
+
+    /// For a Validate result whose check has only a Fail code in the sheet:
+    /// the code the tester logs if the issue is confirmed.
+    static func ifConfirmed(for evaluation: AccessibilityRuleEvaluation) -> BBIssue? {
+        guard evaluation.status == .validate, mappedID(for: evaluation) == nil,
+              let id = mappedID(for: evaluation, outcomeOverride: .fail)
+        else { return nil }
+        return BBIssue(id: id, title: titles[id] ?? id, wcag: wcag[id])
     }
 
     private static func mappedID(for evaluation: AccessibilityRuleEvaluation, outcomeOverride: Outcome? = nil) -> String? {
@@ -97,7 +102,7 @@ nonisolated enum BBIssueCatalog {
         case ("contrast-opacity", .fail): return largeText ? "BB40020" : "BB40018"
         case ("contrast-opacity", .pass): return largeText ? "BB40022" : "BB40024"
         case ("contrast-opacity", .review): return largeText ? "BB40016" : "BB40011"
-        case ("link-color-differentiation", _): return "BB40306"
+        case ("link-color-differentiation", .review): return "BB40306"
         case ("non-text-contrast", .fail): return "BB40060"
         case ("non-text-contrast", .pass): return "BB40061"
         case ("form-border-contrast", .fail): return "BB40062"
@@ -121,6 +126,10 @@ nonisolated enum BBIssueCatalog {
         case ("text-resize", .pass): return "BB40032"
         case ("text-clipping", .fail): return "BB40033"
         case ("text-clipping", .pass): return "BB40034"
+        case ("text-truncation", .fail), ("text-overlap", .fail): return "BB40033"
+        case ("text-truncation", .pass), ("text-overlap", .pass): return "BB40034"
+        case ("focus-indicator-color-only", .fail): return "BB40119"
+        case ("focus-indicator-color-only", .pass): return "BB40120"
 
         // Role
         case ("heading-quality", .fail): return "BB40128"
@@ -170,7 +179,7 @@ nonisolated enum BBIssueCatalog {
 
         // Orientation
         case ("orientation-support", .fail):
-            return evaluation.message.contains("locked") ? "BB40056" : "BB40055"
+            return evaluation.message.contains("locked") ? "BB40056" : nil
         case ("orientation-support", .review): return "BB40055"
 
         // Language
@@ -268,6 +277,8 @@ nonisolated enum BBIssueCatalog {
         "BB40031": "1.4.4",
         "BB40032": "1.4.4",
         "BB40033": "1.4.4",
+        "BB40119": "1.4.1",
+        "BB40120": "1.4.1",
         "BB40035": "2.1.1",
         "BB40036": "4.1.2",
         "BB40037": "4.1.2",
@@ -387,6 +398,8 @@ nonisolated enum BBIssueCatalog {
         "BB40031": "Text fails to resize",
         "BB40032": "Text can be resized",
         "BB40033": "Text content is clipped at larger font sizes",
+        "BB40119": "Color alone used to indicate focus",
+        "BB40120": "Focus indicator uses more than color alone",
         "BB40034": "Text displays correctly",
         "BB40035": "Check if segmented controls needs to be interactive",
         "BB40036": "Check if the tab control needs to be hidden from screen reader users",

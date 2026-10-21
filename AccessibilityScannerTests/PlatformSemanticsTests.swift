@@ -265,4 +265,19 @@ struct PlatformSemanticsTests {
         // The child "Full name" text is measured on its own; the field box is not.
         #expect(ContrastStandardTextRule().evaluate(node: field, context: AccessibilityRuleContext()) == nil)
     }
+
+    @Test func runtimeResultsHaveTheirOwnSection() {
+        let root = makeNode(type: "XCUIElementTypeApplication", label: "App", frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        let locked = makeEvaluation(ruleID: "orientation-support", status: .fail, node: root,
+                                    message: "The screen stayed in portrait when the device was rotated to landscape. The screen is locked in one orientation.")
+        let screen = ScreenScanResult(name: "Screen 1", elementCount: 1, evaluations: [locked])
+        #expect(screen.screenLevelResults.count == 1)
+        let report = AccessibilityScanResult(
+            applicationName: "App", bundleID: "a.b", deviceName: "Phone", deviceUDID: "x",
+            startedAt: Date(), finishedAt: Date(), screens: [screen], rulesExecuted: 1
+        )
+        let html = HTMLReportExporter().makeHTML(from: report)
+        #expect(html.contains("<section id=\"runtime\">"))
+        #expect(html.contains("<code>BB40056</code>"))
+    }
 }

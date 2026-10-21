@@ -78,6 +78,10 @@ final class AppCrawler {
     private var pointerCancellationRuns = 0
     private let pointerCancellationScreens = 2
     private var isLost = false
+
+    /// Every label seen on a scanned screen, at all its scroll positions:
+    /// returning to a screen often lands part-way down it.
+    private var screenContentLabels: [String: Set<String>] = [:]
     
     private static let overlayPackages: Set<String> = [
         "com.android.permissioncontroller",
@@ -291,6 +295,11 @@ final class AppCrawler {
         let topSnapshot =
             scrollResult.topSnapshot
 
+        let everyLabel = ([snapshot.rootNode, topSnapshot.rootNode] + scrollResult.viewportCaptures.map(\.snapshot.rootNode))
+            .reduce(into: Set<String>()) { $0.formUnion(ProbeNodes.contentLabels(in: $1)) }
+        screenContentLabels[contentFingerprint(from: snapshot.rootNode)] = everyLabel
+        screenContentLabels[contentFingerprint(from: topSnapshot.rootNode)] = everyLabel
+
         let evaluations =
             scrollResult.evaluations
 
@@ -408,6 +417,10 @@ final class AppCrawler {
                 .compactMap(\.xpath))
         }
 
+        // The same action repeated on every list item ("Bookmark article",
+        // "Share article") leads to the same kind of result: try it once.
+        var triedActionKinds = Set<String>()
+
         for (index, action)
             in actionsToExplore.enumerated() {
 
@@ -415,6 +428,12 @@ final class AppCrawler {
                 configuration.maximumScreens {
 
                 break
+            }
+
+            let kind = [action.type, action.identifier, action.label].joined(separator: "|")
+            guard triedActionKinds.insert(kind).inserted else {
+                statusHandler("Skipping \(action.displayName): the same action was already tried on this screen.")
+                continue
             }
 
             statusHandler(
@@ -523,16 +542,19 @@ final class AppCrawler {
 
             do {
 
-                let nextSnapshot =
-                    try await captureStableSnapshot()
+                // One page-source read decides what the tap did; the full
+                // snapshot (two reads and a screenshot) is only needed for a
+                // new screen that will be scanned.
+                let quickRoot = try await readRoot()
 
                 let nextSignature =
                     contentFingerprint(
                         from:
-                            nextSnapshot.rootNode
+                            quickRoot
                     )
 
-                let navigated = !isSameScreen(snapshot.rootNode, nextSnapshot.rootNode)
+                let navigated = !isSameScreen(snapshot.rootNode, quickRoot)
+                trace("Crawl tap \"\(action.displayName)\": \(navigated ? (isVisited(quickRoot) ? "opened an already scanned screen" : "opened a new screen") : "no change")", Log.crawler)
 
                 if navigated {
                     discoveredScreens[screenIndex].transitions.append(
@@ -561,8 +583,9 @@ final class AppCrawler {
                         action.displayName
                     )
 
-                } else if !isVisited(nextSnapshot.rootNode) {
+                } else if !isVisited(quickRoot) {
 
+                    let nextSnapshot = try await captureStableSnapshot()
                     try await explore(
                         snapshot: nextSnapshot,
                         depth: depth + 1,
@@ -613,8 +636,7 @@ final class AppCrawler {
             // A deeper screen could not navigate back to where it expected.
             // Find out where we are before pressing Back again.
             if isLost {
-                if let here = try? await captureStableSnapshot(),
-                   isSameScreen(here.rootNode, snapshot.rootNode) {
+                if await isShowing(snapshot.rootNode) {
                     isLost = false
                     statusHandler("Found the way back to the previous screen — continuing.")
                     continue
@@ -655,61 +677,95 @@ final class AppCrawler {
                 return
             }
 
-            do {
-                try await appium.goBack()
+            if try await navigateBack(to: snapshot.rootNode, statusHandler: statusHandler) {
+                statusHandler("Returned to previous screen — continuing with next action.")
+                continue
+            }
+            statusHandler("Back navigation did not return to the previous screen.")
+            notes.record(.lostNavigation, example: action.displayName)
+            isLost = true
+            break
+        }
+    }
 
-                trace("""
-                ==========================================
-                CRAWLER BACK
-                ==========================================
-                Returned to previous screen.
-                ==========================================
-                """, Log.crawler)
+    /// One page-source read, no screenshot: enough to tell which screen is
+    /// showing.
+    private func readRoot() async throws -> AccessibilityNode {
+        try appium.makeParser().parse(try await appium.getSource())
+    }
 
-                try await Task.sleep(
-                    nanoseconds:
-                        configuration.settleDelayNanoseconds
-                )
+    private func isShowing(_ screen: AccessibilityNode) async -> Bool {
+        guard let root = try? await readRoot() else { return false }
+        return matchesScreen(root, screen)
+    }
 
-                let backSnapshot =
-                    try await captureStableSnapshot()
+    /// The same screen as `screen`, at any scroll position: most of what is
+    /// showing now was seen somewhere on that screen.
+    private func matchesScreen(_ current: AccessibilityNode, _ screen: AccessibilityNode) -> Bool {
+        if isSameScreen(current, screen) { return true }
+        guard let known = screenContentLabels[contentFingerprint(from: screen)] else { return false }
+        let labels = ProbeNodes.contentLabels(in: current)
+        guard labels.count >= 3 else { return false }
+        return Double(labels.intersection(known).count) / Double(labels.count) >= 0.7
+    }
 
-                if !isSameScreen(backSnapshot.rootNode, snapshot.rootNode) {
-                    // Tabs have no Back: re-select the screen's tab instead.
-                    if try await returnViaTabBar(to: snapshot.rootNode) {
-                        statusHandler("Returned to the previous screen through its tab.")
-                        continue
+    /// Returns to `screen` after an action opened something on top of it.
+    /// Back only works for pushed screens (it taps the navigation bar's back
+    /// button on iOS); sheets and full-screen covers need their close button
+    /// or a swipe down, and tab roots need their tab.
+    private func navigateBack(to screen: AccessibilityNode, statusHandler: @escaping (String) -> Void) async throws -> Bool {
+        let settle = configuration.settleDelayNanoseconds
+
+        if (try? await appium.goBack()) != nil {
+            try await Task.sleep(nanoseconds: settle)
+            if await isShowing(screen) { trace("Crawl back: Back", Log.crawler); return true }
+        }
+
+        // A close control near the top: Close, Done, Cancel, Back, or an
+        // xmark / chevron icon.
+        if let current = try? await readRoot() {
+            let top = current.frame.minY + current.frame.height * 0.25
+            let closeWords: Set<String> = ["close", "done", "cancel", "dismiss", "back"]
+            let closeIcons = ["xmark", "chevron.left", "chevron.backward", "arrow.left", "arrow.backward"]
+            let close = ProbeNodes.all(in: current).first { node in
+                node.role == .button && node.visible && node.frame.minY < top &&
+                    (closeWords.contains(ProbeNodes.clean(node.label).lowercased()) ||
+                     closeIcons.contains { node.identifier.lowercased().hasPrefix($0) })
+            }
+            if let close, let xpath = NavigationAction(node: close).xpath,
+               (try? await appium.tapElement(usingXPath: xpath)) != nil {
+                try await Task.sleep(nanoseconds: settle)
+                if await isShowing(screen) {
+                    trace("Crawl back: close button \(close.label.isEmpty ? close.identifier : close.label)", Log.crawler)
+                    statusHandler("Closed the opened screen with \"\(close.label.isEmpty ? close.identifier : close.label)\".")
+                    return true
+                }
+            }
+
+            // An iOS sheet closes with a swipe down from its top.
+            if appium.platform == .ios {
+                let frame = current.frame
+                let start = CGPoint(x: frame.midX, y: frame.minY + frame.height * 0.12)
+                let end = CGPoint(x: frame.midX, y: frame.minY + frame.height * 0.9)
+                if (try? await appium.pressAndSlideAway(from: start, to: end)) != nil {
+                    try await Task.sleep(nanoseconds: settle)
+                    if await isShowing(screen) {
+                        trace("Crawl back: swipe down", Log.crawler)
+                        statusHandler("Closed the opened sheet with a swipe down.")
+                        return true
                     }
-                    statusHandler(
-                        "Back navigation did not return to the previous screen."
-                    )
-
-                    notes.record(.lostNavigation, example: action.displayName)
-                    isLost = true
-                    break
                 }
-
-                statusHandler(
-                    "Returned to previous screen — continuing with next action."
-                )
-
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                if (try? await returnViaTabBar(to: snapshot.rootNode)) == true {
-                    statusHandler("Returned to the previous screen through its tab.")
-                    continue
-                }
-                statusHandler(
-                    "Could not return to previous screen: " +
-                    error.localizedDescription
-                )
-
-                notes.record(.lostNavigation, example: action.displayName)
-                isLost = true
-                break
             }
         }
+
+        if try await returnViaTabBar(to: screen) {
+            trace("Crawl back: tab bar", Log.crawler)
+            statusHandler("Returned to the previous screen through its tab.")
+            return true
+        }
+        let here = (try? await readRoot()).map { ProbeNodes.contentLabels(in: $0).sorted().prefix(6).joined(separator: ", ") } ?? "unreadable"
+        trace("Crawl back FAILED. Showing: \(here)", Log.crawler)
+        return false
     }
     
     /// Returns to `screen` by tapping its tab-bar buttons (selected tab first)
@@ -742,7 +798,7 @@ final class AppCrawler {
             guard let xpath = NavigationAction(node: tab).xpath,
                   (try? await appium.tapElement(usingXPath: xpath)) != nil else { continue }
             try await Task.sleep(nanoseconds: configuration.settleDelayNanoseconds)
-            if let here = try? await captureStableSnapshot(), isSameScreen(here.rootNode, screen) {
+            if await isShowing(screen) {
                 return true
             }
         }
@@ -785,10 +841,7 @@ final class AppCrawler {
         depth: Int,
         statusHandler: @escaping (String) -> Void
     ) async throws -> Bool {
-        func isHere() async -> Bool {
-            guard let current = try? await captureStableSnapshot() else { return false }
-            return isSameScreen(current.rootNode, screen)
-        }
+        func isHere() async -> Bool { await isShowing(screen) }
 
         if await isHere() { return true }
 
@@ -805,11 +858,7 @@ final class AppCrawler {
             return true
         }
 
-        try? await appium.goBack()
-        try await Task.sleep(nanoseconds: configuration.settleDelayNanoseconds)
-        if await isHere() { return true }
-
-        if try await returnViaTabBar(to: screen) { return true }
+        if try await navigateBack(to: screen, statusHandler: statusHandler) { return true }
 
         statusHandler("Runtime checks left this screen and it could not be found again; skipping its actions.")
         notes.record(.lostNavigation, example: "after runtime checks")
@@ -878,6 +927,7 @@ final class AppCrawler {
             statusHandler(
                 "Scanning viewport \(viewportCount)..."
             )
+            let viewportStarted = Date()
 
             let evaluations: [AccessibilityRuleEvaluation]
 
@@ -920,6 +970,8 @@ final class AppCrawler {
                 )
             }
             
+            trace("Crawl timing: viewport \(viewportCount) rules \(String(format: "%.1f", Date().timeIntervalSince(viewportStarted)))s", Log.crawler)
+
             if scrollIndex == maximumScrolls {
 
                 statusHandler(
@@ -933,9 +985,11 @@ final class AppCrawler {
                 "Scrolling down..."
             )
 
+            let scrollStarted = Date()
             do {
 
                 try await appium.scrollDown()
+                trace("Crawl timing: scroll \(String(format: "%.1f", Date().timeIntervalSince(scrollStarted)))s", Log.crawler)
 
             } catch {
 
@@ -1259,6 +1313,13 @@ final class AppCrawler {
         if node.identifier ==
             "A11YScannerIgnore" {
 
+            return false
+        }
+
+        // The navigation bar's back button (iOS BackButton, labelled with
+        // the previous screen's title; Android "Navigate up") only returns
+        // to the screen the crawler came from.
+        if ActionSafety.isBackButton(node) {
             return false
         }
 

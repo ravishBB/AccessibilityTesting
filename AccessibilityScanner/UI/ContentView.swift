@@ -349,6 +349,12 @@ struct ContentView: View {
                     }
                 }
 
+                if viewModel.scanMode != .currentPage {
+                    Toggle("Don't relaunch the app", isOn: $viewModel.keepAppRunning)
+                        .disabled(viewModel.isScanning)
+                        .help("Start from the app as it is now, keeping settings and sign-in that are not saved. The larger-text check needs a relaunch and is skipped.")
+                }
+
                 Text(
                     viewModel.scanMode == .currentPage
                     ? "Open the desired page in the selected app before starting. AccessibilityScanner will capture and report only that page."

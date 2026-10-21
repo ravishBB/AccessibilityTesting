@@ -5,6 +5,7 @@
 
 import Foundation
 import CoreGraphics
+import ImageIO
 
 // MARK: - Environment
 
@@ -51,7 +52,7 @@ enum ProbeEvaluation {
 
 enum ProbeNodes {
 
-    private static func clean(_ text: String) -> String {
+    static func clean(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -117,6 +118,30 @@ enum ProbeNodes {
         guard abs(dy) > 4 || abs(dx) > 4 else { return false }
         let moved = shifts.filter { abs($0.y - dy) < 3 && abs($0.x - dx) < 3 }.count
         return Double(moved) / Double(shifts.count) >= 0.6
+    }
+
+    /// The drawn text when it is the start of `label` cut off with an
+    /// ellipsis; nil when it is the whole label or something else.
+    static func shortenedText(drawn: String, label: String) -> String? {
+        var shown = drawn
+        if shown.hasSuffix("…") { shown.removeLast() }
+        else if shown.hasSuffix("...") { shown.removeLast(3) }
+        else { return nil }
+        func normalized(_ text: String) -> String {
+            text.lowercased().filter { $0.isLetter || $0.isNumber }
+        }
+        let prefix = normalized(shown), full = normalized(label)
+        guard prefix.count >= 3, prefix.count < full.count, full.hasPrefix(prefix) else { return nil }
+        return drawn
+    }
+
+    static func imageSize(_ data: Data) -> (width: Double, height: Double)? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Double,
+              let height = properties[kCGImagePropertyPixelHeight] as? Double
+        else { return nil }
+        return (width, height)
     }
 
     static func meaningfulCount(in root: AccessibilityNode) -> Int {
@@ -229,7 +254,9 @@ final class OrientationProbe {
             ]
         }
 
-        let status: RuleResultStatus = ratio <= 0.5 ? .warning : .fail
+        // Labels can also be scrolled off-screen in landscape, so this is
+        // for a tester to confirm (BB40055). A locked screen is the Fail.
+        let status: RuleResultStatus = .validate
         return [
             ProbeEvaluation.make(
                 ruleID: ruleID,
@@ -452,12 +479,17 @@ final class TextSizeProbe {
         guard environment.allowAppRelaunch else {
             return notTested(
                 rootNode,
-                "The app was attached in Current Page mode and relaunching it with larger text would lose the open page."
+                "The app was attached without relaunching (Current Page mode or \"Don't relaunch the app\"), and relaunching it with larger text would reset its state."
             )
         }
 
         let serial = environment.udid
         var originalAndroidScale: String?
+        var step = Date()
+        func lap(_ name: String) {
+            trace("Text size timing: \(name) \(String(format: "%.1f", Date().timeIntervalSince(step)))s", Log.probes)
+            step = Date()
+        }
 
         do {
             if environment.platform == .android {
@@ -489,22 +521,117 @@ final class TextSizeProbe {
             return notTested(rootNode, "Larger text could not be applied: \(error.localizedDescription)")
         }
 
+        lap("relaunch at large size")
         var largeRoot: AccessibilityNode?
+        var largeShot: Data?
         do {
             try await Task.sleep(nanoseconds: 2_000_000_000)
             largeRoot = try await ProbeNodes.readSettledRoot(using: appium)
+            // What is actually drawn: labels keep the full text even when
+            // the screen shows it shortened with "…".
+            largeShot = try? await appium.getScreenshot()
         } catch {
             await restore(originalAndroidScale: originalAndroidScale)
             throw error
         }
 
+        lap("read large layout")
         await restore(originalAndroidScale: originalAndroidScale)
+        lap("restore normal size")
 
         guard let largeRoot else {
             return notTested(rootNode, "The hierarchy could not be read at the larger text size.")
         }
 
-        return evaluate(normal: rootNode, large: largeRoot)
+        var results = evaluate(normal: rootNode, large: largeRoot)
+        lap("resize and clipping rules")
+        results += Self.truncation(normal: rootNode, large: largeRoot, screenshot: largeShot)
+        lap("truncation text recognition")
+        results += Self.overlap(normal: rootNode, large: largeRoot)
+        return results
+    }
+
+    // MARK: Truncation and overlap (BB40033)
+
+    /// Text the screen draws as the start of its label followed by "…".
+    static func truncation(normal: AccessibilityNode, large: AccessibilityNode, screenshot: Data?) -> [AccessibilityRuleEvaluation] {
+        guard let screenshot, let size = ProbeNodes.imageSize(screenshot) else {
+            return [ProbeEvaluation.make(ruleID: "text-truncation", status: .notTested,
+                                         message: "No screenshot could be taken at the largest text size, so shortened text could not be checked.",
+                                         remediation: "Set the largest text size and confirm no text ends with \"…\".", node: normal)]
+        }
+        let context = AccessibilityRuleContext(
+            screenshotData: screenshot, screenshotWidth: size.width, screenshotHeight: size.height,
+            hierarchyWidth: large.frame.width, hierarchyHeight: large.frame.height
+        )
+        let texts = ProbeNodes.all(in: large).filter {
+            $0.role == .staticText && $0.visible && !$0.semantics.partiallyVisible &&
+                ProbeNodes.clean($0.label).count >= 6 && $0.frame.height >= 8
+        }.prefix(60)
+
+        var truncated: [String] = []
+        for text in texts {
+            let label = ProbeNodes.clean(text.label)
+            guard !label.contains("…"), !label.hasSuffix("..."),
+                  let drawn = TextRecognizer.text(in: text.frame, context: context)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            else { continue }
+            if let shown = ProbeNodes.shortenedText(drawn: drawn, label: label) {
+                truncated.append("\"\(shown)\" (full text: \"\(label)\")")
+            }
+        }
+
+        if truncated.isEmpty {
+            return [ProbeEvaluation.make(ruleID: "text-truncation", status: .pass,
+                                         message: "No text was shortened with an ellipsis at the largest text size (\(texts.count) text elements read).",
+                                         node: normal)]
+        }
+        return [ProbeEvaluation.make(ruleID: "text-truncation", status: .fail,
+                                     message: "\(truncated.count) text element\(truncated.count == 1 ? " is" : "s are") shortened with an ellipsis at the largest text size, so part of the text cannot be read (for example: \(truncated.prefix(2).joined(separator: "; "))).",
+                                     remediation: "Let the text wrap onto more lines (lineLimit(nil) / maxLines unset) instead of truncating it.",
+                                     node: normal)]
+    }
+
+    /// Text that overlaps other text at the largest size but did not at the
+    /// normal size.
+    static func overlap(normal: AccessibilityNode, large: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        func texts(_ root: AccessibilityNode) -> [AccessibilityNode] {
+            ProbeNodes.all(in: root).filter {
+                $0.role == .staticText && $0.visible && !$0.semantics.partiallyVisible &&
+                    !ProbeNodes.clean($0.label).isEmpty && $0.frame.width > 0 && $0.frame.height > 0
+            }
+        }
+        func overlapping(_ a: CGRect, _ b: CGRect) -> Bool {
+            let inter = a.intersection(b)
+            guard !inter.isNull, inter.width > 1, inter.height > 1 else { return false }
+            let smaller = min(a.width * a.height, b.width * b.height)
+            return inter.width * inter.height >= smaller * 0.2 && !a.contains(b) && !b.contains(a)
+        }
+        let normalFrames = Dictionary(texts(normal).map { (ProbeNodes.clean($0.label), $0.frame) }, uniquingKeysWith: { first, _ in first })
+        let largeTexts = texts(large)
+
+        var pairs: [String] = []
+        for i in largeTexts.indices {
+            for j in largeTexts.indices where j > i {
+                let a = largeTexts[i], b = largeTexts[j]
+                let labelA = ProbeNodes.clean(a.label), labelB = ProbeNodes.clean(b.label)
+                guard labelA != labelB, overlapping(a.frame, b.frame) else { continue }
+                // Already overlapping at normal size: a design choice (a
+                // badge on a title), not caused by scaling.
+                if let na = normalFrames[labelA], let nb = normalFrames[labelB], overlapping(na, nb) { continue }
+                pairs.append("\"\(labelA)\" and \"\(labelB)\"")
+            }
+        }
+
+        if pairs.isEmpty {
+            return [ProbeEvaluation.make(ruleID: "text-overlap", status: .pass,
+                                         message: "No text overlapped other text at the largest text size.",
+                                         node: normal)]
+        }
+        return [ProbeEvaluation.make(ruleID: "text-overlap", status: .fail,
+                                     message: "\(pairs.count) pair\(pairs.count == 1 ? "" : "s") of text overlap at the largest text size (for example: \(pairs.prefix(2).joined(separator: "; "))).",
+                                     remediation: "Let containers grow with the text (no fixed heights) so scaled text pushes other content down instead of drawing over it.",
+                                     node: normal)]
     }
 
     // MARK: Evaluation
@@ -635,7 +762,7 @@ final class TextSizeProbe {
         _ node: AccessibilityNode,
         _ reason: String
     ) -> [AccessibilityRuleEvaluation] {
-        ["text-resize", "text-clipping"].map {
+        ["text-resize", "text-clipping", "text-truncation", "text-overlap"].map {
             ProbeEvaluation.make(
                 ruleID: $0,
                 status: .notTested,

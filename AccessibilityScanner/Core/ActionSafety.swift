@@ -57,13 +57,21 @@ enum ActionSafety {
 
     /// Safe for a runtime probe to activate.
     static func isSafeToActivate(_ node: AccessibilityNode) -> Bool {
-        !isIrreversible(node)
+        !isIrreversible(node) && !isBackButton(node)
     }
 
     /// Safe for the crawler to tap while exploring.
     static func isSafeToExplore(_ node: AccessibilityNode) -> Bool {
         let tokens = words(of: node)
-        return !containsPhrase(tokens, irreversible) && !containsPhrase(tokens, stateChanging)
+        return !containsPhrase(tokens, irreversible) && !containsPhrase(tokens, stateChanging) && !isBackButton(node)
+    }
+
+    /// The navigation bar's back button (iOS "BackButton", labelled with
+    /// the previous screen's title; Android "Navigate up"). Tapping it
+    /// leaves the screen being tested, so no probe or crawl step uses it.
+    static func isBackButton(_ node: AccessibilityNode) -> Bool {
+        node.identifier == "BackButton" ||
+            node.label.caseInsensitiveCompare("Navigate up") == .orderedSame
     }
 
     /// The button that dismisses an alert without accepting it, or nil if

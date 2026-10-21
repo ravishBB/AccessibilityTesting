@@ -116,6 +116,7 @@ private nonisolated struct HTMLReportRenderer {
         out += coverageSection()
         out += bbCoverageSection()
         out += screensSection()
+        out += runtimeSection()
         out += scopeSection()
         out += appendixSection()
         out += footer()
@@ -216,8 +217,8 @@ private nonisolated struct HTMLReportRenderer {
         }
         if grouping.manualReviewCount > 0 {
             return Verdict(
-                title: "Manual review required.",
-                detail: "No automated failures, but \(grouping.manualReviewCount) check\(plural(grouping.manualReviewCount)) could not be proven and need a tester.",
+                title: "Validate items to confirm.",
+                detail: "No failures, but \(grouping.manualReviewCount) result\(plural(grouping.manualReviewCount)) need a tester to confirm.",
                 cssClass: "validate"
             )
         }
@@ -249,10 +250,11 @@ private nonisolated struct HTMLReportRenderer {
         <nav aria-label="Report sections">
         <a href="#summary">Summary</a>
         <a href="#findings">Findings</a>
-        <a href="#manual-review">Manual review</a>
+        <a href="#manual-review">Validate</a>
         <a href="#coverage">Coverage</a>
         <a href="#bb-coverage">BB ruleset</a>
         <a href="#screens">Screens</a>
+        <a href="#runtime">Runtime results</a>
         <a href="#scope">Scope &amp; limitations</a>
         <a href="#appendix">Rule results</a>
         </nav>
@@ -266,10 +268,9 @@ private nonisolated struct HTMLReportRenderer {
         var out = "<section id=\"summary\">\n<h2>Executive summary</h2>\n"
 
         out += "<div class=\"kpis\">\n"
-        out += kpi("Failures", grouping.failureCount, "fail")
-        out += kpi("Warnings", grouping.warningCount, "warning")
-        out += kpi("Manual review", grouping.manualReviewCount, "validate")
-        out += kpi("Passed", grouping.passCount, "pass")
+        out += kpi("Fail", grouping.failureCount, "fail")
+        out += kpi("Validate", grouping.manualReviewCount, "validate")
+        out += kpi("Pass", grouping.passCount, "pass")
         out += kpi("Rules not tested", coverage.rulesNotTested, "nottested")
         out += kpi("Screens", report.screens.count, "neutral")
         out += kpi("Elements tested", report.totalElementsTested, "neutral")
@@ -294,7 +295,6 @@ private nonisolated struct HTMLReportRenderer {
         }
 
         out += coverageSummaryHTML()
-        out += qualityGateHTML()
 
         out += "</section>\n"
         return out
@@ -302,20 +302,6 @@ private nonisolated struct HTMLReportRenderer {
 
     private func kpi(_ title: String, _ value: Int, _ cssClass: String) -> String {
         "<div class=\"kpi \(cssClass)\"><span class=\"kpi-value\">\(value)</span><span class=\"kpi-label\">\(esc(title))</span></div>\n"
-    }
-
-    private func qualityGateHTML() -> String {
-        let gate = intelligence.qualityGate
-        guard !gate.checks.isEmpty else { return "" }
-
-        var out = "<h3>Release quality gate: \(esc(gate.status.title))</h3>\n"
-        out += "<table class=\"data\">\n<thead><tr><th scope=\"col\">Check</th><th scope=\"col\" class=\"num\">Value</th><th scope=\"col\">Enforced</th><th scope=\"col\">Result</th><th scope=\"col\">Detail</th></tr></thead>\n<tbody>\n"
-        for check in gate.checks {
-            let result = check.passed ? chip("Passed", "pass") : chip("Not passed", check.enforced ? "fail" : "warning")
-            out += "<tr><td>\(esc(check.title))</td><td class=\"num\">\(check.value)</td><td>\(check.enforced ? "Yes" : "No")</td><td>\(result)</td><td>\(esc(check.detail))</td></tr>\n"
-        }
-        out += "</tbody>\n</table>\n"
-        return out
     }
 
     private func coverageSummaryHTML() -> String {
@@ -365,7 +351,7 @@ private nonisolated struct HTMLReportRenderer {
     }
 
     private func manualReviewSection() -> String {
-        var out = "<section id=\"manual-review\">\n<h2>Manual review checklist</h2>\n"
+        var out = "<section id=\"manual-review\">\n<h2>Validate</h2>\n"
         let groups = grouping.manualReviewGroups
 
         if groups.isEmpty {
@@ -411,6 +397,9 @@ private nonisolated struct HTMLReportRenderer {
         if let bb = group.bbIssue {
             let criterion = bb.wcag.map { " · WCAG \($0)" } ?? ""
             out += "<dt>BB issue</dt><dd>\(esc(bb.id)) · \(esc(bb.title))\(esc(criterion))</dd>\n"
+        }
+        if let bb = group.bbIfConfirmed {
+            out += "<dt>If confirmed</dt><dd>Log as \(esc(bb.id)) · \(esc(bb.title))</dd>\n"
         }
         out += "<dt>Who is affected</dt><dd>\(esc(group.metadata.affectedUsers))</dd>\n"
         if !group.sampleMessage.isEmpty {
@@ -497,7 +486,7 @@ private nonisolated struct HTMLReportRenderer {
             out += "<article class=\"screen\">\n"
             out += "<h3>\(esc(screen.name))</h3>\n"
             out += "<p class=\"muted\">\(screen.elementCount) elements · "
-            out += "\(screen.failures) failed · \(screen.warnings) warnings · \(screen.validations) manual review · \(screen.passes) passed</p>\n"
+            out += "\(screen.failures) fail · \(screen.validations) validate · \(screen.passes) pass</p>\n"
 
             if options.includeScreenshots {
                 out += screenshotsHTML(for: screen)
@@ -606,6 +595,39 @@ private nonisolated struct HTMLReportRenderer {
             out += "</ol>\n"
         }
         out += "</figure>\n"
+        return out
+    }
+
+    // MARK: Runtime and screen-level results
+
+    /// Whole-screen results (larger text, orientation, keyboard traversal):
+    /// nothing to mark on a screenshot, so they are listed with their codes.
+    private func runtimeSection() -> String {
+        var out = "<section id=\"runtime\">\n<h2>Runtime and screen-level results</h2>\n"
+        out += "<p>Checks of a whole screen, such as larger text, orientation and keyboard traversal. They cannot be marked on the screenshot.</p>\n"
+        let screens = report.screens.filter { !$0.screenLevelResults.isEmpty }
+        guard !screens.isEmpty else {
+            return out + "<p class=\"empty\">No screen-level results in this scan.</p>\n</section>\n\n"
+        }
+        out += "<table class=\"data\">\n<thead><tr><th scope=\"col\">Screen</th><th scope=\"col\">Result</th><th scope=\"col\">Check</th><th scope=\"col\">BB code</th><th scope=\"col\">Detail</th></tr></thead>\n<tbody>\n"
+        for screen in screens {
+            for evaluation in screen.screenLevelResults {
+                let code: String
+                if let issue = BBIssueCatalog.issue(for: evaluation) {
+                    code = "<code>\(esc(issue.id))</code> \(esc(issue.title))"
+                } else if let pending = BBIssueCatalog.ifConfirmed(for: evaluation) {
+                    code = "If confirmed: <code>\(esc(pending.id))</code> \(esc(pending.title))"
+                } else {
+                    code = "—"
+                }
+                var detail = esc(evaluation.message)
+                if evaluation.status != .pass, !evaluation.remediation.isEmpty {
+                    detail += "<br><span class=\"muted\">\(esc(evaluation.remediation))</span>"
+                }
+                out += "<tr><td>\(esc(screen.name))</td><td>\(statusChip(evaluation.status))</td><td>\(esc(evaluation.ruleName))</td><td>\(code)</td><td>\(detail)</td></tr>\n"
+            }
+        }
+        out += "</tbody>\n</table>\n</section>\n\n"
         return out
     }
 

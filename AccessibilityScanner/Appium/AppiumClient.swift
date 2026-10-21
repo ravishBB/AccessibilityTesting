@@ -578,6 +578,68 @@ final class AppiumClient {
     
     /// Presses at `start`, slides to `end` and releases there: the gesture a
     /// user makes to cancel an accidental press (pointer cancellation).
+    private var cachedWindowSize: CGSize?
+
+    /// Window size in points (iOS) from the W3C window rect.
+    private func windowSize() async throws -> CGSize {
+        if let cachedWindowSize { return cachedWindowSize }
+        guard let sessionID else { throw AppiumError.noActiveSession }
+        var request = URLRequest(url: baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("window")
+            .appendingPathComponent("rect"))
+        request.timeoutInterval = 15
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let value = json["value"] as? [String: Any],
+              let width = (value["width"] as? NSNumber)?.doubleValue,
+              let height = (value["height"] as? NSNumber)?.doubleValue,
+              width > 0, height > 0
+        else { throw AppiumError.invalidResponse }
+        let size = CGSize(width: width, height: height)
+        cachedWindowSize = size
+        return size
+    }
+
+    /// iOS scroll as one drag in the middle of the screen. `mobile: scroll`
+    /// took 7 s per call; a drag takes about one second. The finger holds
+    /// still before lifting so the list stops where the drag ended instead
+    /// of flinging on.
+    private func verticalDrag(from startFraction: CGFloat, to endFraction: CGFloat) async throws {
+        guard let sessionID else { throw AppiumError.noActiveSession }
+        let size = try await windowSize()
+        let x = Int(size.width / 2 * displayScale)
+        let startY = Int(size.height * startFraction * displayScale)
+        let endY = Int(size.height * endFraction * displayScale)
+        var request = URLRequest(url: baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("actions"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15
+        let payload: [String: Any] = [
+            "actions": [[
+                "type": "pointer",
+                "id": "a11yScrollPointer",
+                "parameters": ["pointerType": "touch"],
+                "actions": [
+                    ["type": "pointerMove", "duration": 0, "x": x, "y": startY],
+                    ["type": "pointerDown", "button": 0],
+                    ["type": "pause", "duration": 100],
+                    ["type": "pointerMove", "duration": 450, "x": x, "y": endY],
+                    ["type": "pause", "duration": 250],
+                    ["type": "pointerUp", "button": 0]
+                ]
+            ]]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+    }
+
     func pressAndSlideAway(from start: CGPoint, to end: CGPoint) async throws {
         guard let sessionID = sessionID else {
             throw AppiumError.noActiveSession
@@ -770,6 +832,7 @@ final class AppiumClient {
             try await androidScroll(direction: "up", percent: 0.5)
             return
         }
+        if (try? await verticalDrag(from: 0.25, to: 0.83)) != nil { return }
         guard let sessionID = sessionID else {
             throw AppiumError.noActiveSession
         }
@@ -817,6 +880,7 @@ final class AppiumClient {
             try await androidScroll(direction: "down", percent: 0.85)
             return
         }
+        if (try? await verticalDrag(from: 0.80, to: 0.22)) != nil { return }
 
         guard let sessionID = sessionID else {
             throw AppiumError.noActiveSession
@@ -1144,9 +1208,17 @@ final class AppiumClient {
                 // element on every page-source read: 4-7 s per read on a
                 // SwiftUI screen instead of about 1 s. Set false explicitly,
                 // since WDA keeps settings from earlier sessions.
+                // WDA waits before every gesture for the app to go idle (up
+                // to waitForIdleTimeout, 10 s by default). An app with a
+                // looping animation never does, so every scroll and launch
+                // waited the full timeout. The crawler waits its own settle
+                // time after each action instead.
+                "appium:waitForQuiescence": false,
                 "appium:settings": [
                     "includeHittableInPageSource": false,
-                    "includeCustomActionsInPageSource": true
+                    "includeCustomActionsInPageSource": true,
+                    "waitForIdleTimeout": 1,
+                    "animationCoolOffTimeout": 0.5
                 ]
             ]
 

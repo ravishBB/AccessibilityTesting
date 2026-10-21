@@ -38,6 +38,13 @@ final class ScannerViewModel: ObservableObject {
     @Published var scanResult: AccessibilityScanResult?
     @Published var errorMessage: String?
     @Published var scanMode: ScanMode = .fullApp
+    /// Full and limited scans attach to the app as the tester left it
+    /// instead of relaunching it, so in-memory state (settings, sign-in, an
+    /// open flow) survives. The larger-text check needs a relaunch and is
+    /// skipped.
+    @Published var keepAppRunning: Bool = UserDefaults.standard.bool(forKey: "settings.keepAppRunning") {
+        didSet { UserDefaults.standard.set(keepAppRunning, forKey: "settings.keepAppRunning") }
+    }
     @Published var maximumScreens: Int = 10
     @Published private(set) var partialScreenCount: Int = 0
 
@@ -236,6 +243,7 @@ final class ScannerViewModel: ObservableObject {
     // MARK: - Start Scan
 
     func startScan() {
+        TextRecognizer.warmUp()
 
         guard let device = selectedDevice else {
 
@@ -325,7 +333,7 @@ final class ScannerViewModel: ObservableObject {
                 platform: device.platform,
                 appActivity: appActivity,
                 displayDensity: device.displayDensity,
-                autoLaunch: mode != .currentPage
+                autoLaunch: mode != .currentPage && !keepAppRunning
             )
 
             let appium = AppiumClient(baseURL: configuration.appiumURL)
@@ -409,7 +417,7 @@ final class ScannerViewModel: ObservableObject {
                     bundleID: application.bundleID,
                     platform: device.platform,
                     udid: device.udid,
-                    allowAppRelaunch: mode != .currentPage,
+                    allowAppRelaunch: mode != .currentPage && !keepAppRunning,
                     allowAppInteraction: mode != .currentPage
                 )
             )

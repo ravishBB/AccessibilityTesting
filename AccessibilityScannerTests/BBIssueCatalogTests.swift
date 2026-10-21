@@ -37,14 +37,18 @@ struct BBIssueCatalogTests {
     @Test func orientationLockedVersusMissingContent() {
         let root = makeNode(type: "XCUIElementTypeApplication")
         #expect(bb("orientation-support", .fail, root, message: "The screen is locked in one orientation.") == "BB40056")
-        #expect(bb("orientation-support", .fail, root, message: "3 of 10 labels are not exposed") == "BB40055")
+        // Missing labels in landscape are a Validate result (BB40055), never a Fail.
+        #expect(bb("orientation-support", .validate, root, message: "3 of 10 labels are not exposed") == "BB40055")
     }
 
     @Test func warningsBecomeValidateWithTheirBBCode() {
         let link = makeNode(type: "XCUIElementTypeStaticText", label: "Privacy link")
         let evaluation = makeEvaluation(ruleID: "text-link-role", status: .warning, node: link)
         #expect(evaluation.status == .validate)
-        #expect(BBIssueCatalog.issue(for: evaluation)?.id == "BB40042")
+        // BB40042 is a Fail code in the sheet: shown as the code to log if
+        // confirmed, never as the result's own code.
+        #expect(BBIssueCatalog.issue(for: evaluation) == nil)
+        #expect(BBIssueCatalog.ifConfirmed(for: evaluation)?.id == "BB40042")
     }
 
     @Test func placeholderAndTextDisplayShareBB40034() {

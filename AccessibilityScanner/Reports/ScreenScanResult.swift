@@ -44,6 +44,15 @@ nonisolated struct ScreenScanResult: Identifiable, Codable {
         self.viewportScreenshots = viewportScreenshots
     }
 
+    /// Results about the whole screen, which the screenshot cannot mark:
+    /// Fail first, then Validate, then Pass.
+    var screenLevelResults: [AccessibilityRuleEvaluation] {
+        let order: [RuleResultStatus: Int] = [.fail: 0, .warning: 0, .validate: 1, .pass: 2]
+        return evaluations
+            .filter { ScreenshotAnnotation.isScreenLevel($0) && order[$0.status] != nil }
+            .sorted { (order[$0.status] ?? 9, $0.ruleName) < (order[$1.status] ?? 9, $1.ruleName) }
+    }
+
     var failures: Int {
         evaluations.filter {
             $0.status == .fail

@@ -26,6 +26,8 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
     /// failures only.
     let status: RuleResultStatus?
     let bbIssueID: String?
+    /// Validate only: the Fail code to log if the tester confirms it.
+    var bbIfConfirmedID: String? = nil
 
     var displayStatus: RuleResultStatus { status ?? .fail }
 
@@ -48,6 +50,7 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
         self.frameHeight = evaluation.frameHeight
         self.status = evaluation.status
         self.bbIssueID = BBIssueCatalog.issue(for: evaluation)?.id
+        self.bbIfConfirmedID = BBIssueCatalog.ifConfirmed(for: evaluation)?.id
     }
 
     var frame: CGRect {
@@ -75,7 +78,8 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
             frameWidth: frameWidth,
             frameHeight: frameHeight,
             status: status,
-            bbIssueID: bbIssueID
+            bbIssueID: bbIssueID,
+            bbIfConfirmedID: bbIfConfirmedID
         )
     }
 
@@ -94,7 +98,8 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
         frameWidth: Double,
         frameHeight: Double,
         status: RuleResultStatus?,
-        bbIssueID: String?
+        bbIssueID: String?,
+        bbIfConfirmedID: String?
     ) {
         self.id = id
         self.number = number
@@ -111,6 +116,14 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
         self.frameHeight = frameHeight
         self.status = status
         self.bbIssueID = bbIssueID
+        self.bbIfConfirmedID = bbIfConfirmedID
+    }
+
+    /// A result about the whole screen (a runtime probe such as larger text,
+    /// orientation or keyboard traversal): no single component to mark.
+    static func isScreenLevel(_ evaluation: AccessibilityRuleEvaluation) -> Bool {
+        evaluation.frameWidth <= 0 || evaluation.frameHeight <= 0 ||
+            evaluation.elementType == "hierarchy" || evaluation.elementRole == .application
     }
 
     // MARK: - Stable Screenshot Ordering
@@ -130,10 +143,7 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
         // filters the other statuses on demand. Screen-level checks (the
         // whole hierarchy) have no single component to point at.
         let relevant = evaluations.filter {
-            statuses.contains($0.status) &&
-                $0.frameWidth > 0 && $0.frameHeight > 0 &&
-                $0.elementType != "hierarchy" &&
-                $0.elementRole != .application
+            statuses.contains($0.status) && !isScreenLevel($0)
         }
 
         let sorted = relevant.sorted { lhs, rhs in

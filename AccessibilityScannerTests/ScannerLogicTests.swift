@@ -4,6 +4,7 @@
 //
 
 import Testing
+import AppKit
 import Foundation
 import CoreGraphics
 @testable import AccessibilityScanner
@@ -279,5 +280,104 @@ struct RuleAvailabilityTests {
         let card = makeNode(type: "XCUIElementTypeButton", label: "Wellness article: Morning Routines That Actually Work, by Sarah Chen, 5 minute read",
                             frame: CGRect(x: 16, y: 304, width: 361, height: 241), children: texts)
         #expect(LabelInNameRule().evaluate(node: card)?.status == .pass)
+    }
+
+    @Test func shortenedTextNeedsLabelPrefixAndEllipsis() {
+        #expect(ProbeNodes.shortenedText(drawn: "Morning Routines That…", label: "Morning Routines That Actually Work") != nil)
+        #expect(ProbeNodes.shortenedText(drawn: "Morning Routines That...", label: "Morning Routines That Actually Work") != nil)
+        #expect(ProbeNodes.shortenedText(drawn: "Morning Routines That Actually Work", label: "Morning Routines That Actually Work") == nil)
+        #expect(ProbeNodes.shortenedText(drawn: "Loading…", label: "Morning Routines") == nil, "not the label's start")
+    }
+
+    @Test func overlapCausedByScalingFails() {
+        func screen(_ frames: [(String, CGRect)]) -> AccessibilityNode {
+            makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852),
+                     children: frames.map { makeNode(type: "XCUIElementTypeStaticText", label: $0.0, frame: $0.1) })
+        }
+        let normal = screen([("Title", CGRect(x: 16, y: 100, width: 200, height: 20)), ("Subtitle", CGRect(x: 16, y: 124, width: 200, height: 18))])
+        let large = screen([("Title", CGRect(x: 16, y: 100, width: 200, height: 40)), ("Subtitle", CGRect(x: 16, y: 124, width: 200, height: 36))])
+        #expect(TextSizeProbe.overlap(normal: normal, large: large).first?.status == .fail)
+        #expect(TextSizeProbe.overlap(normal: normal, large: normal).first?.status == .pass)
+        // Overlapping already at normal size: a design choice, not scaling.
+        #expect(TextSizeProbe.overlap(normal: large, large: large).first?.status == .pass)
+    }
+
+    @Test func focusCueSeparatesOutlineFromColourOnly() throws {
+        func png(_ draw: (CGContext) -> Void) throws -> Data {
+            let context = try #require(CGContext(data: nil, width: 200, height: 200, bitsPerComponent: 8, bytesPerRow: 0,
+                                                 space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+            draw(context)
+            let image = try #require(context.makeImage())
+            return try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+        }
+        let control = makeNode(frame: CGRect(x: 50, y: 50, width: 100, height: 100))
+        let size = CGSize(width: 200, height: 200)
+        let unfocused = try png { $0.setFillColor(CGColor(red: 0.85, green: 0.2, blue: 0.2, alpha: 1)); $0.fill(CGRect(x: 50, y: 50, width: 100, height: 100)) }
+        let ring = try png {
+            $0.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1)); $0.fill(CGRect(x: 45, y: 45, width: 110, height: 110))
+            $0.setFillColor(CGColor(red: 0.85, green: 0.2, blue: 0.2, alpha: 1)); $0.fill(CGRect(x: 50, y: 50, width: 100, height: 100))
+        }
+        let hueOnly = try png { $0.setFillColor(CGColor(red: 0.2, green: 0.55, blue: 0.2, alpha: 1)); $0.fill(CGRect(x: 50, y: 50, width: 100, height: 100)) }
+
+        let outline = try #require(KeyboardFocusTester.focusCue(before: unfocused, after: ring, node: control, hierarchySize: size))
+        #expect(outline.hasOutline)
+        let colour = try #require(KeyboardFocusTester.focusCue(before: unfocused, after: hueOnly, node: control, hierarchySize: size))
+        #expect(!colour.hasOutline)
+        #expect(colour.stateRatio < 3, "red to green of similar lightness")
+    }
+
+    @Test func combinedListIsReportedButCardIsNot() {
+        func row(_ title: String, _ y: CGFloat) -> AccessibilityNode {
+            makeNode(type: "XCUIElementTypeOther", label: "", frame: CGRect(x: 16, y: y, width: 361, height: 60), accessible: false, children: [
+                makeNode(type: "XCUIElementTypeStaticText", label: title, frame: CGRect(x: 24, y: y + 8, width: 300, height: 20), accessible: false),
+                makeNode(type: "XCUIElementTypeStaticText", label: "5 min read", frame: CGRect(x: 24, y: y + 32, width: 100, height: 16), accessible: false)
+            ])
+        }
+        let list = makeNode(type: "XCUIElementTypeOther", label: "Morning, Evening, Weekend", frame: CGRect(x: 16, y: 100, width: 361, height: 200),
+                            children: [row("Morning", 100), row("Evening", 160), row("Weekend", 220)]).annotatingLayout()
+        #expect(ListItemsNavigableRule().evaluate(node: list)?.status == .validate)
+
+        let card = makeNode(type: "XCUIElementTypeButton", label: "Wellness article: Morning Routines",
+                            frame: CGRect(x: 16, y: 300, width: 361, height: 240), children: [
+                                makeNode(type: "XCUIElementTypeStaticText", label: "WELLNESS", accessible: false),
+                                makeNode(type: "XCUIElementTypeStaticText", label: "Morning Routines", accessible: false),
+                                makeNode(type: "XCUIElementTypeStaticText", label: "By Sarah Chen", accessible: false)
+                            ]).annotatingLayout()
+        #expect(ListItemsNavigableRule().evaluate(node: card) == nil)
+    }
+
+    @Test func androidPictureWithoutImageRole() throws {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <hierarchy index="0" class="hierarchy" rotation="0" width="1080" height="2400">
+          <android.view.View index="0" package="com.example" class="android.view.View" text="" content-desc="Mountain sunrise" resource-id="hero" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" long-clickable="false" password="false" scrollable="false" selected="false" bounds="[0,200][1080,800]" displayed="true" />
+          <android.widget.TextView index="1" package="com.example" class="android.widget.TextView" text="Welcome" resource-id="title" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" long-clickable="false" password="false" scrollable="false" selected="false" bounds="[0,900][1080,1000]" displayed="true" />
+        </hierarchy>
+        """
+        let root = try AndroidElementParser(displayScale: 3).parse(xml)
+        let results = ProbeNodes.all(in: root).compactMap { ImageRoleRule().evaluate(node: $0) }
+        #expect(results.map(\.identifier) == ["hero"])
+    }
+
+    @Test func contentUnderTabBarIsNotATargetOverlap() {
+        let row = makeNode(type: "XCUIElementTypeButton", label: "Food illustration, FOOD", frame: CGRect(x: 0, y: 705, width: 393, height: 112))
+        let scroll = makeNode(type: "XCUIElementTypeScrollView", frame: CGRect(x: 0, y: 0, width: 393, height: 852), accessible: false, children: [row])
+        let home = makeNode(type: "XCUIElementTypeButton", label: "Home", frame: CGRect(x: 25, y: 773, width: 85, height: 54))
+        let bar = makeNode(type: "XCUIElementTypeTabBar", frame: CGRect(x: 0, y: 769, width: 393, height: 83), accessible: false, children: [home])
+        let root = makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852), accessible: false,
+                            children: [scroll, bar]).annotatingLayout()
+        let nodes = ProbeNodes.all(in: root)
+        #expect(nodes.first { $0.label.hasPrefix("Food") }?.semantics.partiallyVisible == true)
+        #expect(nodes.first { $0.label == "Home" }?.semantics.partiallyVisible == false)
+        #expect(InteractiveTargetOverlapRule().evaluate(rootNode: root).isEmpty)
+    }
+
+    @Test func backButtonIsNeverTappedByProbes() {
+        let back = makeNode(type: "XCUIElementTypeButton", label: "Bloom", identifier: "BackButton", frame: CGRect(x: 16, y: 59, width: 44, height: 44))
+        let readMore = makeNode(type: "XCUIElementTypeButton", label: "Read more", frame: CGRect(x: 300, y: 59, width: 44, height: 44))
+        #expect(!ActionSafety.isSafeToExplore(back))
+        #expect(!ActionSafety.isSafeToActivate(back))
+        #expect(ActionSafety.isSafeToExplore(readMore))
     }
 }

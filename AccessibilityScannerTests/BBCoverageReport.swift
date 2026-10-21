@@ -70,6 +70,12 @@ struct BBCoverageReport {
         "tab-accessibility": [.validate],
         "text-button-role": [.pass, .warning],
         "text-clipping": [.fail, .pass],
+        "text-truncation": [.pass, .fail, .notTested],
+        "text-overlap": [.pass, .fail, .notTested],
+        "focus-indicator-color-only": [.pass, .fail],
+        "text-in-image": [.validate],
+        "image-role": [.validate],
+        "list-items-navigable": [.validate],
         "text-link-role": [.pass, .warning],
         "text-resize": [.pass, .fail, .validate],
         "text-spacing": [.validate],
@@ -102,6 +108,9 @@ struct BBCoverageReport {
                         if let id = BBIssueCatalog.issue(for: evaluation)?.id {
                             produced[id, default: []].insert("\(rule):\(status.rawValue)")
                         }
+                        if let id = BBIssueCatalog.ifConfirmed(for: evaluation)?.id {
+                            produced[id, default: []].insert("\(rule):\(status.rawValue) if confirmed")
+                        }
                     }
                 }
             }
@@ -121,5 +130,32 @@ struct BBCoverageReport {
             let lines = produced.keys.sorted().map { "\($0)\t\(produced[$0]!.sorted().joined(separator: ","))" }
             try lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
         }
+    }
+
+    /// Every result carries a BB code whose sheet Type is the result's own
+    /// status: a Fail result never shows a Validate code, a Validate result
+    /// never shows a Fail code.
+    @Test func resultStatusMatchesSheetType() {
+        let types = Dictionary(BBRuleset.rules.map { ($0.id, $0.type) }, uniquingKeysWith: { first, _ in first })
+        let nodes = [makeNode(label: ""), makeNode(label: "Name"), makeNode(type: "XCUIElementTypeLink", label: "x"),
+                     makeNode(type: "XCUIElementTypeStaticText", label: "Body", frame: CGRect(x: 0, y: 0, width: 300, height: 40)),
+                     makeNode(type: "XCUIElementTypeSegmentedControl", label: "")]
+        let messages = ["", "The screen is locked in one orientation.", "Image segmented control has no accessible name.",
+                        "The modal has no keyboard-focusable interactive controls, so keyboard users cannot act on it or close it."]
+        var mismatches: [String] = []
+        for (rule, statuses) in Self.producible {
+            for status in statuses where status != .notTested {
+                for node in nodes {
+                    for message in messages {
+                        let evaluation = makeEvaluation(ruleID: rule, status: status, node: node, message: message)
+                        // BB40034 is both a Pass row and a Fail row in the sheet.
+                        guard let id = BBIssueCatalog.issue(for: evaluation)?.id, id != "BB40034", let type = types[id] else { continue }
+                        let expected: BBRuleType = evaluation.status == .pass ? .pass : evaluation.status == .validate ? .validate : .fail
+                        if type != expected { mismatches.append("\(rule):\(evaluation.status.rawValue) -> \(id) (\(type.rawValue))") }
+                    }
+                }
+            }
+        }
+        #expect(Set(mismatches).isEmpty, "\(Set(mismatches).sorted())")
     }
 }

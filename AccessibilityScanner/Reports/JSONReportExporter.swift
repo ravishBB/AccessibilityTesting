@@ -116,7 +116,7 @@ private nonisolated struct JSONReportPayload: Codable {
         // 1.6: scan.environment, scan.scanNotes, generator.bbMappingVersion,
         // BB issue IDs on findings and evaluations; scan.deviceUDID removed.
         // 1.7: bbCoverage (every BB ruleset row with its result on this scan).
-        self.schemaVersion = "1.7"
+        self.schemaVersion = "1.8"
         self.reportID = report.id
         self.generator = JSONGenerator()
         self.scan = JSONScanMetadata(report: report)
@@ -128,7 +128,9 @@ private nonisolated struct JSONReportPayload: Codable {
         self.rules = report.ruleSummaries.map { JSONRuleSummary(summary: $0) }
         self.coverage = ReportCoverage(report: report, grouping: grouping)
         self.bbCoverage = BBCoverage.entries(for: report)
-        self.intelligence = report.intelligence
+        // Quality gate, VoiceOver, journey and regression analysis are not
+        // part of the report.
+        self.intelligence = nil
     }
 }
 
@@ -173,6 +175,9 @@ private nonisolated struct JSONGroupedFinding: Codable {
     let bbIssueTitle: String?
     /// WCAG criterion of the BB issue, from the BB sheet.
     let bbIssueWCAG: String?
+    /// Validate only: the Fail code to log if the tester confirms it.
+    let bbIfConfirmedID: String?
+    let bbIfConfirmedTitle: String?
     let status: String
     let severity: String
     let impact: String
@@ -191,6 +196,8 @@ private nonisolated struct JSONGroupedFinding: Codable {
         self.bbIssueID = group.bbIssue?.id
         self.bbIssueTitle = group.bbIssue?.title
         self.bbIssueWCAG = group.bbIssue?.wcag
+        self.bbIfConfirmedID = group.bbIfConfirmed?.id
+        self.bbIfConfirmedTitle = group.bbIfConfirmed?.title
         self.status = group.status.rawValue
         self.severity = group.severity.rawValue
         self.impact = group.metadata.impact.rawValue
@@ -436,6 +443,7 @@ private nonisolated struct JSONEvaluation: Codable {
     let ruleName: String
     let ruleDescription: String
     let bbIssueID: String?
+    let bbIfConfirmedID: String?
     let status: String
     let severity: String
     let message: String
@@ -456,6 +464,7 @@ private nonisolated struct JSONEvaluation: Codable {
         self.ruleName = evaluation.ruleName
         self.ruleDescription = evaluation.ruleDescription
         self.bbIssueID = BBIssueCatalog.issue(for: evaluation)?.id
+        self.bbIfConfirmedID = BBIssueCatalog.ifConfirmed(for: evaluation)?.id
         self.status = evaluation.status.rawValue
         self.severity = evaluation.severity.rawValue
         self.message = evaluation.message

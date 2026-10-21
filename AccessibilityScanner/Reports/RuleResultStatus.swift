@@ -23,7 +23,7 @@ nonisolated enum RuleResultStatus: String, Codable, CaseIterable {
         case .warning:
             return "WARNING"
         case .validate:
-            return "MANUAL REVIEW"
+            return "VALIDATE"
         case .notTested:
             return "NOT TESTED"
         }

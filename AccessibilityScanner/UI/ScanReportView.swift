@@ -28,56 +28,19 @@ struct ScanReportView: View {
     @State private var selectedScreenID: UUID?
     @State private var checkFilter: ScreenshotCheckFilter = .fail
     @State private var showDetailedResults = false
-    @State private var showDiff = false
     @State private var showAppMap = false
-    @State private var showIntelligence = false
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
                 header
                 summarySection
-                testerActionCenterSection
-
-                AccessibilityQualityGateView(
-                    gate: report.resolvedIntelligence.qualityGate
-                )
-
-                if let diff = report.resolvedIntelligence.diff {
-                    DisclosureGroup(isExpanded: $showDiff) {
-                        AccessibilityDiffView(diff: diff)
-                            .padding(.top, 10)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Accessibility Diff")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                            Text("Changes since the previous scan.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
                 DisclosureGroup(isExpanded: $showAppMap) {
                     AccessibilityAppMapView(report: report)
                         .padding(.top, 10)
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Application Map")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                    }
-                }
-
-                DisclosureGroup(isExpanded: $showIntelligence) {
-                    AccessibilityIntelligenceView(
-                        intelligence: report.resolvedIntelligence
-                    )
-                    .padding(.top, 10)
-                } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Accessibility Analysis")
                             .font(.title2)
                             .fontWeight(.bold)
                     }
@@ -110,7 +73,9 @@ struct ScanReportView: View {
                 }
 
                 actionSummarySection
+                validateSection
                 issueExplorerSection
+                runtimeResultsSection
                 screenResultsSection
 
                 DisclosureGroup(isExpanded: $showDetailedResults) {
@@ -212,20 +177,20 @@ struct ScanReportView: View {
 
             HStack(spacing: 12) {
                 headlineMetric(
-                    title: "Failures & warnings",
-                    value: grouping.issueCount,
-                    subtitle: "\(grouping.failureCount) failures · \(grouping.warningCount) warnings",
+                    title: "Fail",
+                    value: grouping.failureCount,
+                    subtitle: "unique failed results",
                     symbol: "exclamationmark.triangle.fill",
                     prominent: grouping.issueCount > 0
                 )
                 headlineMetric(
-                    title: "Manual review",
+                    title: "Validate",
                     value: grouping.manualReviewCount,
-                    subtitle: "checks a tester must verify",
+                    subtitle: "checks a tester confirms",
                     symbol: "checklist"
                 )
                 headlineMetric(
-                    title: "Passed",
+                    title: "Pass",
                     value: grouping.passCount,
                     subtitle: "unique passed results",
                     symbol: "checkmark.circle.fill"
@@ -240,11 +205,9 @@ struct ScanReportView: View {
 
             Text(
                 grouping.failureCount > 0
-                    ? "Fix the automated failures first, then complete the manual checks listed in Tester Action Center."
-                    : grouping.warningCount > 0
-                        ? "Review the warnings and complete the manual checks before sign-off."
-                        : grouping.manualReviewCount > 0
-                            ? "Automated checks did not prove every requirement. Complete the manual checks before sign-off."
+                    ? "Fix the failures first, then confirm the Validate items."
+                    : grouping.manualReviewCount > 0
+                            ? "No failures were found. Confirm the Validate items before sign-off."
                             : "No findings were recorded by the \(report.automatedVerdictRuleCount) of \(AccessibilityRuleCatalog.ruleCount) rules that produced results. This is not a pass: the remaining rules need manual or assistive-technology testing."
             )
             .font(.callout)
@@ -253,19 +216,19 @@ struct ScanReportView: View {
         }
     }
 
-    /// Manual-review items only. Failures and warnings live in "Open Findings".
-    private var testerActionCenterSection: some View {
+    /// Validate results: checks a tester confirms. Failures are in "Open Findings".
+    private var validateSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                sectionTitle("Tester Action Center")
+                sectionTitle("Validate")
                 Spacer()
-                Text("Manual checks required before sign-off")
+                Text("\(grouping.manualReviewGroups.count) rules · \(grouping.manualReviewCount) elements")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             if grouping.manualReviewGroups.isEmpty {
-                Label("No manual verification is required", systemImage: "checkmark.seal.fill")
+                Label("Nothing to validate", systemImage: "checkmark.seal.fill")
                     .font(.headline)
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -333,6 +296,9 @@ struct ScanReportView: View {
                 HStack(spacing: 6) {
                     if let bb = group.bbIssue {
                         tag(bb.id)
+                    }
+                    if let bb = group.bbIfConfirmed {
+                        tag("If confirmed: \(bb.id)")
                     }
                     tag("\(group.metadata.impact.displayName) impact")
                     if let wcag = group.metadata.wcagLabel {
@@ -860,6 +826,9 @@ struct ScanReportView: View {
             if let bbID = annotation.bbIssueID {
                 detailRow(title: "BB code", value: "\(bbID) — \(BBIssueCatalog.title(for: bbID) ?? "")")
             }
+            if let bbID = annotation.bbIfConfirmedID {
+                detailRow(title: "If confirmed", value: "\(bbID) — \(BBIssueCatalog.title(for: bbID) ?? "")")
+            }
             detailRow(
                 title: "Element",
                 value: annotation.elementLabel.isEmpty
@@ -1128,6 +1097,73 @@ struct ScanReportView: View {
     }
 
     // MARK: - Screens
+
+    // MARK: - Runtime and screen-level results
+
+    /// Results about a whole screen (larger text, orientation, keyboard
+    /// traversal, focus traps…). They have no component to mark on the
+    /// screenshot, so they are listed here with their BB code.
+    private var runtimeResultsSection: some View {
+        let screens = report.screens.filter { !$0.screenLevelResults.isEmpty }
+        return VStack(alignment: .leading, spacing: 14) {
+            sectionTitle("Runtime and Screen-Level Results")
+            Text("Checks of a whole screen, such as larger text, orientation and keyboard traversal. They cannot be marked on the screenshot.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if screens.isEmpty {
+                emptyState("No screen-level results in this scan.")
+            }
+            ForEach(screens) { screen in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(screen.name)
+                        .font(.headline)
+                    ForEach(screen.screenLevelResults) { evaluation in
+                        runtimeResultRow(evaluation)
+                    }
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.06)))
+            }
+        }
+    }
+
+    private func runtimeResultRow(_ evaluation: AccessibilityRuleEvaluation) -> some View {
+        let status = evaluation.status
+        let issue = BBIssueCatalog.issue(for: evaluation)
+        let pending = BBIssueCatalog.ifConfirmed(for: evaluation)
+        return HStack(alignment: .top, spacing: 10) {
+            Text(status.displayName)
+                .font(.caption2)
+                .fontWeight(.bold)
+                .foregroundStyle(statusColor(status))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(statusColor(status).opacity(0.12)))
+                .frame(width: 84, alignment: .leading)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(evaluation.ruleName)
+                        .font(.callout)
+                        .fontWeight(.semibold)
+                    if let issue {
+                        tag("\(issue.id) · \(issue.title)")
+                    } else if let pending {
+                        tag("If confirmed: \(pending.id)")
+                    }
+                }
+                Text(evaluation.message)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                if status != .pass, !evaluation.remediation.isEmpty {
+                    Text(evaluation.remediation)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
 
     private var screenResultsSection: some View {
 

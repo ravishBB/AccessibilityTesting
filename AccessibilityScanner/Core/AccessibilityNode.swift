@@ -156,7 +156,23 @@ extension AccessibilityNode {
 
     /// Fills the layout-dependent semantics that need the ancestors.
     nonisolated func annotatingLayout() -> AccessibilityNode {
-        annotated(scrollFrame: nil, actionableAncestor: false, controlAncestor: false, elementAncestor: false)
+        var bars: [CGRect] = []
+        func collectBars(_ node: AccessibilityNode) {
+            if node.isBar, node.visible, node.frame.width > 0, node.frame.height > 0 {
+                bars.append(node.frame)
+                return
+            }
+            node.children.forEach(collectBars)
+        }
+        collectBars(self)
+        return annotated(scrollFrame: nil, actionableAncestor: false, controlAncestor: false, elementAncestor: false,
+                         bars: bars, insideBar: false)
+    }
+
+    /// Navigation bar, tab bar or toolbar: fixed chrome that scrolling
+    /// content passes under.
+    private nonisolated var isBar: Bool {
+        role == .navigationBar || role == .tabBar || role == .statusBar || type == "XCUIElementTypeToolbar"
     }
 
     private nonisolated var isActionable: Bool {
@@ -178,9 +194,20 @@ extension AccessibilityNode {
         scrollFrame: CGRect?,
         actionableAncestor: Bool,
         controlAncestor: Bool,
-        elementAncestor: Bool
+        elementAncestor: Bool,
+        bars: [CGRect],
+        insideBar: Bool
     ) -> AccessibilityNode {
         var node = self
+
+        // Scrolled under a navigation or tab bar: partly hidden by it.
+        if !insideBar, !isBar, frame.width > 0, frame.height > 0,
+           bars.contains(where: { bar in
+               let overlap = bar.intersection(frame)
+               return !overlap.isNull && overlap.width > 1 && overlap.height > 1 && !bar.contains(frame) || bar.contains(frame) && scrollFrame != nil
+           }) {
+            node.semantics.partiallyVisible = true
+        }
 
         if let scrollFrame, frame.width > 0, frame.height > 0, frame != scrollFrame {
             if !scrollFrame.insetBy(dx: -0.5, dy: -0.5).contains(frame) {
@@ -220,7 +247,7 @@ extension AccessibilityNode {
         // overlay, not part of the app under test.
         node.children = children.filter { $0.identifier != "A11YScannerIgnore" }.map {
             $0.annotated(scrollFrame: childScroll, actionableAncestor: childActionable, controlAncestor: childControl,
-                         elementAncestor: childElement)
+                         elementAncestor: childElement, bars: bars, insideBar: insideBar || isBar)
         }
         return node
     }
