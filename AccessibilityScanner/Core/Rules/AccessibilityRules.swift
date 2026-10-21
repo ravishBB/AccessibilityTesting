@@ -121,6 +121,8 @@ nonisolated struct AccessibilityRules {
             TextInImageRule(),
             ImageRoleRule(),
             ListItemsNavigableRule(),
+            IconControlRoleRule(),
+            TableRowRoleRule(),
             TextOverlapRule(),
             FocusIndicatorColorOnlyRule()
         ]
@@ -723,13 +725,15 @@ nonisolated struct DuplicateInteractiveNameRule: ScreenAccessibilityRule {
                 let shouldWarn = types.count > 1 || group.count <= 5
                 guard shouldWarn else { return [] }
 
+                // BB40090 is a Fail in the BB sheet: controls a screen-reader
+                // or Voice Control user cannot tell apart.
                 return group.map { node in
-                    RuleHelper.warning(
+                    RuleHelper.fail(
                         ruleID: id,
                         name: title,
                         description: description,
                         node: node,
-                        message: "Multiple interactive elements share the accessible name \"\(RuleHelper.clean(node.label))\".",
+                        message: "\(group.count) controls share the accessible name \"\(RuleHelper.clean(node.label))\", so screen-reader and Voice Control users cannot tell them apart.",
                         remediation: "If these controls perform different actions, give each a unique or contextual accessible name."
                     )
                 }
@@ -843,6 +847,10 @@ nonisolated struct RoleTraitConsistencyRule: AccessibilityRule {
             )
         }
 
+        // A role is only claimed for elements users act on or that carry
+        // meaning (BB40275 is about interactive elements), not containers.
+        guard RuleHelper.controls.contains(node.role) || node.role == .link || node.role == .image,
+              !node.semantics.mergedIntoAncestor else { return nil }
         return RuleHelper.pass(
             ruleID: id, name: title, description: description, node: node,
             message: "No obvious role/trait conflict was found in the accessibility hierarchy."
@@ -1213,7 +1221,8 @@ private nonisolated enum ContrastRuleFactory {
         default: break
         }
 
-        let measured = String(format: "%.2f:1", measurement.ratio)
+        // "3.37:1 (FG #8A8A8A, BG #FFFFFF)", as testers record it.
+        let measured = String(format: "%.2f:1", measurement.ratio) + (measurement.colourText.map { " (\($0))" } ?? "")
         let basis = measurement.variedBackground
             ? "worst-case contrast over a varied (image or gradient) background"
             : "measured rendered contrast"
@@ -1361,7 +1370,14 @@ nonisolated struct ButtonRoleRule: AccessibilityRule {
         // Whole words, so "Saved" or "Closed" are not read as "save"/"close".
         let words = RuleHelper.words(node)
         let actionWords: Set<String> = ["button", "btn", "submit", "save", "cancel", "continue", "login", "signin", "delete", "close"]
-        let isAction = !words.isDisjoint(with: actionWords) || RuleHelper.clean(node.label).lowercased() == "sign in"
+        // Short call-to-action phrases that are text but act as buttons.
+        let actionPhrases: Set<String> = [
+            "sign in", "see all", "view all", "read more", "show more", "learn more", "shop now",
+            "browse", "explore", "get started", "sign up", "subscribe", "buy now", "add to cart",
+            "view more", "see more", "more", "details", "view details", "try again", "retry"
+        ]
+        let isAction = !words.isDisjoint(with: actionWords) ||
+            actionPhrases.contains(RuleHelper.clean(node.label).lowercased())
         guard isAction else { return nil }
         if RuleHelper.hasTrait(node, ["clickable"]) {
             return RuleHelper.warning(ruleID: id, name: title, description: description, node: node,
@@ -1459,7 +1475,26 @@ nonisolated struct ScreenReaderContentRule: AccessibilityRule {
     let description = "Meaningful content should be exposed to assistive technology."
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.visible, !node.semantics.mergedIntoAncestor else { return nil }
+        // iOS: VoiceOver stops on every accessibility element and announces
+        // only its own label and value; text drawn inside it is not read
+        // (it still appears in the hierarchy). One with neither is a silent
+        // stop: SwiftUI .accessibilityElement(children: .ignore) with an
+        // empty label.
+        if node.platform == .ios, node.accessible, !node.semantics.partiallyVisible,
+           node.role == .other || node.role == .cell,
+           node.frame.width >= 24, node.frame.height >= 24,
+           RuleHelper.clean(node.label).isEmpty, RuleHelper.clean(node.value).isEmpty,
+           !node.hasAccessibleDescendant {
+            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                                   message: "VoiceOver stops on this element but it has no name, value or text, so nothing is announced and its content is not available.",
+                                   remediation: "Give the element an accessibility label describing its content, or let VoiceOver read its children (.accessibilityElement(children: .combine)).")
+        }
         if node.accessible {
+            // Content, not layout: text, images and controls a screen-reader
+            // user would hear.
+            let isContent = RuleHelper.isText(node) || node.role == .image ||
+                RuleHelper.controls.contains(node.role) || !RuleHelper.clean(node.label).isEmpty
+            guard isContent else { return nil }
             return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                    message: "Element is exposed to assistive technology.")
         }
@@ -1471,10 +1506,8 @@ nonisolated struct ScreenReaderContentRule: AccessibilityRule {
         guard hasContent || RuleHelper.isText(node) || RuleHelper.controls.contains(node.role) else { return nil }
         let hasAccessibleDescendant = Self.flatten(node.children).contains { $0.visible && $0.accessible && (!RuleHelper.clean($0.label).isEmpty || RuleHelper.controls.contains($0.role)) }
         guard !node.children.isEmpty else { return nil }
-        if hasAccessibleDescendant {
-            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
-                                   message: "Container itself is not accessible, but meaningful descendants are exposed.")
-        }
+        // A container whose content is exposed below it: nothing to report.
+        if hasAccessibleDescendant { return nil }
         if RuleHelper.isText(node) || RuleHelper.controls.contains(node.role) {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Meaningful content is visible but not exposed to assistive technology.",
@@ -1750,6 +1783,69 @@ nonisolated struct ImageRoleRule: AccessibilityRule {
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "\"\(RuleHelper.clean(node.label))\" looks like a picture but is not exposed with the image role, so screen readers do not say it is an image.",
                                      remediation: "If it is a picture, give it the image role (.accessibilityAddTraits(.isImage), Role.Image, accessibilityRole=\"image\", Semantics(image: true)); if it is decorative, hide it.")
+    }
+}
+
+/// BB40282 on iOS. A small icon with an action name (Add, Like, Share,
+/// Bookmark…) exposed as an image: SwiftUI's Image with onTapGesture and no
+/// button trait. iOS does not say whether an image is tappable, so a
+/// tester confirms it.
+nonisolated struct IconControlRoleRule: AccessibilityRule {
+    let id = "icon-control-role"
+    let title = "Icon functions as a button but is missing role button"
+    let description = "Tappable icons should expose the button role."
+
+    private static let actionWords: Set<String> = [
+        "add", "plus", "like", "love", "favourite", "favorite", "heart", "bookmark", "save", "share",
+        "delete", "remove", "trash", "close", "dismiss", "more", "menu", "edit", "cart", "bag",
+        "search", "filter", "settings", "play", "pause", "next", "previous", "back", "button"
+    ]
+    private static let actionSymbols = [
+        "plus", "heart", "bookmark", "square.and.arrow.up", "trash", "xmark", "ellipsis", "pencil",
+        "cart", "bag", "magnifyingglass", "line.3.horizontal", "gearshape", "play", "pause", "chevron"
+    ]
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        guard node.platform == .ios, node.role == .image, node.visible, node.accessible,
+              !node.semantics.mergedIntoAncestor, !node.semantics.insideActionable,
+              !node.semantics.partiallyVisible,
+              node.frame.width <= 44, node.frame.height <= 44
+        else { return nil }
+        let label = RuleHelper.clean(node.label)
+        let symbol = node.identifier.lowercased()
+        let named = !Set(RuleHelper.wordList(label)).isDisjoint(with: Self.actionWords)
+        let iconic = Self.actionSymbols.contains { symbol.hasPrefix($0) }
+        guard named || iconic else { return nil }
+        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                     message: "\"\(label.isEmpty ? node.identifier : label)\" is an icon that looks like a control but is exposed as an image without the button trait, so VoiceOver does not say it can be activated.",
+                                     remediation: "If tapping it does something, use a Button or add .accessibilityAddTraits(.isButton); if it is decorative, hide it.")
+    }
+}
+
+/// BB40282 on iOS. A table or collection row whose content VoiceOver reads
+/// as separate items while the row itself is not an element and has no
+/// button role: if the row is selectable, VoiceOver users are not told it
+/// can be activated. Whether it is selectable is in the app's code
+/// (didSelectRowAt), which the hierarchy does not show, so a tester confirms.
+nonisolated struct TableRowRoleRule: AccessibilityRule {
+    let id = "row-role"
+    let title = "Row functions as a button but is missing role button"
+    let description = "Selectable rows should be one accessibility element with the button role."
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        guard node.platform == .ios, node.type == "XCUIElementTypeCell", node.visible,
+              !node.semantics.partiallyVisible, !node.semantics.mergedIntoAncestor,
+              RuleHelper.clean(node.label).isEmpty, node.hasAccessibleDescendant,
+              !RuleHelper.hasTrait(node, ["button", "link"]),
+              let texts = RuleHelper.childTextSegments(of: node), texts.count >= 2
+        else { return nil }
+        // A row of separate controls (chips, a segmented bar) is not a
+        // single item.
+        let controls = RuleHelper.allNodes(node).dropFirst().filter { RuleHelper.controls.contains($0.role) }
+        guard controls.count <= 1 else { return nil }
+        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                     message: "The row \"\(texts.prefix(3).joined(separator: ", "))\" is read as \(texts.count) separate items and the row itself has no button role. If tapping the row opens something, VoiceOver users are not told it can be activated.",
+                                     remediation: "Make the selectable row one accessibility element (isAccessibilityElement = true) with a combined label and the .button trait.")
     }
 }
 
@@ -2392,7 +2488,7 @@ nonisolated struct HeadingCandidateRule: ScreenAccessibilityRule {
         let candidates = texts.filter { node in
             guard !RuleHelper.hasTrait(node, RuleHelper.headingsTraits),
                   node.semantics.isHeading != true,
-                  let points = size(node), points >= max(20, median * 1.3)
+                  let points = size(node), points >= max(18, median * 1.2)
             else { return false }
             let label = RuleHelper.clean(node.label)
             // Not headings: emoji and prices (no letters), sentences
@@ -2405,7 +2501,7 @@ nonisolated struct HeadingCandidateRule: ScreenAccessibilityRule {
             return label.count <= 60 && RuleHelper.wordList(label).count <= 8 && !label.hasSuffix(".")
         }
 
-        return candidates.prefix(5).map { node in
+        return candidates.prefix(12).map { node in
             RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                   message: "\"\(RuleHelper.clean(node.label))\" is larger than the surrounding text and looks like a heading, but is not marked as one.",
                                   remediation: "If the text introduces a section, mark it as a heading (accessibilityTraits .header, accessibilityHeading, accessibilityRole=\"header\", Semantics(header: true)).")

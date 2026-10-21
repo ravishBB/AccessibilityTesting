@@ -71,6 +71,19 @@ nonisolated struct GroupedFinding: Identifiable {
 
     var count: Int { occurrences.count }
 
+    /// BB code, or the scanner rule name when there is none.
+    var displayTitle: String {
+        BBIssueCatalog.heading(issue: bbIssue, ifConfirmed: bbIfConfirmed, ruleName: ruleName).title
+    }
+
+    /// A note under the issue text ("record as a failure if confirmed"), or
+    /// the rule description when there is no BB issue.
+    var displayDescription: String {
+        let heading = BBIssueCatalog.heading(issue: bbIssue, ifConfirmed: bbIfConfirmed, ruleName: ruleName)
+        if let description = heading.description { return description }
+        return bbIssue == nil ? ruleDescription : ""
+    }
+
     var screenCount: Int {
         Set(occurrences.map(\.screenID)).count
     }

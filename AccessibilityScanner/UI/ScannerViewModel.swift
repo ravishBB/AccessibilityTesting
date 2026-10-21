@@ -473,7 +473,7 @@ final class ScannerViewModel: ObservableObject {
                 deviceUDID: device.udid,
                 startedAt: startedAt,
                 finishedAt: finishedAt,
-                screens: screenResults,
+                screens: ScreenNaming.uniquified(screenResults),
                 rulesExecuted: AccessibilityRules.all.count
             )
             draftResult.environment = environment
@@ -635,7 +635,7 @@ final class ScannerViewModel: ObservableObject {
                 annotations: annotations
             )
             return ScreenScanResult(
-                name: "Screen \(index + 1)",
+                name: ScreenNaming.name(for: screen.rootNode, number: index + 1),
                 signature: screen.signature,
                 elementCount: countNodes(screen.rootNode),
                 evaluations: evaluations,
@@ -653,7 +653,7 @@ final class ScannerViewModel: ObservableObject {
             deviceUDID: device.udid,
             startedAt: startedAt,
             finishedAt: Date(),
-            screens: screenResults,
+            screens: ScreenNaming.uniquified(screenResults),
             rulesExecuted: AccessibilityRules.all.count
         )
     }

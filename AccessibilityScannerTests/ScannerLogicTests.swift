@@ -380,4 +380,92 @@ struct RuleAvailabilityTests {
         #expect(!ActionSafety.isSafeToActivate(back))
         #expect(ActionSafety.isSafeToExplore(readMore))
     }
+
+    @Test func tappableIconWithoutButtonTrait() {
+        let add = makeNode(type: "XCUIElementTypeImage", label: "Add", identifier: "plus.circle.fill", frame: CGRect(x: 150, y: 120, width: 24, height: 24))
+        let photo = makeNode(type: "XCUIElementTypeImage", label: "Mountain sunrise", identifier: "hero", frame: CGRect(x: 0, y: 100, width: 393, height: 200))
+        let inButton = makeNode(type: "XCUIElementTypeButton", label: "Share article", frame: CGRect(x: 300, y: 60, width: 44, height: 44), children: [
+            makeNode(type: "XCUIElementTypeImage", label: "Share", identifier: "square.and.arrow.up", frame: CGRect(x: 310, y: 70, width: 20, height: 24), accessible: false)
+        ])
+        let root = makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852), accessible: false,
+                            children: [add, photo, inButton]).annotatingLayout()
+        let results = ProbeNodes.all(in: root).compactMap { IconControlRoleRule().evaluate(node: $0) }
+        #expect(results.map(\.elementLabel) == ["Add"])
+        #expect(BBIssueCatalog.ifConfirmed(for: results[0])?.id == "BB40282")
+    }
+
+    @Test func silentVoiceOverStopFails() {
+        // Text inside is still listed in the hierarchy but VoiceOver does not read it.
+        let silent = makeNode(type: "XCUIElementTypeOther", label: "", frame: CGRect(x: 15, y: 107, width: 179, height: 146), children: [
+            makeNode(type: "XCUIElementTypeStaticText", label: "Morning Rituals", frame: CGRect(x: 25, y: 200, width: 120, height: 20), accessible: false)
+        ])
+        let named = makeNode(type: "XCUIElementTypeOther", label: "Morning Rituals collection, 8 articles", frame: CGRect(x: 200, y: 107, width: 178, height: 146))
+        let root = makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852), accessible: false,
+                            children: [silent, named]).annotatingLayout()
+        let nodes = ProbeNodes.all(in: root)
+        let silentResult = ScreenReaderContentRule().evaluate(node: nodes.first { $0.frame.minX == 15 }!)
+        #expect(silentResult?.status == .fail)
+        #expect(BBIssueCatalog.issue(for: silentResult!)?.id == "BB40057")
+        #expect(ScreenReaderContentRule().evaluate(node: nodes.first { $0.frame.minX == 200 }!)?.status == .pass)
+    }
+
+    @Test func seeAllTextLooksLikeAButton() {
+        let seeAll = makeNode(type: "XCUIElementTypeStaticText", label: "See all", frame: CGRect(x: 328, y: 177, width: 49, height: 20))
+        let result = ButtonRoleRule().evaluate(node: seeAll.annotatingLayout())
+        #expect(result?.status == .validate)
+        #expect(BBIssueCatalog.ifConfirmed(for: result!)?.id == "BB40043")
+    }
+
+    @Test func uikitTableCellIsAContainerNotASilentStop() {
+        let bookmark = makeNode(type: "XCUIElementTypeButton", label: "", frame: CGRect(x: 333, y: 555, width: 44, height: 45))
+        let title = makeNode(type: "XCUIElementTypeStaticText", label: "The Art of Slow Travel", frame: CGRect(x: 104, y: 558, width: 221, height: 38))
+        let cell = makeNode(type: "XCUIElementTypeCell", label: "", frame: CGRect(x: 0, y: 525, width: 393, height: 105), children: [title, bookmark])
+        let root = makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852), accessible: false,
+                            children: [cell]).annotatingLayout()
+        let nodes = ProbeNodes.all(in: root)
+        // A container: neither a silent stop (fail) nor content of its own (no result).
+        #expect(ScreenReaderContentRule().evaluate(node: nodes.first { $0.type == "XCUIElementTypeCell" }!) == nil)
+        // Its button is checked on its own: an unnamed one fails.
+        let button = nodes.first { $0.type == "XCUIElementTypeButton" }!
+        #expect(!button.semantics.mergedIntoAncestor)
+        #expect(DescriptiveButtonNameRule().evaluate(node: button)?.status == .fail)
+    }
+
+    @Test func uikitArticleRowWithoutRoleIsValidate() {
+        let row = makeNode(type: "XCUIElementTypeCell", label: "", frame: CGRect(x: 0, y: 525, width: 393, height: 105), children: [
+            makeNode(type: "XCUIElementTypeImage", label: "Travel illustration", frame: CGRect(x: 16, y: 542, width: 72, height: 71)),
+            makeNode(type: "XCUIElementTypeStaticText", label: "TRAVEL", frame: CGRect(x: 104, y: 541, width: 221, height: 14)),
+            makeNode(type: "XCUIElementTypeStaticText", label: "The Art of Slow Travel", frame: CGRect(x: 104, y: 558, width: 221, height: 38)),
+            makeNode(type: "XCUIElementTypeStaticText", label: "Marco Rivera · 7 min", frame: CGRect(x: 104, y: 599, width: 221, height: 15)),
+            makeNode(type: "XCUIElementTypeButton", label: "Bookmark article", frame: CGRect(x: 333, y: 555, width: 44, height: 45))
+        ])
+        let chips = makeNode(type: "XCUIElementTypeCell", label: "", frame: CGRect(x: 0, y: 229, width: 393, height: 57), children: [
+            makeNode(type: "XCUIElementTypeButton", label: "All", frame: CGRect(x: 16, y: 237, width: 50, height: 41)),
+            makeNode(type: "XCUIElementTypeButton", label: "Wellness", frame: CGRect(x: 74, y: 237, width: 97, height: 41)),
+            makeNode(type: "XCUIElementTypeStaticText", label: "A", frame: CGRect(x: 0, y: 0, width: 10, height: 10)),
+            makeNode(type: "XCUIElementTypeStaticText", label: "B", frame: CGRect(x: 0, y: 0, width: 10, height: 10))
+        ])
+        let root = makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852), accessible: false,
+                            children: [row, chips]).annotatingLayout()
+        let results = ProbeNodes.all(in: root).compactMap { TableRowRoleRule().evaluate(node: $0) }
+        #expect(results.count == 1, "the article row only, not the chip bar")
+        #expect(BBIssueCatalog.ifConfirmed(for: results[0])?.id == "BB40282")
+    }
+
+    @Test func screensAreNamedByTheirTitle() {
+        let frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        let bar = makeNode(type: "XCUIElementTypeNavigationBar", label: "Settings", frame: CGRect(x: 0, y: 59, width: 393, height: 44), accessible: false)
+        #expect(ScreenNaming.name(for: makeNode(type: "XCUIElementTypeApplication", frame: frame, children: [bar]), number: 1) == "Settings")
+
+        // Large-title SwiftUI bar: the title is a text inside the bar.
+        let largeBar = makeNode(type: "XCUIElementTypeNavigationBar", label: "", frame: CGRect(x: 0, y: 59, width: 393, height: 96), accessible: false,
+                                children: [makeNode(type: "XCUIElementTypeStaticText", label: "Home", frame: CGRect(x: 16, y: 100, width: 120, height: 41))])
+        #expect(ScreenNaming.name(for: makeNode(type: "XCUIElementTypeApplication", frame: frame, children: [largeBar]), number: 2) == "Home")
+
+        // Nothing to go on: keep the number.
+        #expect(ScreenNaming.name(for: makeNode(type: "XCUIElementTypeApplication", frame: frame), number: 3) == "Screen 3")
+
+        let screens = ["Article", "Home", "Article"].map { ScreenScanResult(name: $0, elementCount: 0, evaluations: []) }
+        #expect(ScreenNaming.uniquified(screens).map(\.name) == ["Article", "Home", "Article 2"])
+    }
 }

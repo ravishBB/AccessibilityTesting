@@ -125,6 +125,24 @@ nonisolated enum ScreenResultBuilder {
         // Checks are numbered within their filter (Fail, Validate, Pass), so
         // the list for each filter reads 1, 2, 3… across all viewports.
         var nextCheckNumber: [ScreenshotCheckFilter: Int] = [:]
+        // Runtime and whole-screen results join the first viewport's list so
+        // the Fail / Validate / Pass filters show them with everything else.
+        let screenLevelChecks = ScreenshotAnnotation.makeScreenLevelAnnotations(
+            from: mergeEvaluations(
+                mergeEvaluations(crawledScreen.evaluations, viewportEvaluations),
+                crawledScreen.keyboardFocusEvaluations
+            ),
+            statuses: Self.checkStatuses
+        )
+        if !screenLevelChecks.isEmpty, let first = viewportScreenshots.first {
+            viewportScreenshots[0] = ScreenshotViewport(
+                index: first.index,
+                screenshot: first.screenshot,
+                annotations: first.annotations,
+                checks: screenLevelChecks + (first.checks ?? [])
+            )
+        }
+
         var normalizedViewports: [ScreenshotViewport] = []
         var allAnnotations: [ScreenshotAnnotation] = []
 
@@ -171,7 +189,7 @@ nonisolated enum ScreenResultBuilder {
             )
 
         return ScreenScanResult(
-            name: "Screen \(number)",
+            name: ScreenNaming.name(for: crawledScreen.rootNode, number: number),
             signature: crawledScreen.signature,
             elementCount: elementCount,
             evaluations: evaluations,

@@ -196,8 +196,22 @@ final class OrientationProbe {
 
         let target = original == "LANDSCAPE" ? "PORTRAIT" : "LANDSCAPE"
 
-        guard (try? await appium.setOrientation(target)) != nil else {
-            return [notTested(rootNode, "The driver refused to rotate the device.")]
+        do {
+            try await appium.setOrientation(target)
+        } catch {
+            // WebDriverAgent answers "Unable To Rotate Device" when the app
+            // does not support the other orientation: the screen is locked.
+            let text = error.localizedDescription.lowercased()
+            if text.contains("unable to rotate") || text.contains("rotate device") {
+                return [ProbeEvaluation.make(
+                    ruleID: ruleID,
+                    status: .fail,
+                    message: "The app refused to rotate from \(original.lowercased()) to \(target.lowercased()). The screen is locked in one orientation.",
+                    remediation: "Support both orientations unless a single orientation is essential to the content.",
+                    node: rootNode
+                )]
+            }
+            return [notTested(rootNode, "The device could not be rotated: \(error.localizedDescription)")]
         }
 
         var rotated = original
@@ -665,6 +679,28 @@ final class TextSizeProbe {
             )
         } else {
             let median = ratios.sorted()[ratios.count / 2]
+            // Text that stayed the same size while the rest grew: a fixed
+            // font size on that element (BB40031 for the element itself).
+            if median >= 1.3 {
+                let normalNodes = Dictionary(
+                    ProbeNodes.all(in: normal)
+                        .filter { $0.visible && $0.role == .staticText && !ProbeNodes.clean($0.label).isEmpty }
+                        .map { (ProbeNodes.clean($0.label), $0) },
+                    uniquingKeysWith: { first, _ in first }
+                )
+                for (label, normalHeight) in before {
+                    guard let largeHeight = after[label], normalHeight > 0,
+                          largeHeight / normalHeight < 1.1,
+                          let node = normalNodes[ProbeNodes.clean(label)] else { continue }
+                    results.append(ProbeEvaluation.make(
+                        ruleID: "text-resize",
+                        status: .fail,
+                        message: "\"\(ProbeNodes.clean(label))\" stayed the same size at the largest text size while other text grew \(String(format: "%.1f", median))×, so it uses a fixed font size.",
+                        remediation: "Use a scalable font for this text (UIFontMetrics / preferredFont with adjustsFontForContentSizeCategory, or Dynamic Type in SwiftUI).",
+                        node: node
+                    ))
+                }
+            }
             if median < 1.15 {
                 results.append(
                     ProbeEvaluation.make(

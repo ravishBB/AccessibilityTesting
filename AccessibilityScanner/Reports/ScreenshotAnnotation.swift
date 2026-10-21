@@ -28,6 +28,28 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
     let bbIssueID: String?
     /// Validate only: the Fail code to log if the tester confirms it.
     var bbIfConfirmedID: String? = nil
+    /// The BB sheet's issue text for the code above (status-specific for
+    /// BB40034, which is both a Pass and a Fail row).
+    var bbIssueTitle: String? = nil
+
+    /// A result about the whole screen (runtime check): listed with the
+    /// others but not highlighted on the screenshot. nil in older reports.
+    var screenLevel: Bool? = nil
+
+    var isScreenLevel: Bool { screenLevel == true }
+
+    /// The BB sheet's issue text, else the rule name. Codes are not shown.
+    var displayTitle: String {
+        if let bbIssueTitle { return bbIssueTitle }
+        if let id = bbIfConfirmedID, let title = BBIssueCatalog.title(for: id) { return title }
+        return ruleName
+    }
+
+    /// "Validate: record as a failure if confirmed" for results whose sheet
+    /// issue is a failure; nil otherwise.
+    var displayDescription: String? {
+        bbIssueTitle == nil && bbIfConfirmedID != nil ? "Validate: record as a failure if confirmed" : nil
+    }
 
     var displayStatus: RuleResultStatus { status ?? .fail }
 
@@ -49,7 +71,9 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
         self.frameWidth = evaluation.frameWidth
         self.frameHeight = evaluation.frameHeight
         self.status = evaluation.status
-        self.bbIssueID = BBIssueCatalog.issue(for: evaluation)?.id
+        let issue = BBIssueCatalog.issue(for: evaluation)
+        self.bbIssueID = issue?.id
+        self.bbIssueTitle = issue?.title
         self.bbIfConfirmedID = BBIssueCatalog.ifConfirmed(for: evaluation)?.id
     }
 
@@ -79,7 +103,9 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
             frameHeight: frameHeight,
             status: status,
             bbIssueID: bbIssueID,
-            bbIfConfirmedID: bbIfConfirmedID
+            bbIfConfirmedID: bbIfConfirmedID,
+            bbIssueTitle: bbIssueTitle,
+            screenLevel: screenLevel
         )
     }
 
@@ -99,7 +125,9 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
         frameHeight: Double,
         status: RuleResultStatus?,
         bbIssueID: String?,
-        bbIfConfirmedID: String?
+        bbIfConfirmedID: String?,
+        bbIssueTitle: String?,
+        screenLevel: Bool?
     ) {
         self.id = id
         self.number = number
@@ -117,6 +145,8 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
         self.status = status
         self.bbIssueID = bbIssueID
         self.bbIfConfirmedID = bbIfConfirmedID
+        self.bbIssueTitle = bbIssueTitle
+        self.screenLevel = screenLevel
     }
 
     /// A result about the whole screen (a runtime probe such as larger text,
@@ -135,6 +165,23 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
     /// Screenshot numbers must instead follow the visual layout:
     /// top-to-bottom, then left-to-right. Exact ties are resolved by rule ID,
     /// rule name, message, and element type so the result remains deterministic.
+    /// Whole-screen results as list entries (no highlight), Fail first.
+    static func makeScreenLevelAnnotations(
+        from evaluations: [AccessibilityRuleEvaluation],
+        statuses: Set<RuleResultStatus>
+    ) -> [ScreenshotAnnotation] {
+        var seen = Set<String>()
+        return evaluations
+            .filter { statuses.contains($0.status) && isScreenLevel($0) }
+            .filter { seen.insert($0.ruleID + "|" + $0.status.rawValue + "|" + $0.message).inserted }
+            .enumerated()
+            .map { index, evaluation in
+                var annotation = ScreenshotAnnotation(number: index + 1, evaluation: evaluation)
+                annotation.screenLevel = true
+                return annotation
+            }
+    }
+
     static func makeAnnotations(
         from evaluations: [AccessibilityRuleEvaluation],
         statuses: Set<RuleResultStatus> = [.fail]

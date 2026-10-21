@@ -15,7 +15,7 @@ nonisolated struct BBIssue: Codable, Hashable {
 nonisolated enum BBIssueCatalog {
 
     /// Bump whenever a mapping is added, removed or changed.
-    static let version = "2026.10.19.1"
+    static let version = "2026.10.21"
 
     // MARK: - Lookup
 
@@ -33,6 +33,22 @@ nonisolated enum BBIssueCatalog {
 
     static func title(for id: String) -> String? {
         titles[id]
+    }
+
+    /// How a result is headed in reports: the BB code, with the sheet's
+    /// issue text as its description. A Validate result whose check only has
+    /// a Fail code shows the code to log if confirmed. Results with no BB
+    /// code keep the scanner's rule name.
+    /// The sheet's issue text is the heading; codes are not shown in the
+    /// report (they stay in the JSON export).
+    static func heading(issue: BBIssue?, ifConfirmed: BBIssue?, ruleName: String) -> (title: String, description: String?) {
+        if let issue { return (issue.title, nil) }
+        if let ifConfirmed { return (ifConfirmed.title, "Validate: record as a failure if confirmed") }
+        return (ruleName, nil)
+    }
+
+    static func heading(for evaluation: AccessibilityRuleEvaluation) -> (title: String, description: String?) {
+        heading(issue: issue(for: evaluation), ifConfirmed: ifConfirmed(for: evaluation), ruleName: evaluation.ruleName)
     }
 
     private enum Outcome {
@@ -118,8 +134,6 @@ nonisolated enum BBIssueCatalog {
         // Target size
         case ("touch-target-size-24", .fail): return "BB40030"
         case ("touch-target-size-24", .pass): return "BB40028"
-        case ("interactive-target-overlap", .fail): return "BB40180"
-        case ("interactive-target-overlap", .pass): return "BB40181"
 
         // Text size
         case ("text-resize", .fail): return "BB40031"
@@ -136,6 +150,7 @@ nonisolated enum BBIssueCatalog {
         case ("heading-quality", .review): return "BB40040"
         case ("heading-candidate", .review): return "BB40041"
         case ("missing-role", .fail): return "BB40282"
+        case ("icon-control-role", .fail), ("row-role", .fail): return "BB40282"
         case ("missing-role", .pass): return "BB40275"
         case ("text-link-role", .fail): return "BB40042"
         case ("text-button-role", .fail): return "BB40043"
@@ -152,7 +167,6 @@ nonisolated enum BBIssueCatalog {
         case ("state-updates-after-interaction", .review): return "BB40068"
 
         // Images
-        case ("image-accessible-label", .fail): return "BB40086"
         case ("image-accessible-label", .pass): return "BB40085"
         case ("image-name-descriptive", .fail): return "BB40126"
         case ("image-name-descriptive", .review): return "BB40045"

@@ -15,10 +15,13 @@ struct ScanReportView: View {
 
     /// Findings grouped by rule, computed once per report rather than on every body pass.
     private let grouping: FindingGrouping
+    /// Results by BB issue and category, computed once per report.
+    private let bbReport: BBReport
 
     init(report: AccessibilityScanResult) {
         self.report = report
         self.grouping = FindingGrouping(report: report)
+        self.bbReport = BBReport(report: report)
     }
 
     @State private var selectedAnnotationID: UUID?
@@ -26,7 +29,8 @@ struct ScanReportView: View {
     /// Scroll position of the failure list only (not the whole report).
     @State private var listScrollID: UUID?
     @State private var selectedScreenID: UUID?
-    @State private var checkFilter: ScreenshotCheckFilter = .fail
+    /// One status filter for the BB Report and the Issue Explorer.
+    @State private var reportFilter: ReportFilter = .all
     @State private var showDetailedResults = false
     @State private var showAppMap = false
 
@@ -35,6 +39,8 @@ struct ScanReportView: View {
             LazyVStack(alignment: .leading, spacing: 24) {
                 header
                 summarySection
+                BBReportView(report: bbReport, statusFilter: $reportFilter, onSelect: selectEvaluation)
+                issueExplorerSection
                 DisclosureGroup(isExpanded: $showAppMap) {
                     AccessibilityAppMapView(report: report)
                         .padding(.top, 10)
@@ -46,18 +52,7 @@ struct ScanReportView: View {
                     }
                 }
 
-                if let impactCenter = report.resolvedIntelligence.impactCenter {
-                    DisclosureGroup(isExpanded: .constant(true)) {
-                        AccessibilityImpactCenterView(impact: impactCenter)
-                            .padding(.top, 10)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Fix Priorities")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                        }
-                    }
-                }
+                screenResultsSection
 
                 if let fixCenter = report.resolvedIntelligence.fixCenter {
                     DisclosureGroup(isExpanded: .constant(true)) {
@@ -71,36 +66,12 @@ struct ScanReportView: View {
                         }
                     }
                 }
-
-                actionSummarySection
-                validateSection
-                issueExplorerSection
-                runtimeResultsSection
-                screenResultsSection
-
-                DisclosureGroup(isExpanded: $showDetailedResults) {
-                    LazyVStack(alignment: .leading, spacing: 24) {
-                        ruleResultsSection
-                        issuesSection
-                        passesSection
-                        ruleSummarySection
-                    }
-                    .padding(.top, 12)
-                } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Detailed Results")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                        Text("Complete rule-level results and evidence.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
             }
             .padding(24)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle("Quality Report")
+        .onChange(of: reportFilter) { _, _ in reselectForFilter() }
         .onAppear {
             if selectedScreenID == nil {
                 let firstScreen = report.screens.first
@@ -286,19 +257,21 @@ struct ScanReportView: View {
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(group.ruleName)
+                    Text(group.displayTitle)
                         .font(.callout.bold())
                         .lineLimit(2)
                     Spacer()
                     statusBadge(group.status)
                 }
+                if !group.displayDescription.isEmpty {
+                    Text(group.displayDescription)
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 HStack(spacing: 6) {
-                    if let bb = group.bbIssue {
-                        tag(bb.id)
-                    }
-                    if let bb = group.bbIfConfirmed {
-                        tag("If confirmed: \(bb.id)")
+                    if let wcag = group.bbIssue?.wcag ?? group.bbIfConfirmed?.wcag {
+                        tag("WCAG \(wcag)")
                     }
                     tag("\(group.metadata.impact.displayName) impact")
                     if let wcag = group.metadata.wcagLabel {
@@ -348,7 +321,9 @@ struct ScanReportView: View {
     private func selectEvaluation(_ evaluation: AccessibilityRuleEvaluation) {
         if let screen = report.screens.first(where: { $0.evaluations.contains(where: { $0.id == evaluation.id }) }) {
             selectedScreenID = screen.id
-            checkFilter = ScreenshotCheckFilter(evaluation.status)
+            if !reportFilter.includes(evaluation.status) {
+                reportFilter = ReportFilter(evaluation.status)
+            }
             if let annotation = checks(in: screen).first(where: {
                 $0.ruleID == evaluation.ruleID &&
                 $0.elementType == evaluation.elementType &&
@@ -386,10 +361,6 @@ struct ScanReportView: View {
             }
 
             screenSelector
-
-            if let screen = selectedScreen {
-                checkFilterPicker(screen: screen)
-            }
 
             if let screen = selectedScreen {
                 issueExplorerCard(screen: screen)
@@ -553,11 +524,11 @@ struct ScanReportView: View {
                             Spacer()
                             let viewportChecks = checks(in: viewport)
                             if !viewportChecks.isEmpty {
-                                Text("\(viewportChecks.count) \(checkFilter.title.lowercased())")
+                                Text("\(viewportChecks.count) \(reportFilter.noun)")
                                     .font(.caption)
-                                    .foregroundStyle(filterColor(checkFilter))
+                                    .foregroundStyle(reportFilter.color)
                             } else {
-                                Text("No \(checkFilter.title.lowercased()) checks")
+                                Text("No \(reportFilter.noun)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -644,9 +615,9 @@ struct ScanReportView: View {
     private func issueListPanel(screen: ScreenScanResult) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label(checkFilter.title, systemImage: filterSymbol(checkFilter))
+                Label(reportFilter == .all ? "All results" : reportFilter.title, systemImage: reportFilter.symbol)
                     .font(.headline)
-                    .foregroundStyle(filterColor(checkFilter))
+                    .foregroundStyle(reportFilter.color)
                 Spacer()
 
                 if !checks(in: screen).isEmpty {
@@ -656,10 +627,10 @@ struct ScanReportView: View {
 
             if checks(in: screen).isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("No \(checkFilter.title.lowercased()) checks on this screen", systemImage: "checkmark.circle")
+                    Label("No \(reportFilter.noun) on this screen", systemImage: "checkmark.circle")
                         .font(.callout)
                         .fontWeight(.semibold)
-                    if !screen.viewportScreenshots.contains(where: { $0.checks != nil }), checkFilter != .fail {
+                    if !screen.viewportScreenshots.contains(where: { $0.checks != nil }), reportFilter != .fail {
                         Text("This report was saved before the screenshot filter existed. Run the scan again to see validate and pass results on the screenshot.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -803,10 +774,15 @@ struct ScanReportView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(annotation.ruleName)
+                    Text(annotation.displayTitle)
                         .font(.title3)
                         .fontWeight(.bold)
-                    Text("\(checkFilter.title) \(currentIndex + 1) of \(items.count)")
+                    if let description = annotation.displayDescription {
+                        Text(description)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("\(reportFilter.title) \(currentIndex + 1) of \(items.count)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -823,19 +799,20 @@ struct ScanReportView: View {
             }
 
             detailRow(title: "ID", value: String(format: "%02d", annotation.number))
-            if let bbID = annotation.bbIssueID {
-                detailRow(title: "BB code", value: "\(bbID) — \(BBIssueCatalog.title(for: bbID) ?? "")")
+            if annotation.bbIfConfirmedID != nil {
+                detailRow(title: "If confirmed", value: "Record as a failure")
             }
-            if let bbID = annotation.bbIfConfirmedID {
-                detailRow(title: "If confirmed", value: "\(bbID) — \(BBIssueCatalog.title(for: bbID) ?? "")")
+            if annotation.isScreenLevel {
+                detailRow(title: "Element", value: "Whole screen (runtime check)")
+            } else {
+                detailRow(
+                    title: "Element",
+                    value: annotation.elementLabel.isEmpty
+                        ? annotation.elementType
+                        : annotation.elementLabel
+                )
+                detailRow(title: "Type", value: annotation.elementType)
             }
-            detailRow(
-                title: "Element",
-                value: annotation.elementLabel.isEmpty
-                    ? annotation.elementType
-                    : annotation.elementLabel
-            )
-            detailRow(title: "Type", value: annotation.elementType)
             detailRow(title: "Issue", value: annotation.message)
 
             if !annotation.remediation.isEmpty {
@@ -900,14 +877,24 @@ struct ScanReportView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        Text(annotation.ruleName)
+                        Text(annotation.displayTitle)
                             .font(.callout)
                             .fontWeight(.semibold)
                             .lineLimit(2)
                         severityBadge(annotation.severity)
                     }
+                    if let description = annotation.displayDescription {
+                        Text(description)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .lineLimit(2)
+                    }
 
-                    if !annotation.elementLabel.isEmpty {
+                    if annotation.isScreenLevel {
+                        Text("Whole screen (runtime check)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if !annotation.elementLabel.isEmpty {
                         Text("\(annotation.elementType) — \(annotation.elementLabel)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -1035,7 +1022,7 @@ struct ScanReportView: View {
 
                 HStack {
 
-                    Text(annotation.ruleName)
+                    Text(annotation.displayTitle)
                         .font(.callout)
                         .fontWeight(.semibold)
 
@@ -1097,73 +1084,6 @@ struct ScanReportView: View {
     }
 
     // MARK: - Screens
-
-    // MARK: - Runtime and screen-level results
-
-    /// Results about a whole screen (larger text, orientation, keyboard
-    /// traversal, focus traps…). They have no component to mark on the
-    /// screenshot, so they are listed here with their BB code.
-    private var runtimeResultsSection: some View {
-        let screens = report.screens.filter { !$0.screenLevelResults.isEmpty }
-        return VStack(alignment: .leading, spacing: 14) {
-            sectionTitle("Runtime and Screen-Level Results")
-            Text("Checks of a whole screen, such as larger text, orientation and keyboard traversal. They cannot be marked on the screenshot.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if screens.isEmpty {
-                emptyState("No screen-level results in this scan.")
-            }
-            ForEach(screens) { screen in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(screen.name)
-                        .font(.headline)
-                    ForEach(screen.screenLevelResults) { evaluation in
-                        runtimeResultRow(evaluation)
-                    }
-                }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.06)))
-            }
-        }
-    }
-
-    private func runtimeResultRow(_ evaluation: AccessibilityRuleEvaluation) -> some View {
-        let status = evaluation.status
-        let issue = BBIssueCatalog.issue(for: evaluation)
-        let pending = BBIssueCatalog.ifConfirmed(for: evaluation)
-        return HStack(alignment: .top, spacing: 10) {
-            Text(status.displayName)
-                .font(.caption2)
-                .fontWeight(.bold)
-                .foregroundStyle(statusColor(status))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(statusColor(status).opacity(0.12)))
-                .frame(width: 84, alignment: .leading)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(evaluation.ruleName)
-                        .font(.callout)
-                        .fontWeight(.semibold)
-                    if let issue {
-                        tag("\(issue.id) · \(issue.title)")
-                    } else if let pending {
-                        tag("If confirmed: \(pending.id)")
-                    }
-                }
-                Text(evaluation.message)
-                    .font(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
-                if status != .pass, !evaluation.remediation.isEmpty {
-                    Text(evaluation.remediation)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-    }
 
     private var screenResultsSection: some View {
 
@@ -1807,7 +1727,7 @@ struct ScanReportView: View {
                         let visibleFrame = frame.intersection(screenshotBounds)
                         let isSelected = selectedAnnotationID == annotation.id
 
-                        if isSelected &&
+                        if isSelected && !annotation.isScreenLevel &&
                             !visibleFrame.isNull &&
                             visibleFrame.width > 0 &&
                             visibleFrame.height > 0 {
@@ -1860,7 +1780,7 @@ struct ScanReportView: View {
     // MARK: - Screenshot filter
 
     private func matchesFilter(_ annotation: ScreenshotAnnotation) -> Bool {
-        ScreenshotCheckFilter(annotation.displayStatus) == checkFilter
+        reportFilter.includes(annotation.displayStatus)
     }
 
     /// Components shown for the current filter. Reports saved before the
@@ -1869,60 +1789,26 @@ struct ScanReportView: View {
         if let checks = viewport.checks {
             return checks.filter(matchesFilter)
         }
-        return checkFilter == .fail ? viewport.annotations : []
+        return reportFilter == .fail || reportFilter == .all ? viewport.annotations : []
     }
 
     private func checks(in screen: ScreenScanResult) -> [ScreenshotAnnotation] {
         if screen.viewportScreenshots.isEmpty {
-            return checkFilter == .fail ? screen.annotations : []
+            return reportFilter == .fail || reportFilter == .all ? screen.annotations : []
         }
         return screen.viewportScreenshots.flatMap { checks(in: $0) }
     }
 
-    private func checkCount(_ filter: ScreenshotCheckFilter, in screen: ScreenScanResult) -> Int {
-        if screen.viewportScreenshots.contains(where: { $0.checks != nil }) {
-            return screen.viewportScreenshots
-                .flatMap { $0.checks ?? [] }
-                .filter { ScreenshotCheckFilter($0.displayStatus) == filter }
-                .count
-        }
-        return filter == .fail ? screen.annotations.count : 0
-    }
-
-    private func filterColor(_ filter: ScreenshotCheckFilter) -> Color {
-        switch filter {
-        case .fail: return .red
-        case .validate: return .blue
-        case .pass: return .green
-        }
-    }
-
-    private func filterSymbol(_ filter: ScreenshotCheckFilter) -> String {
-        switch filter {
-        case .fail: return "xmark.octagon.fill"
-        case .validate: return "eye.fill"
-        case .pass: return "checkmark.circle.fill"
-        }
-    }
-
-    private func checkFilterPicker(screen: ScreenScanResult) -> some View {
-        Picker("Show components", selection: $checkFilter) {
-            ForEach(ScreenshotCheckFilter.allCases) { filter in
-                Text("\(filter.title) (\(checkCount(filter, in: screen)))").tag(filter)
-            }
-        }
-        .pickerStyle(.segmented)
-        .frame(maxWidth: 420)
-        .onChange(of: checkFilter) { _, _ in
-            guard let screen = selectedScreen else { return }
-            let selectedStillShown = checks(in: screen).contains { $0.id == selectedAnnotationID }
-            if !selectedStillShown {
-                selectedAnnotationID = checks(in: screen).first?.id
-                selectedViewportID = viewportContaining(
-                    annotationID: selectedAnnotationID,
-                    in: screen
-                )?.id ?? screen.viewportScreenshots.first?.id
-            }
+    /// Keeps the screenshot selection on an item the filter still shows.
+    private func reselectForFilter() {
+        guard let screen = selectedScreen else { return }
+        let selectedStillShown = checks(in: screen).contains { $0.id == selectedAnnotationID }
+        if !selectedStillShown {
+            selectedAnnotationID = checks(in: screen).first?.id
+            selectedViewportID = viewportContaining(
+                annotationID: selectedAnnotationID,
+                in: screen
+            )?.id ?? screen.viewportScreenshots.first?.id
         }
     }
 

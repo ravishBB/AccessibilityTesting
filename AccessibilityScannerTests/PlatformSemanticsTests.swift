@@ -245,13 +245,16 @@ struct PlatformSemanticsTests {
         )
         let html = HTMLReportExporter().makeHTML(from: report)
 
-        #expect(html.contains("id=\"cf-fail\" value=\"fail\" checked"))
-        #expect(html.contains("Validate (1)"))
-        #expect(html.contains("Pass (1)"))
+        // One filter for the whole report: the BB report's buttons also
+        // drive the screenshots.
+        #expect(html.contains("id=\"bbf-all\" checked"))
+        #expect(!html.contains("cf-fail"))
         #expect(html.contains("class=\"mark chk f-fail\""))
         #expect(html.contains("class=\"mark chk f-validate\""))
         #expect(html.contains("class=\"mark chk f-pass\""))
-        #expect(html.contains("<code>BB40003</code>"))
+        // The issue text from the BB sheet is shown; the codes are not.
+        #expect(html.contains("Missing accessible name for button"))
+        #expect(!html.contains("BB40003"))
 
         if let path = ProcessInfo.processInfo.environment["SCANNER_HTML_PREVIEW"] {
             try html.write(toFile: path, atomically: true, encoding: .utf8)
@@ -266,18 +269,42 @@ struct PlatformSemanticsTests {
         #expect(ContrastStandardTextRule().evaluate(node: field, context: AccessibilityRuleContext()) == nil)
     }
 
-    @Test func runtimeResultsHaveTheirOwnSection() {
+    @Test func runtimeResultsJoinTheFailList() {
         let root = makeNode(type: "XCUIElementTypeApplication", label: "App", frame: CGRect(x: 0, y: 0, width: 393, height: 852))
         let locked = makeEvaluation(ruleID: "orientation-support", status: .fail, node: root,
-                                    message: "The screen stayed in portrait when the device was rotated to landscape. The screen is locked in one orientation.")
-        let screen = ScreenScanResult(name: "Screen 1", elementCount: 1, evaluations: [locked])
-        #expect(screen.screenLevelResults.count == 1)
+                                    message: "The app refused to rotate from portrait to landscape. The screen is locked in one orientation.")
+        let resized = makeEvaluation(ruleID: "text-resize", status: .pass, node: root, message: "Text grew at the largest text size.")
+        let entries = ScreenshotAnnotation.makeScreenLevelAnnotations(from: [locked, resized], statuses: ScreenResultBuilder.checkStatuses)
+        #expect(entries.count == 2)
+        #expect(entries.allSatisfy { $0.isScreenLevel })
+        #expect(entries.first { ScreenshotCheckFilter($0.displayStatus) == .fail }?.bbIssueID == "BB40056")
+        #expect(entries.first { ScreenshotCheckFilter($0.displayStatus) == .pass }?.ruleID == "text-resize")
+        // Not plotted: element-level screenshot annotations leave them out.
+        #expect(ScreenshotAnnotation.makeAnnotations(from: [locked], statuses: ScreenResultBuilder.checkStatuses).isEmpty)
+    }
+
+    @Test func bbReportGroupsLikeTheSheet() {
+        let text = makeNode(type: "XCUIElementTypeStaticText", label: "WELLNESS", frame: CGRect(x: 91, y: 441, width: 68, height: 13))
+        let button = makeNode(type: "XCUIElementTypeButton", label: "", frame: CGRect(x: 16, y: 388, width: 48, height: 48))
+        let named = makeNode(type: "XCUIElementTypeButton", label: "Save", frame: CGRect(x: 16, y: 500, width: 100, height: 44))
+        let evaluations = [
+            makeEvaluation(ruleID: "contrast-standard-text-4-5", status: .fail, node: text,
+                           message: "The measured rendered contrast is 3.42:1 (FG #8A8A8A, BG #FFFFFF) (standard text, estimated 11 pt), below the required 4.5:1."),
+            makeEvaluation(ruleID: "button-name-descriptive", status: .fail, node: button),
+            makeEvaluation(ruleID: "button-name-descriptive", status: .pass, node: named)
+        ]
         let report = AccessibilityScanResult(
             applicationName: "App", bundleID: "a.b", deviceName: "Phone", deviceUDID: "x",
-            startedAt: Date(), finishedAt: Date(), screens: [screen], rulesExecuted: 1
+            startedAt: Date(), finishedAt: Date(),
+            screens: [ScreenScanResult(name: "Screen 1", elementCount: 3, evaluations: evaluations)], rulesExecuted: 3
         )
-        let html = HTMLReportExporter().makeHTML(from: report)
-        #expect(html.contains("<section id=\"runtime\">"))
-        #expect(html.contains("<code>BB40056</code>"))
+        let bb = BBReport(report: report)
+        #expect(bb.groups.map(\.code) == ["BB40003", "BB40018", "BB40125"], "fails first, then passes")
+        #expect(bb.groups.first { $0.code == "BB40018" }?.category == "Color")
+        #expect(bb.groups.first { $0.code == "BB40003" }?.severity == "Critical")
+        #expect(bb.groups.first { $0.code == "BB40125" }?.severity == "N/A")
+        #expect(bb.groups.first { $0.code == "BB40018" }?.items.first?.attribute == "WELLNESS (StaticText) — 3.42:1 (FG #8A8A8A, BG #FFFFFF)")
+        #expect(bb.itemCount == 3)
+        #expect(Set(bb.categories.map(\.name)) == ["Button", "Color", "Forms"])
     }
 }

@@ -13,6 +13,12 @@ nonisolated struct PixelColor {
     let g: Double
     let b: Double
 
+    /// "#RRGGBB".
+    var hex: String {
+        func byte(_ v: Double) -> Int { max(0, min(255, Int((v * 255).rounded()))) }
+        return String(format: "#%02X%02X%02X", byte(r), byte(g), byte(b))
+    }
+
     /// WCAG relative luminance.
     var luminance: Double {
         func linear(_ v: Double) -> Double {
@@ -229,6 +235,16 @@ nonisolated enum PixelAnalyzer {
         let inkLuminance: Double
         let backgroundLuminance: Double
         let variedBackground: Bool
+        /// Representative colours: the sampled pixels closest to the median
+        /// text and background luminance.
+        var inkColor: PixelColor? = nil
+        var backgroundColor: PixelColor? = nil
+
+        /// "FG #111827, BG #F9FAFB" when the colours are known.
+        var colourText: String? {
+            guard let inkColor, let backgroundColor else { return nil }
+            return "FG \(inkColor.hex), BG \(backgroundColor.hex)"
+        }
     }
 
     static func inkContrast(
@@ -261,12 +277,16 @@ nonisolated enum PixelAnalyzer {
         guard let maxDelta = deltas.max(), maxDelta >= 0.02 else { return nil }
 
         var inkLuminances: [Double] = []
+        var inkSamples: [PixelColor] = []
         for (index, delta) in deltas.enumerated() where delta >= 0.6 * maxDelta {
             inkLuminances.append(interior[index].luminance)
+            inkSamples.append(interior[index])
         }
         guard inkLuminances.count >= 3 else { return nil }
 
         let inkLuminance = PixelMath.median(inkLuminances)
+        let inkColor = inkSamples.min { abs($0.luminance - inkLuminance) < abs($1.luminance - inkLuminance) }
+        let backgroundColor = background.min { abs($0.luminance - backgroundMedian) < abs($1.luminance - backgroundMedian) }
 
         let ratio: Double
         if varied {
@@ -280,7 +300,9 @@ nonisolated enum PixelAnalyzer {
             ratio: ratio,
             inkLuminance: inkLuminance,
             backgroundLuminance: backgroundMedian,
-            variedBackground: varied
+            variedBackground: varied,
+            inkColor: inkColor,
+            backgroundColor: backgroundColor
         )
     }
 

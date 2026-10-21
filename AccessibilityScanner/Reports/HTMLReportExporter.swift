@@ -111,12 +111,9 @@ private nonisolated struct HTMLReportRenderer {
         out += cover()
         out += navigation()
         out += executiveSummary()
-        out += findingsSection()
-        out += manualReviewSection()
+        out += bbReportSection()
         out += coverageSection()
-        out += bbCoverageSection()
         out += screensSection()
-        out += runtimeSection()
         out += scopeSection()
         out += appendixSection()
         out += footer()
@@ -249,12 +246,9 @@ private nonisolated struct HTMLReportRenderer {
         """
         <nav aria-label="Report sections">
         <a href="#summary">Summary</a>
-        <a href="#findings">Findings</a>
-        <a href="#manual-review">Validate</a>
+        <a href="#bb-report">BB report</a>
         <a href="#coverage">Coverage</a>
-        <a href="#bb-coverage">BB ruleset</a>
         <a href="#screens">Screens</a>
-        <a href="#runtime">Runtime results</a>
         <a href="#scope">Scope &amp; limitations</a>
         <a href="#appendix">Rule results</a>
         </nav>
@@ -285,7 +279,7 @@ private nonisolated struct HTMLReportRenderer {
             out += "<table class=\"data\">\n<thead><tr><th scope=\"col\">Issue</th><th scope=\"col\">Impact</th><th scope=\"col\">Standard</th><th scope=\"col\" class=\"num\">Elements</th><th scope=\"col\">Result</th></tr></thead>\n<tbody>\n"
             for group in top {
                 let anchor = anchorID(for: group)
-                out += "<tr><td><a href=\"#\(anchor)\">\(esc(group.ruleName))</a></td>"
+                out += "<tr><td><a href=\"#\(anchor)\">\(esc(group.displayTitle))</a><br>\(esc(group.displayDescription))</td>"
                 out += "<td>\(chip(group.metadata.impact.displayName, group.metadata.impact.rawValue))</td>"
                 out += "<td>\(esc(group.metadata.wcagLabel ?? "—"))</td>"
                 out += "<td class=\"num\">\(group.count)</td>"
@@ -372,11 +366,8 @@ private nonisolated struct HTMLReportRenderer {
     private func findingArticle(_ group: GroupedFinding, checklist: Bool) -> String {
         var out = "<article class=\"finding \(group.status.rawValue)\" id=\"\(anchorID(for: group))\">\n"
 
-        out += "<div class=\"finding-head\">\n<h3>\(esc(group.ruleName))</h3>\n<div class=\"chips\">"
+        out += "<div class=\"finding-head\">\n<h3>\(esc(group.displayTitle))</h3>\n<div class=\"chips\">"
         out += statusChip(group.status)
-        if let bb = group.bbIssue {
-            out += chip(bb.id, "neutral")
-        }
         out += chip("\(group.metadata.impact.displayName) impact", group.metadata.impact.rawValue)
         if let wcag = group.metadata.wcagLabel {
             out += chip(wcag, "neutral")
@@ -385,8 +376,8 @@ private nonisolated struct HTMLReportRenderer {
         out += "</div>\n</div>\n"
 
         out += "<p class=\"rule-id\"><code>\(esc(group.ruleID))</code>"
-        if !group.ruleDescription.isEmpty {
-            out += " · \(esc(group.ruleDescription))"
+        if !group.displayDescription.isEmpty {
+            out += " · \(esc(group.displayDescription))"
         }
         out += "</p>\n"
 
@@ -396,10 +387,10 @@ private nonisolated struct HTMLReportRenderer {
         }
         if let bb = group.bbIssue {
             let criterion = bb.wcag.map { " · WCAG \($0)" } ?? ""
-            out += "<dt>BB issue</dt><dd>\(esc(bb.id)) · \(esc(bb.title))\(esc(criterion))</dd>\n"
+            out += "<dt>Issue</dt><dd>\(esc(bb.title))\(esc(criterion))</dd>\n"
         }
         if let bb = group.bbIfConfirmed {
-            out += "<dt>If confirmed</dt><dd>Log as \(esc(bb.id)) · \(esc(bb.title))</dd>\n"
+            out += "<dt>If confirmed</dt><dd>Record as a failure: \(esc(bb.title))</dd>\n"
         }
         out += "<dt>Who is affected</dt><dd>\(esc(group.metadata.affectedUsers))</dd>\n"
         if !group.sampleMessage.isEmpty {
@@ -478,10 +469,6 @@ private nonisolated struct HTMLReportRenderer {
             return out
         }
 
-        if options.includeScreenshots {
-            out += checkFilterHTML()
-        }
-
         for screen in report.screens {
             out += "<article class=\"screen\">\n"
             out += "<h3>\(esc(screen.name))</h3>\n"
@@ -545,7 +532,7 @@ private nonisolated struct HTMLReportRenderer {
                     let name = annotation.elementLabel.isEmpty
                         ? annotation.elementType.replacingOccurrences(of: "XCUIElementType", with: "")
                         : annotation.elementLabel
-                    out += "<li value=\"\(annotation.number)\"><strong>\(esc(annotation.ruleName))</strong> – \(esc(name))</li>\n"
+                    out += "<li value=\"\(annotation.number)\"><strong>\(esc(annotation.displayTitle))</strong> \(esc(annotation.displayDescription ?? "")) – \(esc(name))</li>\n"
                 }
                 out += "</ol>\n"
             }
@@ -576,7 +563,7 @@ private nonisolated struct HTMLReportRenderer {
         if let encoded = ReportImageEncoder.encode(screenshot.imageData, maxPixelSize: options.maxScreenshotPixelSize) {
             out += "<img src=\"\(encoded.dataURI)\" alt=\"\(esc("\(screen.name), \(caption)"))\">\n"
         }
-        for check in ordered {
+        for check in ordered where !check.isScreenLevel {
             let frame = check.frame.intersection(CGRect(x: 0, y: 0, width: width, height: height))
             guard !frame.isNull, frame.width > 0, frame.height > 0 else { continue }
             out += "<span class=\"mark \(statusClass(check))\" style=\"left:\(percent(frame.minX / width));top:\(percent(frame.minY / height));width:\(percent(frame.width / width));height:\(percent(frame.height / height))\" aria-hidden=\"true\"><i>\(check.number)</i></span>\n"
@@ -586,11 +573,10 @@ private nonisolated struct HTMLReportRenderer {
         if !ordered.isEmpty {
             out += "<ol class=\"markers\">\n"
             for check in ordered {
-                let name = check.elementLabel.isEmpty
+                let name = check.isScreenLevel ? "Whole screen (runtime check)" : check.elementLabel.isEmpty
                     ? check.elementType.replacingOccurrences(of: "XCUIElementType", with: "")
                     : check.elementLabel
-                let code = check.bbIssueID.map { " <code>\(esc($0))</code>" } ?? ""
-                out += "<li class=\"\(statusClass(check))\" value=\"\(check.number)\"><strong>\(esc(check.ruleName))</strong>\(code) – \(esc(name))<br><span class=\"muted\">\(esc(check.message))</span></li>\n"
+                out += "<li class=\"\(statusClass(check))\" value=\"\(check.number)\"><strong>\(esc(check.displayTitle))</strong> \(esc(check.displayDescription ?? "")) – \(esc(name))<br><span class=\"muted\">\(esc(check.message))</span></li>\n"
             }
             out += "</ol>\n"
         }
@@ -598,37 +584,63 @@ private nonisolated struct HTMLReportRenderer {
         return out
     }
 
-    // MARK: Runtime and screen-level results
+    // MARK: BB report
 
-    /// Whole-screen results (larger text, orientation, keyboard traversal):
-    /// nothing to mark on a screenshot, so they are listed with their codes.
-    private func runtimeSection() -> String {
-        var out = "<section id=\"runtime\">\n<h2>Runtime and screen-level results</h2>\n"
-        out += "<p>Checks of a whole screen, such as larger text, orientation and keyboard traversal. They cannot be marked on the screenshot.</p>\n"
-        let screens = report.screens.filter { !$0.screenLevelResults.isEmpty }
-        guard !screens.isEmpty else {
-            return out + "<p class=\"empty\">No screen-level results in this scan.</p>\n</section>\n\n"
+    /// Results by BB issue: an overview by the sheet's categories, then each
+    /// issue with its status, severity and numbered items.
+    private func bbReportSection() -> String {
+        let bb = BBReport(report: report)
+        var out = "<section id=\"bb-report\">\n<h2>BB report</h2>\n"
+        guard !bb.groups.isEmpty else {
+            return out + "<p class=\"empty\">No results.</p>\n</section>\n\n"
         }
-        out += "<table class=\"data\">\n<thead><tr><th scope=\"col\">Screen</th><th scope=\"col\">Result</th><th scope=\"col\">Check</th><th scope=\"col\">BB code</th><th scope=\"col\">Detail</th></tr></thead>\n<tbody>\n"
-        for screen in screens {
-            for evaluation in screen.screenLevelResults {
-                let code: String
-                if let issue = BBIssueCatalog.issue(for: evaluation) {
-                    code = "<code>\(esc(issue.id))</code> \(esc(issue.title))"
-                } else if let pending = BBIssueCatalog.ifConfirmed(for: evaluation) {
-                    code = "If confirmed: <code>\(esc(pending.id))</code> \(esc(pending.title))"
-                } else {
-                    code = "—"
-                }
-                var detail = esc(evaluation.message)
-                if evaluation.status != .pass, !evaluation.remediation.isEmpty {
-                    detail += "<br><span class=\"muted\">\(esc(evaluation.remediation))</span>"
-                }
-                out += "<tr><td>\(esc(screen.name))</td><td>\(statusChip(evaluation.status))</td><td>\(esc(evaluation.ruleName))</td><td>\(code)</td><td>\(detail)</td></tr>\n"
+
+        out += "<h3>Overview (\(bb.categories.count))</h3>\n<div class=\"bb-overview\">\n"
+        for category in bb.categories {
+            out += "<a class=\"bb-card\" href=\"#bb-cat-\(anchorSlug(category.name))\"><strong>\(esc(category.name))</strong>"
+            out += "<span>\(category.total) result\(plural(category.total))</span><span class=\"bb-counts\">"
+            if category.fails > 0 { out += chip("\(category.fails) fail", "fail") }
+            if category.validates > 0 { out += chip("\(category.validates) validate", "validate") }
+            if category.passes > 0 { out += chip("\(category.passes) pass", "pass") }
+            out += "</span></a>\n"
+        }
+        out += "</div>\n"
+
+        out += "<h3>Issues (\(bb.itemCount))</h3>\n"
+        out += "<fieldset class=\"check-filter bb-filter\">\n<legend>Show</legend>\n"
+        for (value, title) in [("all", "All"), ("fail", "Fail"), ("validate", "Validate"), ("pass", "Pass")] {
+            out += "<input type=\"radio\" name=\"bb-filter\" id=\"bbf-\(value)\"\(value == "all" ? " checked" : "")>"
+            out += "<label for=\"bbf-\(value)\" class=\"\(value == "all" ? "validate" : value)\">\(title)</label>\n"
+        }
+        out += "</fieldset>\n"
+
+        var currentCategory = ""
+        for group in bb.groups {
+            let statusClass = group.status == .fail ? "fail" : group.status == .pass ? "pass" : "validate"
+            var anchor = ""
+            if group.category != currentCategory {
+                currentCategory = group.category
+                anchor = " id=\"bb-cat-\(anchorSlug(group.category))\""
             }
+            let statusTitle = group.status == .fail ? "Fail" : group.status == .pass ? "Pass" : "Validate"
+            let note = group.ifConfirmed ? "Record as a failure if confirmed · " : ""
+            out += "<details class=\"bb-group bb-\(statusClass)\"\(anchor)\(group.status == .pass ? "" : " open")>\n<summary>"
+            out += "<span class=\"bb-head\">\(chip(statusTitle, statusClass))<span class=\"bb-sev\">Severity: <b>\(esc(group.severity))</b></span></span>"
+            out += "<span class=\"bb-code\">\(esc(note))\(esc(group.category))\(group.wcag.map { " · WCAG \(esc($0))" } ?? "")</span>"
+            out += "<span class=\"bb-title\">\(esc(group.title)) <span class=\"muted\">(\(group.items.count) issue\(plural(group.items.count)))</span></span>"
+            out += "</summary>\n<ol class=\"bb-items\">\n"
+            for item in group.items {
+                out += "<li><b>ID \(String(format: "%02d", item.number))</b><br><b>Element:</b> \(esc(item.category))<br><b>Attribute:</b> \(esc(item.attribute))"
+                out += "<br><span class=\"muted\">\(esc(item.screenName)) · \(esc(item.detail))</span></li>\n"
+            }
+            out += "</ol>\n</details>\n"
         }
-        out += "</tbody>\n</table>\n</section>\n\n"
+        out += "</section>\n\n"
         return out
+    }
+
+    private func anchorSlug(_ text: String) -> String {
+        text.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }.reduce("") { $0 + String($1) }
     }
 
     // MARK: Coverage
@@ -738,9 +750,12 @@ private nonisolated struct HTMLReportRenderer {
 
     // MARK: Helpers
 
+    /// Rule, status and the group's place in the report: unique, and free of
+    /// BB codes, which the report does not show.
     private func anchorID(for group: GroupedFinding) -> String {
-        let safe = group.id.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
-        return "finding-\(safe)"
+        let index = grouping.groups.firstIndex { $0.id == group.id } ?? 0
+        let safe = "\(group.ruleID)-\(group.status.rawValue)".map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
+        return "finding-\(safe)-\(index)"
     }
 
     private func statusChip(_ status: RuleResultStatus) -> String {
@@ -847,9 +862,22 @@ private nonisolated struct HTMLReportRenderer {
     .check-filter input:checked + label.warning { background:var(--warning-bg); color:var(--warning); border-color:var(--warning); }
     .mark.f-validate { border-color:var(--validate); background:rgba(21,112,239,.08); } .mark.f-validate i { background:var(--validate); }
     .mark.f-pass { border-color:var(--pass); background:rgba(7,148,85,.08); } .mark.f-pass i { background:var(--pass); }
-    #screens:has(#cf-fail:checked) .chk:not(.f-fail),
-    #screens:has(#cf-validate:checked) .chk:not(.f-validate),
-    #screens:has(#cf-pass:checked) .chk:not(.f-pass) { display:none; }
+    .bb-overview { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; margin:8px 0 18px; }
+    .bb-card { display:flex; flex-direction:column; gap:4px; padding:14px 16px; background:var(--card); border:1px solid var(--line); border-radius:12px; color:var(--fg); text-decoration:none; }
+    .bb-card strong { font-size:1.05rem; } .bb-card span { color:var(--muted); font-size:.85rem; }
+    .bb-group { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 16px; margin:12px 0; }
+    .bb-group summary { cursor:pointer; list-style:none; display:flex; flex-direction:column; gap:6px; }
+    .bb-head { display:flex; justify-content:space-between; align-items:center; }
+    .bb-sev { font-size:.85rem; color:var(--muted); } .bb-code { font-size:.8rem; color:var(--muted); font-weight:600; }
+    .bb-title { font-size:1.05rem; font-weight:600; }
+    .bb-items { list-style:none; padding:0; margin:10px 0 0; display:grid; gap:8px; }
+    .bb-items li { border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:.9rem; }
+    #bb-report:has(#bbf-fail:checked) .bb-group:not(.bb-fail),
+    #bb-report:has(#bbf-validate:checked) .bb-group:not(.bb-validate),
+    #bb-report:has(#bbf-pass:checked) .bb-group:not(.bb-pass) { display:none; }
+    body:has(#bbf-fail:checked) #screens .chk:not(.f-fail),
+    body:has(#bbf-validate:checked) #screens .chk:not(.f-validate),
+    body:has(#bbf-pass:checked) #screens .chk:not(.f-pass) { display:none; }
     .screen { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px 18px; margin:14px 0; }
     .screen h3 { margin-top:0; }
     ul { padding-left:20px; }

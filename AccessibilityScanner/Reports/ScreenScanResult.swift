@@ -9,7 +9,8 @@ import Foundation
 
 nonisolated struct ScreenScanResult: Identifiable, Codable {
     let id: UUID
-    let name: String
+    /// The screen's own title (see ScreenNaming), unique within a report.
+    var name: String
     let signature: String
     let elementCount: Int
     let evaluations: [AccessibilityRuleEvaluation]

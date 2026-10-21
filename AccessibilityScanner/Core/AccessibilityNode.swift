@@ -183,6 +183,11 @@ extension AccessibilityNode {
         return hittable && AccessibilityRole.controls.contains(role)
     }
 
+    /// Any element below this one is exposed to assistive technology.
+    nonisolated var hasAccessibleDescendant: Bool {
+        children.contains { $0.accessible || $0.hasAccessibleDescendant }
+    }
+
     private nonisolated var isScrollingContainer: Bool {
         role == .scrollView || role == .table ||
             type.contains("ScrollView") || type.contains("RecyclerView") ||
@@ -242,7 +247,12 @@ extension AccessibilityNode {
         let childActionable = actionableAncestor || isActionable
         let childControl = controlAncestor || isActionable ||
             AccessibilityRole.controls.contains(role) || role == .cell
-        let childElement = elementAncestor || (platform == .ios && accessible && type != "XCUIElementTypeApplication")
+        // A real VoiceOver element hides its subtree: WDA still lists the
+        // children, but as not accessible. A UIKit table cell is reported
+        // accessible while its labels and buttons are accessible too: it is
+        // a container VoiceOver moves into, not one stop.
+        let childElement = elementAncestor ||
+            (platform == .ios && accessible && type != "XCUIElementTypeApplication" && !hasAccessibleDescendant)
         // The A11yInspect framework's floating scan button is a testing
         // overlay, not part of the app under test.
         node.children = children.filter { $0.identifier != "A11YScannerIgnore" }.map {

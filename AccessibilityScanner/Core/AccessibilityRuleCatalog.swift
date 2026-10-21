@@ -95,7 +95,7 @@ nonisolated enum AccessibilityRuleCatalog {
     static let reviewOnly: Set<String> = [
         "decorative-image", "segmented-control-interactive", "tab-accessibility",
         "screen-reader-focus-order", "text-spacing", "time-limited-ui", "heading-candidate",
-        "text-in-image", "image-role", "list-items-navigable"
+        "text-in-image", "image-role", "list-items-navigable", "icon-control-role", "row-role"
     ]
 
     static func cannotRun(on platform: MobilePlatform) -> Set<String> {
@@ -159,6 +159,8 @@ nonisolated enum AccessibilityRuleCatalog {
         e("image-accessible-label", "1.1.1", "Non-text Content", "A", .serious, sr, "Focus the image and confirm the announced text conveys the same information."),
         e("image-name-descriptive", "1.1.1", "Non-text Content", "A", .moderate, sr, "Focus the image and confirm the label is meaningful and not a file name."),
         e("decorative-image", "1.1.1", "Non-text Content", "A", .minor, sr, "Swipe through the screen and confirm purely decorative images are skipped."),
+        e("row-role", "4.1.2", "Name, Role, Value", "A", .serious, sr, "Move VoiceOver to each list row and confirm a selectable row is one item announced as a button."),
+        e("icon-control-role", "4.1.2", "Name, Role, Value", "A", .serious, sr, "Move VoiceOver to each tappable icon and confirm it is announced as a button."),
         e("text-in-image", "1.4.5", "Images of Text", "AA", .moderate, "Low-vision users", "Find images that show words and confirm the text is real text, unless it is a logo or essential."),
         e("image-role", "4.1.2", "Name, Role, Value", "A", .moderate, sr, "Move VoiceOver/TalkBack to each picture and confirm it is announced as an image."),
         e("list-items-navigable", "1.3.1", "Info and Relationships", "A", .moderate, sr, "Swipe through lists with VoiceOver/TalkBack and confirm each item is a separate stop."),
