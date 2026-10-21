@@ -502,3 +502,45 @@ struct VisualOrderTests {
         #expect(assessment.ratio < VisualOrder.passThreshold)
     }
 }
+
+@MainActor
+@Suite("Duplicate names")
+struct DuplicateNameTests {
+
+    private func screen(_ children: [AccessibilityNode]) -> AccessibilityNode {
+        makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852),
+                 accessible: false, children: children).annotatingLayout()
+    }
+
+    @Test func controlListedTwiceAtOneSpotIsOneControl() {
+        let outer = makeNode(type: "XCUIElementTypeSwitch", label: "Force right-to-left layout", frame: CGRect(x: 298, y: 339, width: 63, height: 29))
+        let inner = makeNode(type: "XCUIElementTypeSwitch", label: "Force right-to-left layout", frame: CGRect(x: 300, y: 340, width: 59, height: 27))
+        #expect(DuplicateInteractiveNameRule().evaluate(rootNode: screen([outer, inner])).isEmpty)
+    }
+
+    @Test func separateControlsWithOneNameFail() {
+        let first = makeNode(type: "XCUIElementTypeButton", label: "Bookmark article", frame: CGRect(x: 333, y: 236, width: 44, height: 45))
+        let second = makeNode(type: "XCUIElementTypeButton", label: "Bookmark article", frame: CGRect(x: 333, y: 341, width: 44, height: 45))
+        let results = DuplicateInteractiveNameRule().evaluate(rootNode: screen([first, second]))
+        #expect(results.count == 2)
+        #expect(results.allSatisfy { $0.status == .fail })
+    }
+}
+
+@MainActor
+@Suite("Segmented controls")
+struct SegmentedControlTests {
+
+    @Test func unnamedSegmentedControlIsReportedOnceAsFail() {
+        let control = makeNode(type: "XCUIElementTypeSegmentedControl", label: "", frame: CGRect(x: 160, y: 285, width: 201, height: 33),
+                               accessible: false)
+        #expect(CommonAccessibleNameRule().evaluate(node: control)?.status == .fail)
+        #expect(SegmentControlRule().evaluate(node: control) == nil)
+        #expect(ScreenReaderHiddenInteractiveRule().evaluate(node: control) == nil)
+    }
+
+    @Test func namedSegmentedControlStillAsksForReview() {
+        let control = makeNode(type: "XCUIElementTypeSegmentedControl", label: "Text size", frame: CGRect(x: 160, y: 285, width: 201, height: 33))
+        #expect(SegmentControlRule().evaluate(node: control)?.status == .validate)
+    }
+}

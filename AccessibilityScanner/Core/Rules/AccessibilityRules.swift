@@ -134,14 +134,24 @@ nonisolated struct CommonAccessibleNameRule: AccessibilityRule {
     let title = "Accessible Name"
     let description = "Interactive controls must expose a meaningful accessible name."
 
+    /// Whether this rule reports the control as having no name. Other
+    /// checks on the same control stay quiet then: the Fail covers it.
+    static func failsForMissingName(_ node: AccessibilityNode) -> Bool {
+        appliesTo(node) && RuleHelper.clean(node.label).isEmpty
+    }
+
+    private static func appliesTo(_ node: AccessibilityNode) -> Bool {
+        RuleHelper.controls.contains(node.role) && node.visible && node.enabled &&
+            !node.semantics.mergedIntoAncestor &&
+            // Buttons have a dedicated descriptive-name rule. Keeping the
+            // common rule off buttons prevents duplicate PASS/FAIL records.
+            node.role != .button &&
+            // A name given only as a hint is reported by name-via-hint.
+            !RuleHelper.isNamedOnlyByHint(node)
+    }
+
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.role), node.visible, node.enabled,
-              !node.semantics.mergedIntoAncestor else { return nil }
-        // Buttons have a dedicated descriptive-name rule. Keeping the common
-        // rule off buttons prevents duplicate PASS/FAIL records.
-        guard node.role != .button else { return nil }
-        // A name given only as a hint is reported by name-via-hint.
-        guard !RuleHelper.isNamedOnlyByHint(node) else { return nil }
+        guard Self.appliesTo(node) else { return nil }
         if RuleHelper.clean(node.label).isEmpty {
             let imageSegments = node.role == .segmentedControl &&
                 RuleHelper.allNodes(node).dropFirst().contains { $0.role == .image }
@@ -711,7 +721,19 @@ nonisolated struct DuplicateInteractiveNameRule: ScreenAccessibilityRule {
     }
 
     func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
-        let controls = RuleHelper.visibleInteractiveNodes(rootNode)
+        // One control the hierarchy lists twice (a SwiftUI toggle's outer and
+        // inner switch, a button wrapping a button) sits in one place: it is
+        // one control to the user, not two with the same name.
+        var controls: [AccessibilityNode] = []
+        for node in RuleHelper.visibleInteractiveNodes(rootNode) where !node.semantics.mergedIntoAncestor {
+            let sameSpot = controls.contains { other in
+                let overlap = node.frame.intersection(other.frame)
+                guard !overlap.isNull else { return false }
+                let smaller = min(node.frame.width * node.frame.height, other.frame.width * other.frame.height)
+                return smaller > 0 && overlap.width * overlap.height >= smaller * 0.8
+            }
+            if !sameSpot { controls.append(node) }
+        }
         let groups = Dictionary(grouping: controls) {
             RuleHelper.clean($0.label).lowercased()
         }
@@ -943,7 +965,8 @@ nonisolated struct SegmentControlRule: AccessibilityRule {
     let description = "Segments that represent choices should expose an interactive role."
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.role == .segmentedControl, node.visible else { return nil }
+        guard node.role == .segmentedControl, node.visible,
+              !CommonAccessibleNameRule.failsForMissingName(node) else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Segmented control detected; verify every selectable segment is operable and stateful.",
                                      remediation: "Test segment selection and selected-state announcements.")
@@ -1155,9 +1178,12 @@ private nonisolated enum ContrastRuleFactory {
         else {
             // Reported once, by the flat-background rules, not again here.
             guard background != .varied else { return nil }
-            return RuleHelper.validation(ruleID: ruleID, name: title, description: description, node: node,
-                                         message: "Inconclusive: no text pixels distinct from the background could be found in the screenshot for this element.",
-                                         remediation: "Check the element's rendered foreground/background contrast manually.")
+            // Nothing measurable (a collapsed large title fading under the
+            // navigation bar, text hidden behind another view) is not a
+            // finding: it is left for manual checking, not Validate.
+            return RuleHelper.notTested(ruleID: ruleID, name: title, description: description, node: node,
+                                        message: "Inconclusive: no text pixels distinct from the background could be found in the screenshot for this element.",
+                                        remediation: "Check the element's rendered foreground/background contrast manually.")
         }
         switch background {
         case .flat where measurement.variedBackground: return nil
@@ -1309,7 +1335,10 @@ nonisolated struct ButtonRoleRule: AccessibilityRule {
             return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                    message: "Element exposes button semantics.")
         }
+        // A heading (the "Explore" screen title) names a section; it is not
+        // a call to action.
         guard node.role == .staticText, !node.semantics.insideActionable,
+              !RuleHelper.hasTrait(node, RuleHelper.headingsTraits),
               !RuleHelper.isDescriptiveText(node.label) else { return nil }
         // Whole words, so "Saved" or "Closed" are not read as "save"/"close".
         let words = RuleHelper.words(node)
@@ -1366,6 +1395,8 @@ nonisolated struct ScreenReaderHiddenInteractiveRule: AccessibilityRule {
         // Inside an accessibility element: the element represents it.
         guard RuleHelper.controls.contains(node.role), node.visible,
               !node.semantics.mergedIntoAncestor else { return nil }
+        // An unnamed segmented control is already a Fail (accessible-name).
+        if node.role == .segmentedControl, CommonAccessibleNameRule.failsForMissingName(node) { return nil }
         if node.hittable && !node.accessible {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Control is hittable but not exposed as accessible.",
@@ -2072,6 +2103,16 @@ nonisolated struct ReadingOrderRule: ScreenAccessibilityRule {
             return [RuleHelper.pass(ruleID: id, name: title, description: description, node: rootNode,
                                     message: "The accessibility tree order of \(assessment.count) meaningful elements follows the visual reading order (top to bottom, left to right).")]
         }
+        if rootNode.platform == .ios {
+            // WebDriverAgent lists UIKit subviews in subview order, but
+            // VoiceOver re-sorts a container top-left to bottom-right unless
+            // it sets accessibilityElements, which the hierarchy does not
+            // show. A different tree order is not evidence of a wrong
+            // reading order.
+            return [RuleHelper.notTested(ruleID: id, name: title, description: description, node: rootNode,
+                                         message: "\(assessment.outOfOrder) of \(assessment.count) elements are listed out of visual order in the hierarchy, but VoiceOver re-sorts views that do not set accessibilityElements, so the reading order cannot be confirmed from Appium.",
+                                         remediation: "Swipe through the screen with VoiceOver and confirm the reading order is logical.")]
+        }
         return [RuleHelper.warning(ruleID: id, name: title, description: description, node: rootNode,
                                    message: "\(assessment.outOfOrder) of \(assessment.count) meaningful elements are exposed out of visual reading order. Screen readers follow the accessibility tree order by default.",
                                    remediation: "Reorder the accessibility elements (or set traversal order) so assistive technology reads the screen in a meaningful order.")]
@@ -2383,15 +2424,28 @@ nonisolated struct LabelInNameRule: AccessibilityRule, ContextualAccessibilityRu
                 ? segments[0]
                 : RuleHelper.titleText(of: node) ?? segments[0]
             fromScreenshot = false
-        } else if let context, let text = TextRecognizer.text(in: node.frame, context: context) {
+        } else if !node.semantics.partiallyVisible,
+                  let context, let text = TextRecognizer.text(in: node.frame, context: context) {
+            // Under a bar the screenshot shows the bar's text, not the control's.
             visible = text; fromScreenshot = true
         } else {
             return nil
         }
 
-        let visibleWords = RuleHelper.wordList(visible)
+        // Numbers read from the screenshot are badge counts or icon glyphs
+        // misread as digits ("26 Profile" for a tab icon), not the label.
+        let visibleWords = RuleHelper.wordList(visible).filter { word in
+            !(fromScreenshot && word.allSatisfy(\.isNumber))
+        }
         guard !visibleWords.isEmpty else { return nil }
         let nameWords = Set(RuleHelper.wordList(name))
+        // Screenshot text of a small control picks up fragments of what is
+        // behind or around it ("Home on bor" through a translucent tab bar).
+        // When every word of the name is there, the label is in the name.
+        if fromScreenshot, !nameWords.isEmpty, nameWords.isSubset(of: Set(visibleWords)) {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "The visible label shown on screen includes the accessible name \"\(name)\".")
+        }
         let matched = visibleWords.filter { nameWords.contains($0) }.count
         let ratio = Double(matched) / Double(visibleWords.count)
         // Screenshot text can misread a character; allow one miss in longer labels.
