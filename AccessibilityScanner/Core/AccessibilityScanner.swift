@@ -119,57 +119,6 @@ nonisolated final class AccessibilityScanner {
 
     // MARK: - Report
 
-    func scanReport(
-        rootNode: AccessibilityNode,
-        applicationName: String,
-        bundleID: String,
-        deviceName: String,
-        deviceUDID: String,
-        screenName: String? = nil,
-        screenshot: ScanScreenshot? = nil,
-        annotations: [ScreenshotAnnotation] = []
-    ) -> AccessibilityScanResult {
-
-        let startedAt = Date()
-
-        // Evaluate the hierarchy once.
-        let evaluations = evaluateForReport(
-            rootNode: rootNode
-        )
-
-        let elementCount = countRelevantElements(
-            rootNode
-        )
-
-        let resolvedScreenName =
-            screenName ??
-            inferScreenName(
-                rootNode: rootNode,
-                applicationName: applicationName
-            )
-
-        let screen = ScreenScanResult(
-            name: resolvedScreenName,
-            elementCount: elementCount,
-            evaluations: evaluations,
-            screenshot: screenshot,
-            annotations: annotations
-        )
-
-        let finishedAt = Date()
-
-        return AccessibilityScanResult(
-            applicationName: applicationName,
-            bundleID: bundleID,
-            deviceName: deviceName,
-            deviceUDID: deviceUDID,
-            startedAt: startedAt,
-            finishedAt: finishedAt,
-            screens: [screen],
-            rulesExecuted: rules.count
-        )
-    }
-
     // MARK: - Element Count
 
     private func countRelevantElements(
@@ -193,31 +142,6 @@ nonisolated final class AccessibilityScanner {
     }
 
     // MARK: - Screen Name
-
-    private func inferScreenName(
-        rootNode: AccessibilityNode,
-        applicationName: String
-    ) -> String {
-
-        let candidates =
-            findVisibleTextElements(
-                rootNode
-            )
-
-        for candidate in candidates {
-            let text =
-                candidate.trimmingCharacters(
-                    in: .whitespacesAndNewlines
-                )
-
-            if !text.isEmpty,
-               text.count <= 60 {
-                return text
-            }
-        }
-
-        return "Current Screen"
-    }
 
     private func findVisibleTextElements(
         _ node: AccessibilityNode

@@ -17,11 +17,7 @@ nonisolated struct AccessibilityFixOpportunity: Identifiable, Codable, Hashable 
     let swiftUIExample: String?
     let uikitExample: String?
 
-    // Impact-analysis fields shared with AccessibilityImpactCenter.
     let status: RuleResultStatus
-    let affectedJourneys: Int
-    let blockedJourneys: Int
-    let impactScore: Int
 
     /// Platform the guidance applies to (drives code sample labels).
     let platform: MobilePlatform
@@ -48,9 +44,6 @@ nonisolated struct AccessibilityFixOpportunity: Identifiable, Codable, Hashable 
         swiftUIExample: String?,
         uikitExample: String?,
         status: RuleResultStatus = .pass,
-        affectedJourneys: Int = 0,
-        blockedJourneys: Int = 0,
-        impactScore: Int = 0,
         platform: MobilePlatform = .ios
     ) {
         self.id = id
@@ -66,9 +59,6 @@ nonisolated struct AccessibilityFixOpportunity: Identifiable, Codable, Hashable 
         self.swiftUIExample = swiftUIExample
         self.uikitExample = uikitExample
         self.status = status
-        self.affectedJourneys = affectedJourneys
-        self.blockedJourneys = blockedJourneys
-        self.impactScore = impactScore
         self.platform = platform
     }
 

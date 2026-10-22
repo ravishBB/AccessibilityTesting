@@ -28,10 +28,6 @@ nonisolated struct Device: Identifiable, Hashable {
         type == .simulator
     }
 
-    var isPhysical: Bool {
-        type == .physical
-    }
-
     var displayName: String {
 
         if platform == .android {

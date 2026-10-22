@@ -100,10 +100,6 @@ nonisolated struct AccessibilityNode {
         traits.localizedCaseInsensitiveContains("adjustable")
     }
 
-    var isHiddenFromAccessibility: Bool {
-
-        !visible || !accessible
-    }
 }
 
 /// Accessibility data beyond the common XCUITest/UiAutomator2 fields.

@@ -105,7 +105,6 @@ private nonisolated struct JSONReportPayload: Codable {
     let coverage: ReportCoverage
     /// Every BB ID in the ruleset and what this scan did with it (schema 1.7).
     let bbCoverage: [BBCoverageEntry]
-    let intelligence: AccessibilityIntelligence?
 
     init(report: AccessibilityScanResult, options: JSONReportExporter.Options) {
         let grouping = FindingGrouping(report: report)
@@ -128,9 +127,6 @@ private nonisolated struct JSONReportPayload: Codable {
         self.rules = report.ruleSummaries.map { JSONRuleSummary(summary: $0) }
         self.coverage = ReportCoverage(report: report, grouping: grouping)
         self.bbCoverage = BBCoverage.entries(for: report)
-        // Quality gate, VoiceOver, journey and regression analysis are not
-        // part of the report.
-        self.intelligence = nil
     }
 }
 

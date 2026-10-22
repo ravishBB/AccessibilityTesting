@@ -88,7 +88,6 @@ private nonisolated struct HTMLReportRenderer {
 
     private let grouping: FindingGrouping
     private let coverage: ReportCoverage
-    private let intelligence: AccessibilityIntelligence
 
     init(
         report: AccessibilityScanResult,
@@ -101,7 +100,6 @@ private nonisolated struct HTMLReportRenderer {
         let grouping = FindingGrouping(report: report)
         self.grouping = grouping
         self.coverage = ReportCoverage(report: report, grouping: grouping)
-        self.intelligence = report.resolvedIntelligence
     }
 
     func render() -> String {
@@ -325,141 +323,7 @@ private nonisolated struct HTMLReportRenderer {
 
     // MARK: Findings
 
-    private func findingsSection() -> String {
-        var out = "<section id=\"findings\">\n<h2>Findings</h2>\n"
-        let groups = grouping.issueGroups
-
-        if groups.isEmpty {
-            out += "<p class=\"empty\">No automated failures or warnings were recorded on the scanned screens.</p>\n</section>\n"
-            return out
-        }
-
-        out += "<p class=\"note\">One entry per rule, most important first. Each lists every affected element with its fingerprint, a stable ID you can use to track the issue across scans.</p>\n"
-
-        for group in groups {
-            out += findingArticle(group, checklist: false)
-        }
-
-        out += "</section>\n"
-        return out
-    }
-
-    private func manualReviewSection() -> String {
-        var out = "<section id=\"manual-review\">\n<h2>Validate</h2>\n"
-        let groups = grouping.manualReviewGroups
-
-        if groups.isEmpty {
-            out += "<p class=\"empty\">No manual verification is required.</p>\n</section>\n"
-            return out
-        }
-
-        out += "<p class=\"note\">The scanner could not prove these checks pass or fail from black-box evidence. A tester must verify each item and record the result before sign-off.</p>\n"
-
-        for group in groups {
-            out += findingArticle(group, checklist: true)
-        }
-
-        out += "</section>\n"
-        return out
-    }
-
-    private func findingArticle(_ group: GroupedFinding, checklist: Bool) -> String {
-        var out = "<article class=\"finding \(group.status.rawValue)\" id=\"\(anchorID(for: group))\">\n"
-
-        out += "<div class=\"finding-head\">\n<h3>\(esc(group.displayTitle))</h3>\n<div class=\"chips\">"
-        out += statusChip(group.status)
-        out += chip("\(group.metadata.impact.displayName) impact", group.metadata.impact.rawValue)
-        if let wcag = group.metadata.wcagLabel {
-            out += chip(wcag, "neutral")
-        }
-        out += chip("\(group.count) element\(plural(group.count)) · \(group.screenCount) screen\(plural(group.screenCount))", "neutral")
-        out += "</div>\n</div>\n"
-
-        out += "<p class=\"rule-id\"><code>\(esc(group.ruleID))</code>"
-        if !group.displayDescription.isEmpty {
-            out += " · \(esc(group.displayDescription))"
-        }
-        out += "</p>\n"
-
-        out += "<dl class=\"facts\">\n"
-        if let title = group.metadata.wcagTitle, let criterion = group.metadata.wcagCriterion {
-            out += "<dt>Standard</dt><dd>\(esc(ScannerBuildInfo.wcagVersion)) \(esc(criterion)) \(esc(title))</dd>\n"
-        }
-        if let bb = group.bbIssue {
-            let criterion = bb.wcag.map { " · WCAG \($0)" } ?? ""
-            out += "<dt>Issue</dt><dd>\(esc(bb.title))\(esc(criterion))</dd>\n"
-        }
-        if let bb = group.bbIfConfirmed {
-            out += "<dt>If confirmed</dt><dd>Record as a failure: \(esc(bb.title))</dd>\n"
-        }
-        out += "<dt>Who is affected</dt><dd>\(esc(group.metadata.affectedUsers))</dd>\n"
-        if !group.sampleMessage.isEmpty {
-            out += "<dt>What was detected</dt><dd>\(esc(group.sampleMessage))</dd>\n"
-        }
-        if !group.remediation.isEmpty {
-            out += "<dt>How to fix</dt><dd>\(esc(group.remediation))</dd>\n"
-        }
-        out += "<dt>How to verify</dt><dd>\(esc(group.metadata.howToTest))</dd>\n"
-        out += "</dl>\n"
-
-        out += "<table class=\"data elements\">\n<thead><tr>"
-        if checklist { out += "<th scope=\"col\" class=\"check\"><span class=\"sr-only\">Verified</span></th>" }
-        out += "<th scope=\"col\">Screen</th><th scope=\"col\">Element</th><th scope=\"col\">Detail</th><th scope=\"col\">Fingerprint</th>"
-        if checklist { out += "<th scope=\"col\">Result / notes</th>" }
-        out += "</tr></thead>\n<tbody>\n"
-
-        for occurrence in group.occurrences {
-            let evaluation = occurrence.evaluation
-            out += "<tr>"
-            if checklist { out += "<td class=\"check\"><span class=\"box\" aria-hidden=\"true\"></span></td>" }
-            out += "<td>\(esc(occurrence.screenName))</td>"
-            out += "<td>\(elementCell(evaluation))</td>"
-            out += "<td>\(esc(evaluation.message))</td>"
-            out += "<td><code>\(esc(occurrence.fingerprint))</code></td>"
-            if checklist { out += "<td class=\"notes\"></td>" }
-            out += "</tr>\n"
-        }
-
-        out += "</tbody>\n</table>\n</article>\n"
-        return out
-    }
-
-    private func elementCell(_ evaluation: AccessibilityRuleEvaluation) -> String {
-        let type = evaluation.elementType.replacingOccurrences(of: "XCUIElementType", with: "")
-        var out = "<strong>\(esc(evaluation.targetDescription))</strong><br><span class=\"muted\">\(esc(type))"
-        let identifier = evaluation.identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !identifier.isEmpty, identifier != evaluation.targetDescription {
-            out += " · id: \(esc(identifier))"
-        }
-        out += "</span>"
-        return out
-    }
-
     // MARK: Screens
-
-    /// Fail / Validate / Pass switch for the screenshot markers. CSS only
-    /// (radio buttons and :has), so it works where scripts are blocked.
-    private func checkFilterHTML() -> String {
-        let hasChecks = report.screens.contains { screen in
-            screen.viewportScreenshots.contains { $0.checks != nil }
-        }
-        guard hasChecks else {
-            return "<p class=\"note\">Numbered markers on screenshots highlight confirmed failures only.</p>\n"
-        }
-        let all = report.screens.flatMap { $0.viewportScreenshots.flatMap { $0.checks ?? [] } }
-        func count(_ filter: ScreenshotCheckFilter) -> Int {
-            all.filter { ScreenshotCheckFilter($0.displayStatus) == filter }.count
-        }
-        var out = "<fieldset class=\"check-filter\">\n<legend>Show components on screenshots</legend>\n"
-        for filter in ScreenshotCheckFilter.allCases {
-            let checked = filter == .fail ? " checked" : ""
-            out += "<input type=\"radio\" name=\"check-filter\" id=\"cf-\(filter.rawValue)\" value=\"\(filter.rawValue)\"\(checked)>"
-            out += "<label for=\"cf-\(filter.rawValue)\" class=\"\(filter.rawValue)\">\(esc(filter.title)) (\(count(filter)))</label>\n"
-        }
-        out += "</fieldset>\n"
-        out += "<p class=\"note\">Markers are numbered within each filter.</p>\n"
-        return out
-    }
 
     private func screensSection() -> String {
         var out = "<section id=\"screens\">\n<h2>Screens &amp; evidence</h2>\n"
@@ -665,25 +529,6 @@ private nonisolated struct HTMLReportRenderer {
 
     // MARK: BB ruleset coverage
 
-    /// Every BB ID in the ruleset and what this scan did with it.
-    private func bbCoverageSection() -> String {
-        let entries = BBCoverage.entries(for: report)
-        let platform = BBCoverage.platform(of: report) == .android ? "Android" : "iOS"
-        func count(_ outcomes: Set<BBCoverageEntry.Outcome>) -> Int { entries.filter { outcomes.contains($0.outcome) }.count }
-
-        var out = "<section id=\"bb-coverage\">\n<h2>BB ruleset coverage</h2>\n"
-        out += "<p>All \(entries.count) rows of the BB ruleset for this \(esc(platform)) scan: "
-        out += "\(count([.found, .passed, .review, .coveredBySibling])) produced results, \(count([.nothingApplicable])) were checked with nothing applicable, "
-        out += "\(count([.manual])) need a manual check, \(count([.unavailable])) cannot be tested on \(esc(platform)) through Appium, \(count([.onHold])) are on hold and \(count([.outOfScope])) are Level AAA, which is out of scope.</p>\n"
-        out += "<table class=\"data\">\n<thead><tr><th scope=\"col\">BB ID</th><th scope=\"col\">Issue</th><th scope=\"col\">Type</th><th scope=\"col\">WCAG</th><th scope=\"col\">Result</th><th scope=\"col\">Detail</th></tr></thead>\n<tbody>\n"
-        for entry in entries {
-            out += "<tr><td><code>\(esc(entry.id))</code></td><td>\(esc(entry.issue))</td><td>\(esc(entry.type))</td><td>\(esc(entry.wcag))</td>"
-            out += "<td>\(chip(entry.outcome.title, entry.outcome.cssClass))</td><td>\(esc(entry.detail))</td></tr>\n"
-        }
-        out += "</tbody>\n</table>\n</section>\n\n"
-        return out
-    }
-
     // MARK: Scope
 
     private func scopeSection() -> String {
@@ -760,10 +605,6 @@ private nonisolated struct HTMLReportRenderer {
 
     private func statusChip(_ status: RuleResultStatus) -> String {
         chip(status.displayName, status.rawValue)
-    }
-
-    private func intelligenceChip(_ status: IntelligenceStatus) -> String {
-        chip(status.title, status.rawValue)
     }
 
     private func chip(_ text: String, _ cssClass: String) -> String {

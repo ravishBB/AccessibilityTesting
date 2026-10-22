@@ -45,7 +45,6 @@ nonisolated final class ScanNotes {
         case unstableScreen
         case snapshotFailed
         case launchFailed
-        case responsiveCheckFailed
 
         func summary(count: Int) -> String {
             let s = count == 1 ? "" : "s"
@@ -56,7 +55,6 @@ nonisolated final class ScanNotes {
             case .unstableScreen: return "\(count) screen\(s) kept changing (animation or live content) and \(count == 1 ? "was" : "were") captured while moving; element positions may be slightly off"
             case .snapshotFailed: return "\(count) screen\(s) could not be read after navigating to \(count == 1 ? "it" : "them")"
             case .launchFailed: return "The app could not be brought to the foreground at the start of the scan; the scan covered whatever was on screen"
-            case .responsiveCheckFailed: return "The landscape check could not be completed"
             }
         }
     }

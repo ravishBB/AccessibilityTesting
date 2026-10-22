@@ -23,7 +23,6 @@ nonisolated struct AccessibilityScanResult: Identifiable, Codable {
     let screens: [ScreenScanResult]
 
     let rulesExecuted: Int
-    let intelligence: AccessibilityIntelligence?
 
     /// Device, OS, app and scanner versions. Optional so baselines saved by
     /// earlier versions still decode.
@@ -41,8 +40,7 @@ nonisolated struct AccessibilityScanResult: Identifiable, Codable {
         startedAt: Date,
         finishedAt: Date,
         screens: [ScreenScanResult],
-        rulesExecuted: Int,
-        intelligence: AccessibilityIntelligence? = nil
+        rulesExecuted: Int
     ) {
         self.id = UUID()
 
@@ -57,7 +55,6 @@ nonisolated struct AccessibilityScanResult: Identifiable, Codable {
 
         self.screens = screens
         self.rulesExecuted = rulesExecuted
-        self.intelligence = intelligence
     }
 
     init(
@@ -69,8 +66,7 @@ nonisolated struct AccessibilityScanResult: Identifiable, Codable {
         startedAt: Date,
         finishedAt: Date,
         screens: [ScreenScanResult],
-        rulesExecuted: Int,
-        intelligence: AccessibilityIntelligence?
+        rulesExecuted: Int
     ) {
         self.id = id
         self.applicationName = applicationName
@@ -81,7 +77,6 @@ nonisolated struct AccessibilityScanResult: Identifiable, Codable {
         self.finishedAt = finishedAt
         self.screens = screens
         self.rulesExecuted = rulesExecuted
-        self.intelligence = intelligence
     }
 
     var totalElementsTested: Int {
@@ -149,24 +144,6 @@ nonisolated struct AccessibilityScanResult: Identifiable, Codable {
         }
     }
 
-    var issueEvaluations: [AccessibilityRuleEvaluation] {
-        allEvaluations.filter {
-            $0.status == .fail ||
-            $0.status == .warning ||
-            $0.status == .validate
-        }
-    }
-
-    var passEvaluations: [AccessibilityRuleEvaluation] {
-        allEvaluations.filter {
-            $0.status == .pass
-        }
-    }
-
-    var resolvedIntelligence: AccessibilityIntelligence {
-        intelligence ?? AccessibilityIntelligenceEngine.analyze(report: self)
-    }
-
     var ruleSummaries: [RuleSummary] {
 
         let grouped = Dictionary(
@@ -198,10 +175,4 @@ nonisolated struct AccessibilityScanResult: Identifiable, Codable {
             }
     }
 
-    /// Findings grouped by rule with stable fingerprints. Computing this walks
-    /// every evaluation, so callers that need it repeatedly should keep the
-    /// result instead of re-reading this property.
-    var findingGrouping: FindingGrouping {
-        FindingGrouping(report: self)
-    }
 }

@@ -120,10 +120,6 @@ nonisolated struct FindingGrouping {
         groups.filter { $0.status == .fail || $0.status == .warning }
     }
 
-    var manualReviewGroups: [GroupedFinding] {
-        groups.filter { $0.status == .validate }
-    }
-
     /// Unique affected elements. Evaluations with the same rule, status,
     /// element identity and geometry on one screen are counted once.
     var failureCount: Int { count(for: .fail) }

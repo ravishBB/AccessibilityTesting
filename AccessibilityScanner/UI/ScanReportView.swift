@@ -17,11 +17,14 @@ struct ScanReportView: View {
     private let grouping: FindingGrouping
     /// Results by BB issue and category, computed once per report.
     private let bbReport: BBReport
+    /// Fix guidance per rule, computed once per report.
+    private let fixCenter: AccessibilityFixCenter
 
     init(report: AccessibilityScanResult) {
         self.report = report
         self.grouping = FindingGrouping(report: report)
         self.bbReport = BBReport(report: report)
+        self.fixCenter = AccessibilityFixCenter.analyze(report: report)
     }
 
     @State private var selectedAnnotationID: UUID?
@@ -31,7 +34,6 @@ struct ScanReportView: View {
     @State private var selectedScreenID: UUID?
     /// One status filter for the BB Report and the Issue Explorer.
     @State private var reportFilter: ReportFilter = .all
-    @State private var showDetailedResults = false
     @State private var showAppMap = false
 
     var body: some View {
@@ -54,16 +56,14 @@ struct ScanReportView: View {
 
                 screenResultsSection
 
-                if let fixCenter = report.resolvedIntelligence.fixCenter {
-                    DisclosureGroup(isExpanded: .constant(true)) {
-                        AccessibilityFixCenterView(fixCenter: fixCenter)
-                            .padding(.top, 10)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Developer Fix Center")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                        }
+                DisclosureGroup(isExpanded: .constant(true)) {
+                    AccessibilityFixCenterView(fixCenter: fixCenter)
+                        .padding(.top, 10)
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Developer Fix Center")
+                            .font(.title2)
+                            .fontWeight(.bold)
                     }
                 }
             }
@@ -184,60 +184,6 @@ struct ScanReportView: View {
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    /// Validate results: checks a tester confirms. Failures are in "Open Findings".
-    private var validateSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                sectionTitle("Validate")
-                Spacer()
-                Text("\(grouping.manualReviewGroups.count) rules · \(grouping.manualReviewCount) elements")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if grouping.manualReviewGroups.isEmpty {
-                Label("Nothing to validate", systemImage: "checkmark.seal.fill")
-                    .font(.headline)
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.07)))
-            } else {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    ForEach(grouping.manualReviewGroups) { group in
-                        groupCard(group, showHowToTest: true)
-                    }
-                }
-            }
-        }
-    }
-
-    /// Failures and warnings, one card per rule, nothing truncated.
-    private var actionSummarySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                sectionTitle("Open Findings")
-                Spacer()
-                Text("\(grouping.issueGroups.count) rules · \(grouping.issueCount) elements")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if grouping.issueGroups.isEmpty {
-                Label("No failures or warnings", systemImage: "checkmark.circle.fill")
-                    .font(.headline)
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.07)))
-            } else {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(grouping.issueGroups) { group in
-                        groupCard(group, showHowToTest: false)
-                    }
-                }
-            }
         }
     }
 
@@ -978,111 +924,6 @@ struct ScanReportView: View {
 
     // MARK: - Annotation Row
 
-    private func annotationRow(
-        _ annotation: ScreenshotAnnotation
-    ) -> some View {
-
-        Button {
-            selectedAnnotationID = annotation.id
-            if let screen = selectedScreen {
-                selectedViewportID = viewportContaining(
-                    annotationID: annotation.id,
-                    in: screen
-                )?.id
-            }
-        } label: {
-            HStack(
-                alignment: .top,
-                spacing: 12
-            ) {
-
-            Text(
-                "\(annotation.number)"
-            )
-            .font(.caption)
-            .fontWeight(.bold)
-            .foregroundStyle(.white)
-            .frame(
-                width: 24,
-                height: 24
-            )
-            .background(
-                annotationColor(
-                    annotation.severity
-                )
-            )
-            .clipShape(
-                Circle()
-            )
-
-            VStack(
-                alignment: .leading,
-                spacing: 3
-            ) {
-
-                HStack {
-
-                    Text(annotation.displayTitle)
-                        .font(.callout)
-                        .fontWeight(.semibold)
-
-                    severityBadge(
-                        annotation.severity
-                    )
-                }
-
-                if !annotation.elementLabel.isEmpty {
-
-                    Text(
-                        "\(annotation.elementType) — \(annotation.elementLabel)"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                } else {
-
-                    Text(
-                        annotation.elementType
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-
-                Text(
-                    annotation.message
-                )
-                .font(.caption)
-
-                Text(
-                    String(
-                        format:
-                            "Frame: %.0f, %.0f — %.0f × %.0f",
-                        annotation.frameX,
-                        annotation.frameY,
-                        annotation.frameWidth,
-                        annotation.frameHeight
-                    )
-                )
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            }
-
-                Spacer()
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(6)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(
-                    selectedAnnotationID == annotation.id
-                        ? Color.accentColor.opacity(0.12)
-                        : Color.clear
-                )
-        )
-    }
-
     // MARK: - Screens
 
     private var screenResultsSection: some View {
@@ -1154,321 +995,13 @@ struct ScanReportView: View {
 
     // MARK: - Rule Results
 
-    private var ruleResultsSection: some View {
-
-        LazyVStack(
-            alignment: .leading,
-            spacing: 16
-        ) {
-
-            sectionTitle("Rule Results")
-
-            ForEach(
-                report.ruleSummaries
-            ) { rule in
-
-                VStack(
-                    alignment: .leading,
-                    spacing: 10
-                ) {
-
-                    HStack {
-
-                        VStack(
-                            alignment: .leading,
-                            spacing: 3
-                        ) {
-
-                            Text(rule.ruleName)
-                                .font(.headline)
-
-                            Text(rule.ruleID)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        Spacer()
-
-                        severityBadge(
-                            rule.severity
-                        )
-                    }
-
-                    HStack(spacing: 18) {
-
-                        metric(
-                            "Failures",
-                            rule.failures
-                        )
-
-                        metric(
-                            "Warnings",
-                            rule.warnings
-                        )
-
-                        metric(
-                            "Manual",
-                            rule.validations
-                        )
-
-                        metric(
-                            "Pass",
-                            rule.passes
-                        )
-                    }
-                }
-                .padding(16)
-                .background(
-                    RoundedRectangle(
-                        cornerRadius: 10
-                    )
-                    .stroke(
-                        Color.secondary.opacity(0.2)
-                    )
-                )
-            }
-        }
-    }
-
     // MARK: - Issues
-
-    private var issuesSection: some View {
-
-        LazyVStack(
-            alignment: .leading,
-            spacing: 16
-        ) {
-
-            sectionTitle("All Findings")
-
-            if report.issueEvaluations.isEmpty {
-
-                emptyState(
-                    "No accessibility findings were recorded."
-                )
-
-            } else {
-
-                ForEach(
-                    report.issueEvaluations
-                ) { evaluation in
-
-                    evaluationCard(
-                        evaluation
-                    )
-                }
-            }
-        }
-    }
 
     // MARK: - Passes
 
-    private var passesSection: some View {
-
-        LazyVStack(
-            alignment: .leading,
-            spacing: 16
-        ) {
-
-            sectionTitle("Passed Checks")
-
-            if report.passEvaluations.isEmpty {
-
-                emptyState(
-                    "No passed checks were recorded."
-                )
-
-            } else {
-
-                ForEach(
-                    report.passEvaluations
-                ) { evaluation in
-
-                    evaluationCard(
-                        evaluation
-                    )
-                }
-            }
-        }
-    }
-
     // MARK: - Rule Summary
 
-    private var ruleSummarySection: some View {
-
-        let statusColumnWidth: CGFloat = 100
-
-        return LazyVStack(
-            alignment: .leading,
-            spacing: 16
-        ) {
-
-            sectionTitle("Rule Summary")
-
-            VStack(spacing: 0) {
-
-                // Keep the header columns exactly the same width as the
-                // corresponding value columns below so counts stay aligned.
-                HStack(spacing: 0) {
-                    Text("Rule")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    ruleSummaryHeader("Failures", width: statusColumnWidth)
-                    ruleSummaryHeader("Warnings", width: statusColumnWidth)
-                    ruleSummaryHeader("Manual", width: statusColumnWidth)
-                    ruleSummaryHeader("Pass", width: statusColumnWidth)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
-
-                Divider()
-
-                ForEach(report.ruleSummaries) { rule in
-                    HStack(spacing: 0) {
-                        Text(rule.ruleName)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        ruleSummaryValue(rule.failures, width: statusColumnWidth)
-                        ruleSummaryValue(rule.warnings, width: statusColumnWidth)
-                        ruleSummaryValue(rule.validations, width: statusColumnWidth)
-                        ruleSummaryValue(rule.passes, width: statusColumnWidth)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 12)
-
-                    Divider()
-                }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.secondary.opacity(0.2))
-            )
-        }
-    }
-
-    private func ruleSummaryHeader(
-        _ title: String,
-        width: CGFloat
-    ) -> some View {
-        Text(title)
-            .font(.caption)
-            .fontWeight(.semibold)
-            .frame(width: width, alignment: .center)
-    }
-
-    private func ruleSummaryValue(
-        _ value: Int,
-        width: CGFloat
-    ) -> some View {
-        Text("\(value)")
-            .frame(width: width, alignment: .center)
-    }
-
     // MARK: - Evaluation Card
-
-    private func evaluationCard(
-        _ evaluation: AccessibilityRuleEvaluation
-    ) -> some View {
-
-        VStack(
-            alignment: .leading,
-            spacing: 10
-        ) {
-
-            HStack {
-
-                statusBadge(
-                    evaluation.status
-                )
-
-                Text(
-                    evaluation.ruleName
-                )
-                .font(.headline)
-
-                Spacer()
-
-                severityBadge(
-                    evaluation.severity
-                )
-            }
-
-            Text(
-                evaluation.message
-            )
-            .font(.body)
-
-            HStack(spacing: 8) {
-
-                Text(
-                    evaluation.elementType
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-                if !evaluation.elementLabel.isEmpty {
-
-                    Text(
-                        evaluation.elementLabel
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            }
-
-            if !evaluation.identifier.isEmpty {
-
-                Text(
-                    "Identifier: \(evaluation.identifier)"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-
-            let frameText = String(
-                format:
-                    "Frame: %.0f, %.0f — %.0f × %.0f",
-                evaluation.frameX,
-                evaluation.frameY,
-                evaluation.frameWidth,
-                evaluation.frameHeight
-            )
-
-            Text(frameText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if !evaluation.remediation.isEmpty {
-
-                VStack(
-                    alignment: .leading,
-                    spacing: 4
-                ) {
-
-                    Text("Remediation")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-
-                    Text(
-                        evaluation.remediation
-                    )
-                    .font(.callout)
-                }
-                .padding(.top, 4)
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(
-                cornerRadius: 10
-            )
-            .fill(
-                Color.secondary.opacity(0.07)
-            )
-        )
-    }
 
     // MARK: - Components
 
@@ -1531,41 +1064,6 @@ struct ScanReportView: View {
         .overlay(RoundedRectangle(cornerRadius: 11).stroke(Color.secondary.opacity(0.10)))
     }
 
-    private func summaryCard(
-        title: String,
-        value: Int
-    ) -> some View {
-
-        VStack(
-            alignment: .leading,
-            spacing: 8
-        ) {
-
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Text(
-                "\(value)"
-            )
-            .font(.title)
-            .fontWeight(.bold)
-        }
-        .frame(
-            maxWidth: .infinity,
-            alignment: .leading
-        )
-        .padding(16)
-        .background(
-            RoundedRectangle(
-                cornerRadius: 10
-            )
-            .fill(
-                Color.secondary.opacity(0.08)
-            )
-        )
-    }
-
     private func resultPill(
         title: String,
         value: Int
@@ -1602,19 +1100,6 @@ struct ScanReportView: View {
             )
             .fontWeight(.semibold)
         }
-    }
-
-    private func tableHeader(
-        _ title: String
-    ) -> some View {
-
-        Text(title)
-            .font(.caption)
-            .fontWeight(.semibold)
-            .frame(
-                maxWidth: .infinity,
-                alignment: .leading
-            )
     }
 
     private func emptyState(

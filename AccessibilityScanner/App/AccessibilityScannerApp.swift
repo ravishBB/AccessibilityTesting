@@ -25,7 +25,6 @@ struct AccessibilityScannerApp: App {
             ContentView()
                 .task {
                     await Task.detached {
-                        AccessibilityRegressionStore.shared.migrateLegacyBaselines()
                         AndroidFontScaleRecovery.restoreOutstanding()
                     }.value
                 }

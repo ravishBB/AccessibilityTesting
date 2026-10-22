@@ -75,11 +75,6 @@ nonisolated enum WCAGReference {
         c("4.1.3", "Status Messages", "AA")
     ]
 
-    /// How many of the given results are WCAG 2.2 Level A or AA criteria.
-    static func exercisedCount(in results: [WCAGCriterionResult]) -> Int {
-        let numbers = Set(criteria.map(\.number))
-        return results.filter { numbers.contains($0.criterion) }.count
-    }
 
     private static func c(_ number: String, _ title: String, _ level: String) -> WCAGCriterionReference {
         WCAGCriterionReference(number: number, title: title, level: level)
@@ -379,10 +374,6 @@ nonisolated struct ReportCoverage: Codable {
         return .noApplicableContent
     }
 
-    /// Short text for places with little room, e.g. "41 of 68 rules gave results".
-    var summaryLabel: String {
-        "\(rulesWithAutomatedVerdict) of \(rulesInRuleSet) rules gave results"
-    }
 }
 
 // MARK: - Cheap helper for list rows and headers

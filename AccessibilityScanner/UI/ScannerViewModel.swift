@@ -60,9 +60,6 @@ final class ScannerViewModel: ObservableObject {
     private let maximumSnapshotAttempts = 3
 
  
-    private let initialUISettleDelayNanoseconds: UInt64 =
-        500_000_000
-
     /// Delay between unstable snapshot attempts.
     private let snapshotRetryDelayNanoseconds: UInt64 =
         350_000_000
@@ -435,16 +432,6 @@ final class ScannerViewModel: ObservableObject {
                 }
             )
 
-            status = "Running responsive accessibility checks..."
-
-            let responsiveResult = await runResponsiveAccessibilityCheck(
-                appium: appium,
-                scanner: scanner
-            )
-            if !responsiveResult.tested {
-                notes.record(.responsiveCheckFailed)
-            }
-
             status = "Building accessibility report..."
 
             var screenResults: [ScreenScanResult] = []
@@ -486,25 +473,7 @@ final class ScannerViewModel: ObservableObject {
                 throw ScannerViewModelError.reportIntegrityFailure(details)
             }
 
-            status = "Building accessibility intelligence..."
-
-            let baseline = AccessibilityRegressionStore.shared.load(
-                bundleID: application.bundleID
-            )
-
-            let intelligence = AccessibilityIntelligenceEngine.analyze(
-                report: draftResult,
-                baseline: baseline,
-                responsive: responsiveResult
-            )
-
-            let result = draftResult.settingIntelligence(intelligence)
-
-            // Store the completed scan as the baseline for the next scan of
-            // this application. The current report retains the comparison
-            // result calculated against the previous baseline.
-            AccessibilityRegressionStore.shared.save(report: result)
-
+            let result = draftResult
             self.scanResult = result
 
             self.findings = result.allEvaluations
@@ -673,118 +642,6 @@ final class ScannerViewModel: ObservableObject {
         }
 
         return error.localizedDescription
-    }
-
-    // MARK: - Responsive Accessibility Checks
-
-    private func runResponsiveAccessibilityCheck(
-        appium: AppiumClient,
-        scanner: AccessibilityScanner
-    ) async -> ResponsiveAccessibilityResult {
-        var originalOrientation: String?
-        do {
-            originalOrientation = try await appium.getOrientation()
-            guard let originalOrientation else { throw AppiumError.invalidResponse }
-            let landscape = "LANDSCAPE"
-
-            // The scan has already completed its crawl. This is deliberately a
-            // runtime smoke test of the current app state so the crawler does
-            // not need to be redesigned or replayed in a second orientation.
-            try await appium.setOrientation(landscape)
-            try await Task.sleep(for: .milliseconds(700))
-
-            let source = try await appium.getSource()
-            let root = try appium.makeParser().parse(source)
-            let screenshotData = try await appium.getScreenshot()
-
-            guard let image = NSImage(data: screenshotData) else {
-                await DeviceRestore.run { try? await appium.setOrientation(originalOrientation) }
-                return ResponsiveAccessibilityResult(
-                    tested: true,
-                    originalOrientation: originalOrientation,
-                    testedOrientation: landscape,
-                    orientationChanged: originalOrientation != landscape,
-                    landscapeElementCount: countNodes(root),
-                    landscapeFailureCount: 0,
-                    landscapeWarningCount: 0,
-                    landscapeValidationCount: 0,
-                    landscapeScreenshotCaptured: false,
-                    dynamicTypeValidationCount: 0,
-                    dynamicTypeFailureCount: 0,
-                    status: .validate,
-                    note: "Landscape UI was reached, but the runtime screenshot could not be decoded."
-                )
-            }
-
-            let evaluations = scanner.evaluateForReport(
-                rootNode: root,
-                context: AccessibilityRuleContext(
-                    screenshotData: screenshotData,
-                    screenshotWidth: image.size.width,
-                    screenshotHeight: image.size.height,
-                    hierarchyWidth: root.frame.width,
-                    hierarchyHeight: root.frame.height
-                )
-            )
-
-            let failures = evaluations.filter { $0.status == .fail }.count
-            let warnings = evaluations.filter { $0.status == .warning }.count
-            let validations = evaluations.filter { $0.status == .validate }.count
-
-            let dynamicTypeEvaluations = evaluations.filter {
-                $0.ruleID == "text-resize" || $0.ruleID == "text-clipping"
-            }
-            let dynamicTypeFailures = dynamicTypeEvaluations.filter { $0.status == .fail }.count
-            let dynamicTypeValidations = dynamicTypeEvaluations.filter { $0.status == .validate }.count
-
-            let status: IntelligenceStatus
-            if failures > 0 {
-                status = .fail
-            } else if warnings > 0 {
-                status = .warning
-            } else if validations > 0 || dynamicTypeValidations > 0 {
-                status = .validate
-            } else {
-                status = .pass
-            }
-
-            await DeviceRestore.run { try? await appium.setOrientation(originalOrientation) }
-
-            return ResponsiveAccessibilityResult(
-                tested: true,
-                originalOrientation: originalOrientation,
-                testedOrientation: landscape,
-                orientationChanged: originalOrientation != landscape,
-                landscapeElementCount: countNodes(root),
-                landscapeFailureCount: failures,
-                landscapeWarningCount: warnings,
-                landscapeValidationCount: validations,
-                landscapeScreenshotCaptured: true,
-                dynamicTypeValidationCount: dynamicTypeValidations,
-                dynamicTypeFailureCount: dynamicTypeFailures,
-                status: status,
-                note: "Landscape was tested on the final crawled app state. Larger text is tested separately on the first screen by relaunching the app at the largest text size."
-            )
-        } catch {
-            if let originalOrientation {
-                await DeviceRestore.run { try? await appium.setOrientation(originalOrientation) }
-            }
-            return ResponsiveAccessibilityResult(
-                tested: false,
-                originalOrientation: nil,
-                testedOrientation: "LANDSCAPE",
-                orientationChanged: false,
-                landscapeElementCount: 0,
-                landscapeFailureCount: 0,
-                landscapeWarningCount: 0,
-                landscapeValidationCount: 0,
-                landscapeScreenshotCaptured: false,
-                dynamicTypeValidationCount: 0,
-                dynamicTypeFailureCount: 0,
-                status: .validate,
-                note: "Runtime orientation testing could not be completed. Review the device/Appium orientation capability before relying on this result."
-            )
-        }
     }
 
     // MARK: - Stable Snapshot Capture

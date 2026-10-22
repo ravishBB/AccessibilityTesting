@@ -465,18 +465,6 @@ private nonisolated enum RuleHelper {
         return result
     }
 
-    static func nodeKey(_ node: AccessibilityNode) -> String {
-        [
-            node.type,
-            node.identifier,
-            clean(node.label),
-            String(format: "%.1f", node.frame.origin.x),
-            String(format: "%.1f", node.frame.origin.y),
-            String(format: "%.1f", node.frame.width),
-            String(format: "%.1f", node.frame.height)
-        ].joined(separator: "|")
-    }
-
     static func warning(
         ruleID: String,
         name: String,
@@ -1068,23 +1056,6 @@ nonisolated struct ScreenTitleRule: AccessibilityRule {
         }
         return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                message: "Navigation bar exposes a screen title.")
-    }
-}
-
-// MARK: - Validation rules
-
-private nonisolated struct ValidationRule: AccessibilityRule {
-    let id: String
-    let title: String
-    let description: String
-    let applies: (AccessibilityNode) -> Bool
-    let message: String
-    let remediation: String
-
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard applies(node) else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: message, remediation: remediation)
     }
 }
 

@@ -24,15 +24,6 @@ nonisolated enum MobilePlatform: String, Codable, Hashable, CaseIterable {
         }
     }
 
-    var recommendedTargetSize: Double {
-        switch self {
-        case .ios: return 44
-        case .android: return 48
-        }
-    }
-
-    var minimumTargetSize: Double { 24 }
-
     static func infer(fromElementType type: String) -> MobilePlatform {
         if type.hasPrefix("XCUIElementType") { return .ios }
         if type.contains(".") || type == "hierarchy" { return .android }
