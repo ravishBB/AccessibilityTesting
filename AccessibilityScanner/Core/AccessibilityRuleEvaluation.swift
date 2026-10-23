@@ -15,10 +15,10 @@ nonisolated struct AccessibilityRuleEvaluation: Identifiable, Codable {
     let ruleName: String
     let ruleDescription: String
 
-    let status: RuleResultStatus
-    let severity: AccessibilityFinding.Severity
+    private(set) var status: RuleResultStatus
+    private(set) var severity: AccessibilityFinding.Severity
 
-    let message: String
+    private(set) var message: String
     let remediation: String
 
     let elementType: String
@@ -69,6 +69,16 @@ nonisolated struct AccessibilityRuleEvaluation: Identifiable, Codable {
         self.frameWidth = node.frame.width
         self.frameHeight = node.frame.height
         self.textSizePoints = node.semantics.textSizePoints
+    }
+
+    /// The same result for the same element with a new verdict, for checks
+    /// a later runtime test settles (a row found to open a screen).
+    func settled(as status: RuleResultStatus, message: String) -> AccessibilityRuleEvaluation {
+        var copy = self
+        copy.status = status
+        copy.severity = status == .fail ? .error : status == .pass ? .info : .warning
+        copy.message = message
+        return copy
     }
 
     /// Platform the evaluated element was captured on.

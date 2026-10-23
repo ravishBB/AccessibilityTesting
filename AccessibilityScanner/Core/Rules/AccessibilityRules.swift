@@ -2,6 +2,7 @@
 import Foundation
 import CoreGraphics
 import AppKit
+import NaturalLanguage
 
 // MARK: - Common rule context
 nonisolated struct AccessibilityRuleContext {
@@ -1778,6 +1779,10 @@ nonisolated struct TableRowRoleRule: AccessibilityRule {
     let title = "Row functions as a button but is missing role button"
     let description = "Selectable rows should be one accessibility element with the button role."
 
+    /// The part of the message a row tap settles (AppCrawler taps one row
+    /// per screen and replaces it with what happened).
+    static let unconfirmedNote = "If tapping the row opens something, VoiceOver users are not told it can be activated."
+
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.platform == .ios, node.type == "XCUIElementTypeCell", node.visible,
               !node.semantics.partiallyVisible, !node.semantics.mergedIntoAncestor,
@@ -1790,7 +1795,7 @@ nonisolated struct TableRowRoleRule: AccessibilityRule {
         let controls = RuleHelper.allNodes(node).dropFirst().filter { RuleHelper.controls.contains($0.role) }
         guard controls.count <= 1 else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "The row \"\(texts.prefix(3).joined(separator: ", "))\" is read as \(texts.count) separate items and the row itself has no button role. If tapping the row opens something, VoiceOver users are not told it can be activated.",
+                                     message: "The row \"\(texts.prefix(3).joined(separator: ", "))\" is read as \(texts.count) separate items and the row itself has no button role. \(Self.unconfirmedNote)",
                                      remediation: "Make the selectable row one accessibility element (isAccessibilityElement = true) with a combined label and the .button trait.")
     }
 }
@@ -2277,15 +2282,74 @@ nonisolated struct LinkColorRule: ScreenAccessibilityRule, ContextualScreenAcces
     }
 }
 
-nonisolated struct LanguageChangeRule: AccessibilityRule {
+/// BB40107. Text in another language than the rest of the screen. Neither
+/// driver exposes accessibilityLanguage or LocaleSpan, so whether the change
+/// is declared cannot be read: each such text is Validate, a Fail if the
+/// tester finds no language set on it.
+nonisolated struct LanguageChangeRule: ScreenAccessibilityRule {
     let id = "language-change"
     let title = "Change in language is defined correctly"
     let description = "Content language changes should be identified correctly."
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.role == .application else { return nil }
-        return RuleHelper.notTested(ruleID: id, name: title, description: description, node: node,
-                                    message: "Per-element language metadata is not exposed through Appium, so language changes could not be checked.",
-                                    remediation: "Verify language changes are identified for screen-reader pronunciation.")
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+
+    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        // What a screen reader reads: text, and the names of controls.
+        let readable = RuleHelper.allNodes(rootNode).filter { node in
+            node.visible && !node.semantics.mergedIntoAncestor &&
+                (RuleHelper.isText(node) || RuleHelper.controls.contains(node.role)) &&
+                Self.letterCount(node.label) >= 2
+        }
+        guard readable.count >= 3,
+              let screenLanguage = Self.language(of: readable.map(\.label).joined(separator: ". "), minimumConfidence: 0.5)
+        else { return [] }
+
+        var seen = Set<String>()
+        return readable.compactMap { node in
+            let text = RuleHelper.clean(node.label)
+            // Short Latin words ("OK", brand names) are not reliably one language.
+            let otherScript = text.unicodeScalars.contains { $0.properties.isAlphabetic && !Self.isLatin($0) }
+            guard otherScript || Self.letterCount(text) >= 20,
+                  let language = Self.language(of: text, minimumConfidence: otherScript ? 0.6 : 0.9),
+                  !Self.sameLanguage(language, screenLanguage),
+                  seen.insert(text).inserted
+            else { return nil }
+            let name = Self.displayName(language)
+            return RuleHelper.validation(
+                ruleID: id, name: title, description: description, node: node,
+                message: "\"\(text)\" is \(name) on a \(Self.displayName(screenLanguage)) screen. Screen readers read it with the \(Self.displayName(screenLanguage)) voice unless its language is set; Appium cannot read the language attribute, so check it.",
+                remediation: "Set the language of this text (accessibilityLanguage or an attributed string's language on iOS, LocaleSpan / setLocale on Android, Locale in Flutter, lang in React Native web views)."
+            )
+        }
+    }
+
+    private static func language(of text: String, minimumConfidence: Double) -> NLLanguage? {
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(text)
+        guard let (language, confidence) = recognizer.languageHypotheses(withMaximum: 1).first,
+              confidence >= minimumConfidence, language != .undetermined
+        else { return nil }
+        return language
+    }
+
+    /// Chinese scripts and regional variants count as one language.
+    private static func sameLanguage(_ a: NLLanguage, _ b: NLLanguage) -> Bool {
+        func base(_ language: NLLanguage) -> String {
+            language == .simplifiedChinese || language == .traditionalChinese ? "zh" : language.rawValue
+        }
+        return base(a) == base(b)
+    }
+
+    private static func displayName(_ language: NLLanguage) -> String {
+        Locale(identifier: "en").localizedString(forLanguageCode: language.rawValue) ?? language.rawValue
+    }
+
+    private static func letterCount(_ text: String) -> Int {
+        text.unicodeScalars.filter { $0.properties.isAlphabetic }.count
+    }
+
+    private static func isLatin(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.value < 0x0250 || (0x1E00...0x1EFF).contains(scalar.value)
     }
 }
 

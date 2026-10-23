@@ -20,13 +20,6 @@ nonisolated enum VisualOrder {
 
     /// Slack for frames that touch or overlap by a hair.
     private static let tolerance: CGFloat = 4
-
-    /// Whether `a` must be read before `b`. Only unambiguous pairs count:
-    /// `a` above `b` in the same column, or left of `b` on the same line.
-    /// Elements in different columns and rows (a row's trailing bookmark
-    /// and the author line under the title, say) may be read either way,
-    /// as VoiceOver reads a list row's text column before its trailing
-    /// button.
     static func mustPrecede(_ a: CGRect, _ b: CGRect) -> Bool {
         let horizontalOverlap = min(a.maxX, b.maxX) - max(a.minX, b.minX)
         let verticalOverlap = min(a.maxY, b.maxY) - max(a.minY, b.minY)

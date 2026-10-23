@@ -74,7 +74,7 @@ nonisolated enum AccessibilityRuleCatalog {
     /// (language, opacity, gestures, assistive-technology behaviour) is not
     /// exposed. They are reported as Not tested.
     static let notAutomatable: Set<String> = [
-        "language", "language-change", "contrast-opacity",
+        "language", "contrast-opacity",
         "accessibility-interface-operable", "cancel-undo-mechanism", "input-context-change",
         "screen-reader-modal-focus", "screen-reader-trap", "screen-reader-focus-context-change",
         "motion-alternative", "multi-point-gesture-alternative", "path-based-gesture-alternative",
@@ -95,7 +95,7 @@ nonisolated enum AccessibilityRuleCatalog {
     static let reviewOnly: Set<String> = [
         "decorative-image", "segmented-control-interactive", "tab-accessibility",
         "screen-reader-focus-order", "text-spacing", "time-limited-ui", "heading-candidate",
-        "text-in-image", "image-role", "list-items-navigable", "icon-control-role", "row-role"
+        "text-in-image", "image-role", "list-items-navigable", "icon-control-role", "language-change"
     ]
 
     static func cannotRun(on platform: MobilePlatform) -> Set<String> {

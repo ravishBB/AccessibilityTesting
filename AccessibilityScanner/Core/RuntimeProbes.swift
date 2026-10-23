@@ -541,6 +541,16 @@ final class TextSizeProbe {
         do {
             try await Task.sleep(nanoseconds: 2_000_000_000)
             largeRoot = try await ProbeNodes.readSettledRoot(using: appium)
+            // The relaunched screen can still be building: wait until it
+            // shows at least three of the texts the normal layout showed.
+            let normalTexts = Set(textHeights(in: rootNode).keys)
+            var attempts = 0
+            while let current = largeRoot, normalTexts.count >= 3,
+                  Set(textHeights(in: current).keys).intersection(normalTexts).count < 3, attempts < 4 {
+                attempts += 1
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+                largeRoot = (try? appium.makeParser().parse(try await appium.getSource())) ?? current
+            }
             // What is actually drawn: labels keep the full text even when
             // the screen shows it shortened with "…".
             largeShot = try? await appium.getScreenshot()
@@ -681,13 +691,13 @@ final class TextSizeProbe {
             let median = ratios.sorted()[ratios.count / 2]
             // Text that stayed the same size while the rest grew: a fixed
             // font size on that element (BB40031 for the element itself).
+            let normalNodes = Dictionary(
+                ProbeNodes.all(in: normal)
+                    .filter { $0.visible && $0.role == .staticText && !ProbeNodes.clean($0.label).isEmpty }
+                    .map { (ProbeNodes.clean($0.label), $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
             if median >= 1.3 {
-                let normalNodes = Dictionary(
-                    ProbeNodes.all(in: normal)
-                        .filter { $0.visible && $0.role == .staticText && !ProbeNodes.clean($0.label).isEmpty }
-                        .map { (ProbeNodes.clean($0.label), $0) },
-                    uniquingKeysWith: { first, _ in first }
-                )
                 for (label, normalHeight) in before {
                     guard let largeHeight = after[label], normalHeight > 0,
                           largeHeight / normalHeight < 1.1,
@@ -712,14 +722,28 @@ final class TextSizeProbe {
                     )
                 )
             } else {
-                results.append(
-                    ProbeEvaluation.make(
+                // Each text measured growing at both sizes passes on its own
+                // element, with how much it grew.
+                var grown: [AccessibilityRuleEvaluation] = []
+                for (label, normalHeight) in before.sorted(by: { $0.key < $1.key }) {
+                    guard let largeHeight = after[label], normalHeight > 0,
+                          largeHeight / normalHeight >= 1.1,
+                          let node = normalNodes[ProbeNodes.clean(label)] else { continue }
+                    grown.append(ProbeEvaluation.make(
+                        ruleID: "text-resize",
+                        status: .pass,
+                        message: "\"\(ProbeNodes.clean(label))\" grew \(String(format: "%.1f", Double(largeHeight / normalHeight)))× at the largest text size.",
+                        node: node
+                    ))
+                }
+                results += grown.isEmpty
+                    ? [ProbeEvaluation.make(
                         ruleID: "text-resize",
                         status: .pass,
                         message: "Text grew at the largest text size (median size change \(String(format: "%.2f", median))x across \(ratios.count) elements).",
                         node: normal
-                    )
-                )
+                    )]
+                    : grown
             }
         }
 

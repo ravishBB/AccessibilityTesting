@@ -29,6 +29,58 @@ nonisolated struct CrawledScreen {
     let screenshotHeight: Double
     let viewportCaptures: [ScrollableViewportCapture]
     let keyboardFocusEvaluations: [AccessibilityRuleEvaluation]
+    /// What tapping rows with no role did on this screen (nil: not tested).
+    var rowTap: RowTaps? = nil
+}
+
+/// What tapping a list row with no role did (BB40282). The hierarchy cannot
+/// show whether a row is selectable; the tap can.
+nonisolated enum RowTapResult {
+    /// It opened another screen (named): rows of this kind are interactive.
+    case opened(String)
+    /// Nothing changed: rows of this kind are not interactive.
+    case inert
+}
+
+/// Row taps on one screen: one tap per kind of row, since a profile header
+/// and the article rows under it behave differently. Rows of a kind are
+/// rows of about the same height in the same list.
+nonisolated struct RowTaps {
+    struct Verdict {
+        let rowHeight: Double
+        let result: RowTapResult
+    }
+
+    var verdicts: [Verdict] = []
+
+    static func sameKind(_ a: Double, _ b: Double) -> Bool {
+        abs(a - b) <= max(a, b) * 0.12
+    }
+
+    /// Row results with the taps' verdicts: Fail where a row of that kind
+    /// opened a screen, dropped where it did nothing, unchanged for kinds
+    /// not tapped. Applied wherever results are produced, including the
+    /// report's per-viewport rerun of the rules.
+    func settle(_ evaluations: [AccessibilityRuleEvaluation]) -> [AccessibilityRuleEvaluation] {
+        evaluations.compactMap { evaluation in
+            guard evaluation.ruleID == "row-role", evaluation.status == .validate,
+                  let verdict = verdicts.first(where: { Self.sameKind($0.rowHeight, evaluation.frameHeight) })
+            else { return evaluation }
+            switch verdict.result {
+            case .inert:
+                return nil
+            case .opened(let name):
+                let target = name.hasPrefix("Screen ") ? "another screen" : "\"\(name)\""
+                return evaluation.settled(
+                    as: .fail,
+                    message: evaluation.message.replacingOccurrences(
+                        of: TableRowRoleRule.unconfirmedNote,
+                        with: "Tapping a row like this one opened \(target), so these rows are interactive, but VoiceOver users are not told they can be activated."
+                    )
+                )
+            }
+        }
+    }
 }
 
 nonisolated struct ScrollableScreenScanResult {
@@ -300,11 +352,8 @@ final class AppCrawler {
         screenContentLabels[contentFingerprint(from: snapshot.rootNode)] = everyLabel
         screenContentLabels[contentFingerprint(from: topSnapshot.rootNode)] = everyLabel
 
-        let evaluations =
-            scrollResult.evaluations
-
-        let screenshotEvaluations =
-            scrollResult.topEvaluations
+        let scannedEvaluations = scrollResult.evaluations
+        let scannedScreenshotEvaluations = scrollResult.topEvaluations
 
         statusHandler("Testing keyboard focus on screen \(discoveredScreens.count + 1)...")
         let keyboardFocusEvaluations: [AccessibilityRuleEvaluation]
@@ -343,6 +392,13 @@ final class AppCrawler {
             _ = try? await scrolledToTop(topSnapshot, statusHandler: statusHandler)
         }
 
+        let rowTap = try await testRowTaps(
+            on: topSnapshot.rootNode,
+            viewportRoots: scrollResult.viewportCaptures.map(\.snapshot.rootNode),
+            depth: depth,
+            statusHandler: statusHandler
+        )
+
         let actions =
             navigationActions(
                 from: topSnapshot.rootNode
@@ -374,15 +430,16 @@ final class AppCrawler {
         let screen = CrawledScreen(
             signature: signature,
             rootNode: topSnapshot.rootNode,
-            evaluations: evaluations,
-            screenshotEvaluations: screenshotEvaluations,
+            evaluations: scannedEvaluations,
+            screenshotEvaluations: scannedScreenshotEvaluations,
             actions: actions,
             transitions: [],
             screenshotData: topSnapshot.screenshotData,
             screenshotWidth: topSnapshot.screenshotWidth,
             screenshotHeight: topSnapshot.screenshotHeight,
             viewportCaptures: scrollResult.viewportCaptures,
-            keyboardFocusEvaluations: keyboardFocusEvaluations + runtimeEvaluations
+            keyboardFocusEvaluations: keyboardFocusEvaluations + runtimeEvaluations,
+            rowTap: rowTap
         )
         discoveredScreens.append(screen)
         screenHandler?(screen)
@@ -686,6 +743,148 @@ final class AppCrawler {
             isLost = true
             break
         }
+    }
+
+    // MARK: - Row tap (BB40282)
+
+    /// Taps one row of each kind that has no role (the rows `row-role`
+    /// reports), up to three kinds, on its title away from any button in the
+    /// row, and goes back. nil: no such rows, or interaction not allowed.
+    private func testRowTaps(
+        on screen: AccessibilityNode,
+        viewportRoots: [AccessibilityNode],
+        depth: Int,
+        statusHandler: @escaping (String) -> Void
+    ) async throws -> RowTaps? {
+        let rule = TableRowRoleRule()
+        guard probeEnvironment?.allowAppInteraction != false else { return nil }
+
+        // Kinds of row, from everywhere on the screen, in reading order.
+        var kinds: [Double] = []
+        for root in [screen] + viewportRoots {
+            for row in ProbeNodes.all(in: root) where rule.evaluate(node: row) != nil {
+                let height = Double(row.frame.height)
+                if !kinds.contains(where: { RowTaps.sameKind($0, height) }) { kinds.append(height) }
+            }
+        }
+        guard !kinds.isEmpty else { return nil }
+
+        let started = Date()
+        defer { trace("Runtime probe Row tap: \(String(format: "%.1f", Date().timeIntervalSince(started)))s", Log.crawler) }
+        statusHandler("Checking whether list rows open something...")
+
+        var taps = RowTaps()
+        var scrolledDown = 0
+        for kind in kinds.prefix(3) {
+            try Task.checkCancellation()
+            guard !isLost else { break }
+            if let result = try await tapRow(ofHeight: kind, on: screen, depth: depth, scrolledDown: &scrolledDown, statusHandler: statusHandler) {
+                taps.verdicts.append(RowTaps.Verdict(rowHeight: kind, result: result))
+            }
+        }
+        // The actions explored next use positions from the top of the screen.
+        for _ in 0..<scrolledDown { try? await appium.scrollUp() }
+        return taps.verdicts.isEmpty ? nil : taps
+    }
+
+    /// Taps one row of the given kind. nil: no such row could be reached, or
+    /// the result was unclear (the row changed in place), so rows of this
+    /// kind stay Validate.
+    private func tapRow(
+        ofHeight kind: Double,
+        on screen: AccessibilityNode,
+        depth: Int,
+        scrolledDown: inout Int,
+        statusHandler: @escaping (String) -> Void
+    ) async throws -> RowTapResult? {
+        let rule = TableRowRoleRule()
+
+        /// A row of this kind and the text to tap on, where they are now.
+        func candidate(in root: AccessibilityNode) -> (row: AccessibilityNode, title: AccessibilityNode)? {
+            ProbeNodes.all(in: root).filter {
+                RowTaps.sameKind(Double($0.frame.height), kind) && rule.evaluate(node: $0) != nil
+            }.lazy.compactMap { row in
+                let texts = ProbeNodes.all(in: row).dropFirst().filter {
+                    AccessibilityRole.textual.contains($0.role) && $0.visible && !ProbeNodes.clean($0.label).isEmpty
+                }
+                // A row that reads like "Delete account" is not tapped.
+                guard texts.allSatisfy(ActionSafety.isSafeToExplore),
+                      let title = texts.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height })
+                else { return nil }
+                return (row, title)
+            }.first
+        }
+
+        // Earlier checks may have left the screen (the larger-text check
+        // relaunches the app) or scrolled it.
+        var current = try? await readRoot()
+        if current.map({ !matchesScreen($0, screen) }) ?? true {
+            guard try await returnToScreen(screen, depth: depth, statusHandler: statusHandler) else {
+                trace("Row tap skipped: could not get back to the screen", Log.crawler)
+                return nil
+            }
+            current = try? await readRoot()
+        }
+        var found = current.flatMap(candidate)
+        // Screens are checked from the top: look further down first, then
+        // back up past the starting point.
+        for step in 0..<7 where found == nil && current != nil {
+            if step < 4 {
+                try? await appium.scrollDown()
+                scrolledDown += 1
+            } else {
+                try? await appium.scrollUp()
+                scrolledDown = max(0, scrolledDown - 1)
+            }
+            try await Task.sleep(nanoseconds: configuration.settleDelayNanoseconds)
+            current = try? await readRoot()
+            found = current.flatMap(candidate)
+        }
+        guard let current, let (_, title) = found else {
+            trace("Row tap skipped: no \(Int(kind)) pt row with readable text on screen", Log.crawler)
+            return nil
+        }
+
+        do {
+            try await appium.tap(at: CGPoint(x: title.frame.midX, y: title.frame.midY))
+            try await Task.sleep(nanoseconds: configuration.settleDelayNanoseconds)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            trace("Row tap skipped: tap on \"\(title.label)\" failed: \(error.localizedDescription)", Log.crawler)
+            return nil
+        }
+        guard let after = try? await readRoot() else {
+            trace("Row tap: screen unreadable after tapping \"\(title.label)\"", Log.crawler)
+            _ = try await returnToScreen(screen, depth: depth, statusHandler: statusHandler)
+            return nil
+        }
+
+        // Compared with the screen as it was just before the tap, not with
+        // everything seen on it while scrolling: an article screen repeats
+        // its row's title, author and category, and the tab bar.
+        func hasBack(_ root: AccessibilityNode) -> Bool {
+            ProbeNodes.all(in: root).contains { $0.visible && ActionSafety.isBackButton($0) }
+        }
+        let openedScreen = !isSameScreen(after, current) || (hasBack(after) && !hasBack(current))
+        if !openedScreen {
+            // Still here with the same text: the tap did nothing. A row only
+            // drawn highlighted is UIKit's selection highlight, which shows
+            // even when nothing handles the selection. Changed text (a row
+            // that expands or updates) is unclear.
+            let sameText = ProbeNodes.contentLabels(in: after) == ProbeNodes.contentLabels(in: current)
+            trace("Row tap: \"\(title.label)\" (\(Int(kind)) pt rows) stayed on the screen, text \(sameText ? "unchanged" : "changed")", Log.crawler)
+            return sameText ? .inert : nil
+        }
+
+        let opened = ScreenNaming.name(for: after, number: 0)
+        trace("Row tap: \"\(title.label)\" (\(Int(kind)) pt rows) opened \(opened)", Log.crawler)
+        guard try await navigateBack(to: screen, statusHandler: statusHandler) else {
+            notes.record(.lostNavigation, example: "after tapping a list row")
+            isLost = true
+            return .opened(opened)
+        }
+        return .opened(opened)
     }
 
     /// One page-source read, no screenshot: enough to tell which screen is

@@ -47,10 +47,10 @@ nonisolated enum ScreenResultBuilder {
                 context: viewportContext
             )
 
-            let evaluations = mergeEvaluations(
+            let evaluations = settled(mergeEvaluations(
                 capture.evaluations,
                 contextualEvaluations
-            )
+            ), crawledScreen)
             viewportEvaluations.append(contentsOf: evaluations)
 
             let annotations = ScreenshotAnnotation.makeAnnotations(
@@ -86,10 +86,10 @@ nonisolated enum ScreenResultBuilder {
         // Defensive fallback for screens that were captured before the
         // viewport capture path existed.
         if viewportScreenshots.isEmpty {
-            let contextualEvaluations = scanner.evaluateForReport(
+            let contextualEvaluations = settled(scanner.evaluateForReport(
                 rootNode: crawledScreen.rootNode,
                 context: screenshotContext
-            )
+            ), crawledScreen)
             viewportEvaluations.append(contentsOf: contextualEvaluations)
 
             let annotations = ScreenshotAnnotation.makeAnnotations(
@@ -128,10 +128,10 @@ nonisolated enum ScreenResultBuilder {
         // Runtime and whole-screen results join the first viewport's list so
         // the Fail / Validate / Pass filters show them with everything else.
         let screenLevelChecks = ScreenshotAnnotation.makeScreenLevelAnnotations(
-            from: mergeEvaluations(
+            from: settled(mergeEvaluations(
                 mergeEvaluations(crawledScreen.evaluations, viewportEvaluations),
                 crawledScreen.keyboardFocusEvaluations
-            ),
+            ), crawledScreen),
             statuses: Self.checkStatuses
         )
         if !screenLevelChecks.isEmpty, let first = viewportScreenshots.first {
@@ -171,13 +171,13 @@ nonisolated enum ScreenResultBuilder {
             )
         }
 
-        let evaluations = mergeEvaluations(
+        let evaluations = settled(mergeEvaluations(
             mergeEvaluations(
                 crawledScreen.evaluations,
                 viewportEvaluations
             ),
             crawledScreen.keyboardFocusEvaluations
-        )
+        ), crawledScreen)
 
         let primaryScreenshot = normalizedViewports.first?.screenshot
             ?? ScanScreenshot(
@@ -244,6 +244,13 @@ nonisolated enum ScreenResultBuilder {
         }
 
         return result
+    }
+
+    /// Results with the screen's runtime verdicts applied. The rules run
+    /// again on every viewport here, so a verdict the crawler reached (a row
+    /// that opened a screen) is applied after them, not before.
+    private static func settled(_ evaluations: [AccessibilityRuleEvaluation], _ screen: CrawledScreen) -> [AccessibilityRuleEvaluation] {
+        screen.rowTap?.settle(evaluations) ?? evaluations
     }
 
     static func evaluationKey(_ evaluation: AccessibilityRuleEvaluation) -> String {

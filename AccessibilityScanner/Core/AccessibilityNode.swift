@@ -102,9 +102,6 @@ nonisolated struct AccessibilityNode {
 
 }
 
-/// Accessibility data beyond the common XCUITest/UiAutomator2 fields.
-/// UiAutomator2 exposes most of these on Android (native, React Native and
-/// Flutter); WebDriverAgent exposes only custom actions on iOS.
 nonisolated struct PlatformSemantics: Hashable {
     /// Visible text of the view when it differs from its accessible name
     /// (Android `text` when `content-desc` is also set).

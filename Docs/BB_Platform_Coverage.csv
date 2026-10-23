@@ -29,7 +29,7 @@ BB40041,Heading,Check if the text should be a heading,Validate,1.3.1,A,Major,Yes
 BB40042,Link,Text functions as a link but is missing role link,Fail,4.1.2,A,Major,Yes,Yes,Yes,Yes,,text-link-role,"Heuristic: URL or ""link"" wording on static text."
 BB40043,Button,Text functions as a button but is missing role button,Fail,4.1.2,A,Major,Yes,Yes,Yes,Yes,,text-button-role,Heuristic; reported as warning.
 BB40281,Forms,Incorrect role provided for interactive element,Fail,4.1.2,A,Major,Yes,Partial,iOS: Yes · Android: Partial,iOS: Yes · Android: Partial,,role-trait-consistency,Android conflicts are rarely visible in the dump.
-BB40282,Forms,Missing role for interactive element,Fail,4.1.2,A,Critical,No,Yes,iOS: No · Android: Yes,iOS: No · Android: Yes,,missing-role,"Clickable/checkable generic view with no role (RN Pressable, Flutter GestureDetector, Compose clickable). iOS does not distinguish these from plain containers."
+BB40282,Forms,Missing role for interactive element,Fail,4.1.2,A,Critical,Runtime,Yes,iOS: Runtime · Android: Yes,iOS: Runtime · Android: Yes,,missing-role / row-role,"Clickable/checkable generic view with no role (RN Pressable, Flutter GestureDetector, Compose clickable). iOS: a list row with no role is tapped once per screen; Fail when it opens a screen."
 BB40079,Forms,Disabled state of button not defined,Fail,4.1.2,A,Major,Manual only,Manual only,Manual only,Manual only,,button-disabled-state,Needs a person to judge whether an enabled button looks disabled.
 BB40067,Forms,Missing state information for interactive control,Fail,4.1.2,A,Major,Manual only,Manual only,Manual only,Manual only,,—,Needs knowledge that a control is stateful when it does not say so.
 BB40068,Forms,Check if state of the interactive control gets updated on user interaction,Validate,4.1.2,A,Major,Yes (runtime),Yes (runtime),Yes (runtime),Yes (runtime),BB40280,state-updates-after-interaction,Verdict given as BB40280 (state did not change) or a pass.
@@ -56,7 +56,7 @@ BB40103,Dynamic Content,Live region not defined for dynamic content,Fail,4.1.3,A
 BB40104,Dynamic Content,Live region is defined for dynamic content,Pass,4.1.3,AA,,No,Partial,iOS: No · Android: Partial,iOS: No · Android: Partial,,live-region,
 BB40105,Language,Missing app language,Fail,3.1.1,A,Major,No,No,No,No,,language,Neither driver exposes the app or element language.
 BB40106,Language,App language is defined,Pass,3.1.1,A,,No,No,No,No,,language,
-BB40107,Language,Change in language not defined correctly,Fail,3.1.2,AA,Minor,No,No,No,No,,language-change,
+BB40107,Language,Change in language not defined correctly,Fail,3.1.2,AA,Minor,Partial,Partial,Partial,Partial,,language-change,"Text in another language than the screen is found (Validate); neither driver exposes its language attribute, so the tester confirms it."
 BB40108,Language,Change in language is defined correctly,Pass,3.1.2,AA,,No,No,No,No,,language-change,
 BB40111,Language,Incorrect language specified for text,Fail,3.1.2,AA,Minor,No,No,No,No,,—,
 BB41015,Keyboard,Hidden content receives keyboard focus,Fail,2.4.3,A,Minor,No,Yes (runtime),iOS: No · Android: Yes (runtime),iOS: No · Android: Yes (runtime),,keyboard-focus-hidden-content,iOS: see BB40073.
