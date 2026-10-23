@@ -35,12 +35,6 @@ nonisolated enum BBIssueCatalog {
         titles[id]
     }
 
-    /// How a result is headed in reports: the BB code, with the sheet's
-    /// issue text as its description. A Validate result whose check only has
-    /// a Fail code shows the code to log if confirmed. Results with no BB
-    /// code keep the scanner's rule name.
-    /// The sheet's issue text is the heading; codes are not shown in the
-    /// report (they stay in the JSON export).
     static func heading(issue: BBIssue?, ifConfirmed: BBIssue?, ruleName: String) -> (title: String, description: String?) {
         if let issue { return (issue.title, nil) }
         if let ifConfirmed { return (ifConfirmed.title, "Validate: record as a failure if confirmed") }
@@ -55,14 +49,10 @@ nonisolated enum BBIssueCatalog {
         case pass, fail, review
     }
 
-    /// The code a result is reported under. Its Type in the BB sheet always
-    /// equals the result's status: a Validate result never shows a Fail code.
     private static func issueID(for evaluation: AccessibilityRuleEvaluation) -> String? {
         mappedID(for: evaluation)
     }
 
-    /// For a Validate result whose check has only a Fail code in the sheet:
-    /// the code the tester logs if the issue is confirmed.
     static func ifConfirmed(for evaluation: AccessibilityRuleEvaluation) -> BBIssue? {
         guard evaluation.status == .validate, mappedID(for: evaluation) == nil,
               let id = mappedID(for: evaluation, outcomeOverride: .fail)

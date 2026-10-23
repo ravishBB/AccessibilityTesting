@@ -130,20 +130,14 @@ final class KeyboardFocusTester {
 
             let source = try await appium.getSource()
             let root = try appium.makeParser().parse(source)
-
-            // Focus that lands on hidden content is reported even though the
-            // visible-focus lookup below ignores it.
+            
             if let anyFocused = anyFocusedNode(in: root), !(anyFocused.visible && anyFocused.accessible) {
                 hiddenFocused[stableKey(for: anyFocused)] = anyFocused
             }
-
-            // Focus alone must not navigate away or rebuild the screen.
             if !baselineLabels.isEmpty {
                 let currentLabels = ProbeNodes.contentLabels(in: root)
                 let missing = Double(baselineLabels.subtracting(currentLabels).count) / Double(baselineLabels.count)
                 if missing > 0.6 {
-                    // Tabbing to an item below the fold scrolls the list to
-                    // it: the content changes but the screen is the same.
                     if Self.scrolledWithinSameContainer(before: baselineRoot, after: root) {
                         baselineLabels = currentLabels
                         baselineRoot = root
@@ -169,15 +163,7 @@ final class KeyboardFocusTester {
             observedFocusedElement = true
             let key = stableKey(for: focused)
 
-            // Focus stayed put, or came back to an element it already
-            // visited: the traversal has ended. Back at the first element is
-            // a full cycle. Anywhere else is a trap if focusable controls
-            // after it were never reached; otherwise it is the end of a
-            // screen that does not wrap.
             if key == sequence.last || sequence.contains(key) {
-                // Text fields can keep Tab (multi-line input, or Tab typed as
-                // a character). Android's arrow-key navigation is the
-                // standard way out; try it once before judging.
                 if Self.isTextInput(focused), textFieldsLeftByArrow.insert(key).inserted {
                     try await appium.pressArrowDown()
                     if settleMilliseconds > 0 {
@@ -352,8 +338,6 @@ final class KeyboardFocusTester {
             ))
         }
 
-        // 3. Focus-visible requires rendered evidence. Do not infer it from
-        // the focused attribute alone.
         let reachedControls = controls.filter { reachedKeys.contains(stableKey(for: $0)) }
         if !visualEvidence.isEmpty {
             for control in reachedControls {
@@ -444,9 +428,7 @@ final class KeyboardFocusTester {
                 remediation: ""
             ))
         } else {
-            // Compare the order focus really moved in with the visual reading order.
-            // After scrolling, frames from different viewports are not
-            // comparable; the control's position in the screen's content is.
+     
             let observedFrames = observedControlKeys.compactMap { key -> CGRect? in
                 guard let index = controls.firstIndex(where: { stableKey(for: $0) == key }) else { return nil }
                 return scrolledDuringTraversal
@@ -659,8 +641,7 @@ final class KeyboardFocusTester {
         return [node.type, identifier, label, size].joined(separator: "|")
     }
 
-    /// Contrast between the focus indicator and what it replaced: the median
-    /// colour of changed pixels after focus against the same pixels before.
+
     private func indicatorContrastRatio(before: Data, after: Data?, node: AccessibilityNode, hierarchySize: CGSize) -> Double? {
         guard let after, let beforeImage = NSImage(data: before), let afterImage = NSImage(data: after),
               let beforeCG = beforeImage.cgImage(forProposedRect: nil, context: nil, hints: nil),

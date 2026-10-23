@@ -51,10 +51,7 @@ nonisolated struct AccessibilityRuleEvaluation: Identifiable, Codable {
         self.ruleName = ruleName
         self.ruleDescription = ruleDescription
 
-        // The BB ruleset has three outcomes: Pass, Fail and Validate. A
-        // result the scanner is not certain is a defect (an AAA level, a
-        // heuristic) is for a tester to validate, so "warning" becomes
-        // Validate. Severity keeps how serious it would be if confirmed.
+
         self.status = status == .warning ? .validate : status
         self.severity = severity
 

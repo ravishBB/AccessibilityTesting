@@ -1031,12 +1031,6 @@ final class AppiumClient {
     }
 
     // MARK: - Launch / Activate App
-
-    /// Brings the app under test to the foreground, launching it if needed.
-    /// Works on both platforms (`mobile: activateApp`):
-    ///  - iOS (XCUITest) takes `bundleId`
-    ///  - Android (UiAutomator2) takes `appId`
-    /// Failure is non-fatal: the session capabilities already request a launch.
     func activateApp(bundleID: String) async {
 
         guard let sessionID else { return }
@@ -1082,9 +1076,6 @@ final class AppiumClient {
         let key = platform == .ios ? "bundleId" : "appId"
         try await executeMobile("mobile: terminateApp", arguments: [key: bundleID])
     }
-
-    /// Launches the app with launch arguments (`mobile: launchApp`, iOS only).
-    /// On Android the app is started without arguments.
     func launchApp(bundleID: String, arguments: [String]) async throws {
         switch platform {
         case .ios:
@@ -1096,8 +1087,6 @@ final class AppiumClient {
         }
     }
 
-    /// Bundle ID (iOS) or package (Android) of the app in the foreground, or
-    /// nil when the driver cannot report it.
     func foregroundAppID() async -> String? {
         switch platform {
         case .ios:
@@ -1111,7 +1100,6 @@ final class AppiumClient {
         }
     }
 
-    /// Older UiAutomator2 drivers only expose the current package here.
     private func legacyCurrentPackage() async throws -> String? {
         guard let sessionID else { throw AppiumError.noActiveSession }
         let url = baseURL
@@ -1481,9 +1469,6 @@ enum AppiumError:
     }
 }
 
-/// Session IDs this app created, per device, kept until the session is
-/// deleted. A crash or force-quit leaves them here so the next scan of the
-/// device can release them.
 nonisolated enum RememberedSessions {
     private static let key = "appium.rememberedSessions"
 

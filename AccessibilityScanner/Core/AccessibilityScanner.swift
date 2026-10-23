@@ -63,8 +63,6 @@ nonisolated final class AccessibilityScanner {
             context: context
         )
 
-        // Evaluate hierarchy-wide rules once. These rules need sibling or
-        // geometric context and cannot be implemented correctly per element.
         for rule in rules {
             if let context, let contextualRule = rule as? ContextualScreenAccessibilityRule {
                 evaluations.append(contentsOf: contextualRule.evaluate(rootNode: rootNode, context: context))
@@ -86,7 +84,6 @@ nonisolated final class AccessibilityScanner {
             return
         }
 
-        // Run every rule against this element.
         for rule in rules {
             let evaluation: AccessibilityRuleEvaluation?
 
@@ -118,7 +115,6 @@ nonisolated final class AccessibilityScanner {
     }
 
     // MARK: - Report
-
     // MARK: - Element Count
 
     private func countRelevantElements(

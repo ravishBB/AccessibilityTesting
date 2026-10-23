@@ -19,7 +19,7 @@ nonisolated enum AccessibilityRole: String, Codable, Hashable {
     case textView
     case staticText
     case image
-    case toggle          // switch / toggle button
+    case toggle         
     case checkBox
     case radioButton
     case slider
