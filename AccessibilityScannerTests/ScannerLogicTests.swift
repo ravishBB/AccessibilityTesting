@@ -544,3 +544,20 @@ struct SegmentedControlTests {
         #expect(SegmentControlRule().evaluate(node: control)?.status == .validate)
     }
 }
+
+@Suite("Motion handlers from the build")
+struct MotionHandlerTests {
+
+    /// Symbols as `nm` lists them in BloomApp's debug build.
+    @Test func shakeHandlerClassFromSymbols() {
+        #expect(MotionHandlerInspector.shakeClass(inSymbol: "_$s8BloomApp18HomeViewControllerC11motionEnded_4withySo14UIEventSubtypeV_So0I0CSgtFTo") == "HomeViewController")
+        #expect(MotionHandlerInspector.shakeClass(inSymbol: "_$s8BloomApp27ArticleDetailViewControllerC11motionEnded_4withySo14UIEventSubtypeV_So0J0CSgtFTo") == "ArticleDetailViewController")
+        #expect(MotionHandlerInspector.shakeClass(inSymbol: "_$s8BloomApp18HomeViewControllerC11viewDidLoadyyF") == nil)
+    }
+
+    @Test func handlerMatchesItsScreen() {
+        #expect(MotionHandlerInspector.matches("HomeViewController", screen: "Home"))
+        #expect(MotionHandlerInspector.matches("ExploreViewController", screen: "Explore 2"))
+        #expect(!MotionHandlerInspector.matches("ArticleDetailViewController", screen: "Travel"))
+    }
+}

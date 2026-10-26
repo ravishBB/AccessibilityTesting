@@ -13,7 +13,7 @@ nonisolated struct ScreenScanResult: Identifiable, Codable {
     var name: String
     let signature: String
     let elementCount: Int
-    let evaluations: [AccessibilityRuleEvaluation]
+    var evaluations: [AccessibilityRuleEvaluation]
     let transitions: [NavigationTransition]
 
     // Screenshot information

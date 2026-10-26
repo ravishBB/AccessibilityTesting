@@ -115,6 +115,15 @@ final class AppCrawler {
     private let configuration: AppCrawlerConfiguration
     private let probeEnvironment: RuntimeProbeEnvironment?
     private let notes: ScanNotes
+    /// Asks the tester to shake the phone or press Tab (nil: not asked).
+    private let guide: GuidedChecks?
+    /// Shake and motion handlers read from the app's build (nil: no build
+    /// read, so every screen is a candidate).
+    private let motionFindings: MotionHandlerInspector.Findings?
+
+    private enum KeyboardSetup { case unasked, ready, skipped }
+    private var keyboardSetup = KeyboardSetup.unasked
+    private var shakeSkipped = false
 
     private var visitedScreens:
         Set<String> = []
@@ -148,9 +157,13 @@ final class AppCrawler {
         configuration: AppCrawlerConfiguration =
             .default,
         notes: ScanNotes = ScanNotes(),
-        probeEnvironment: RuntimeProbeEnvironment? = nil
+        probeEnvironment: RuntimeProbeEnvironment? = nil,
+        guide: GuidedChecks? = nil,
+        motionFindings: MotionHandlerInspector.Findings? = nil
     ) {
         self.notes = notes
+        self.guide = guide
+        self.motionFindings = motionFindings
 
         self.appium = appium
         self.scanner = scanner
@@ -225,7 +238,8 @@ final class AppCrawler {
         let activationProbe = KeyboardActivationProbe(
             appium: appium,
             focusResult: focusResult,
-            alreadyTested: probedControlKeys
+            alreadyTested: probedControlKeys,
+            guide: keyboardSetup == .ready ? guide : nil
         )
         results += try await timedProbe("Keyboard activation", ruleIDs: ["keyboard-activation"], rootNode: rootNode) {
             try await activationProbe.test(rootNode: rootNode)
@@ -363,8 +377,9 @@ final class AppCrawler {
         let keyboardFocusEvaluations: [AccessibilityRuleEvaluation]
         var focusResult: KeyboardFocusTester.Result?
         let focusStarted = Date()
+        let keyboardGuide = await keyboardGuideForThisScreen()
         do {
-            focusResult = try await KeyboardFocusTester(appium: appium).test(
+            focusResult = try await KeyboardFocusTester(appium: appium, guide: keyboardGuide).test(
                 rootNode: topSnapshot.rootNode,
                 viewportRoots: scrollResult.viewportCaptures.map(\.snapshot.rootNode)
             )
@@ -396,6 +411,8 @@ final class AppCrawler {
         if focusResult?.evidenceAvailable == true {
             _ = try? await scrolledToTop(topSnapshot, statusHandler: statusHandler)
         }
+
+        let shakeEvaluations = try await testShake(on: topSnapshot.rootNode, route: route, depth: depth, statusHandler: statusHandler)
 
         let rowTap = try await testRowTaps(
             on: topSnapshot.rootNode,
@@ -443,7 +460,7 @@ final class AppCrawler {
             screenshotWidth: topSnapshot.screenshotWidth,
             screenshotHeight: topSnapshot.screenshotHeight,
             viewportCaptures: scrollResult.viewportCaptures,
-            keyboardFocusEvaluations: keyboardFocusEvaluations + runtimeEvaluations,
+            keyboardFocusEvaluations: keyboardFocusEvaluations + runtimeEvaluations + shakeEvaluations,
             rowTap: rowTap
         )
         discoveredScreens.append(screen)
@@ -749,6 +766,234 @@ final class AppCrawler {
             isLost = true
             break
         }
+    }
+
+    // MARK: - Guided checks
+
+    /// On iOS, the keyboard check needs a keyboard connected to the phone
+    /// with Full Keyboard Access on: asked once per scan.
+    private func keyboardGuideForThisScreen() async -> GuidedChecks? {
+        guard let guide, appium.platform == .ios, probeEnvironment?.allowAppInteraction != false else { return nil }
+        if keyboardSetup == .unasked {
+            let reply = await guide.ask(GuidedChecks.Step(
+                title: "Connect a keyboard to the iPhone",
+                message: "To test keyboard focus, connect a keyboard to the iPhone (Bluetooth or USB) and turn on Full Keyboard Access in Settings › Accessibility › Keyboards. Then press Ready. The scanner will ask you to press Tab on each screen.",
+                actions: [GuidedChecks.Action(reply: .skipAll, title: "Skip keyboard checks"),
+                          GuidedChecks.Action(reply: .ready, title: "Ready")]
+            ))
+            keyboardSetup = reply == .ready ? .ready : .skipped
+        }
+        return keyboardSetup == .ready ? guide : nil
+    }
+
+    /// Asks the tester to shake the phone and watches what it does, only
+    /// where the app's build shows motion actuation: screens whose code
+    /// handles shake, and the first screen for a handler that could not be
+    /// tied to a screen. With no build read there is no evidence, so the
+    /// tester is not asked.
+    private func testShake(on screen: AccessibilityNode, route: [NavigationAction], depth: Int, statusHandler: @escaping (String) -> Void) async throws -> [AccessibilityRuleEvaluation] {
+        guard let guide, !shakeSkipped, probeEnvironment?.allowAppInteraction != false,
+              let motionFindings else { return [] }
+        let name = ScreenNaming.name(for: screen, number: discoveredScreens.count + 1)
+        let handlers = motionFindings.shakeClasses.filter { MotionHandlerInspector.matches($0, screen: name) }
+        let firstScreenUnnamed = discoveredScreens.isEmpty && (motionFindings.unnamedShakeHandler || motionFindings.usesCoreMotion)
+        guard !handlers.isEmpty || firstScreenUnnamed else { return [] }
+
+        // Apps listen for shake from when a screen appears (UIKit's first
+        // responder); the scanner's own checks can leave the screen without
+        // it. Show the screen again, as a user arriving at it would.
+        await reappear(screen, route: route)
+        var current = try? await readRoot()
+        if current.map({ !matchesScreen($0, screen) }) ?? true {
+            guard try await returnToScreen(screen, depth: depth, statusHandler: statusHandler) else { return [] }
+            current = try? await readRoot()
+        }
+        guard let current else { return [] }
+        let before = ProbeNodes.contentLabels(in: current)
+        // Shaking often answers with something brief and not in the
+        // accessibility tree (a toast): watch the screenshot, not the tree.
+        let baseShot = try? await appium.getScreenshot()
+        let base = KeyboardFocusTester.image(baseShot)
+
+        statusHandler("Waiting for you to shake the phone...")
+        let step = GuidedChecks.Step(
+            title: "Shake the phone",
+            message: "Shake the phone now, on the \"\(name)\" screen. The scanner is watching what happens."
+                + (handlers.isEmpty
+                    ? (motionFindings.usesCoreMotion ? " The app's build reads device motion (CoreMotion), for example tilt or movement." : " The app's build handles shake.")
+                    : " The app's build handles shake on this screen (\(handlers.joined(separator: ", "))).")
+                + " If nothing happens after a few shakes, press Nothing happened.",
+            actions: [GuidedChecks.Action(reply: .skipAll, title: "Skip shake for this scan"),
+                      GuidedChecks.Action(reply: .skip, title: "Skip this screen"),
+                      GuidedChecks.Action(reply: .nothingHappened, title: "Nothing happened")],
+            progress: "Watching the screen..."
+        )
+        guide.present(step)
+        var after: AccessibilityNode?
+        var seenText: String?
+        let deadline = Date().addingTimeInterval(90)
+        // Below the status bar, where the clock changes.
+        let ignoreTop = base.map { Int(Double($0.height) * 0.07) } ?? 0
+        while guide.isWaiting(step.id) {
+            if Date() >= deadline { guide.finish(.skip); break }
+            try await Task.sleep(nanoseconds: 250_000_000)
+            guard guide.isWaiting(step.id), let base,
+                  let firstData = try? await appium.getScreenshot(),
+                  let first = KeyboardFocusTester.image(firstData),
+                  KeyboardFocusTester.changedRegion(base, first, ignoreTop: ignoreTop) != nil
+            else { continue }
+            // Something changed: let a toast finish fading in, then read it
+            // while it is still on screen.
+            try await Task.sleep(nanoseconds: 500_000_000)
+            guard let shotData = try? await appium.getScreenshot(),
+                  let shot = KeyboardFocusTester.image(shotData),
+                  let region = KeyboardFocusTester.changedRegion(base, shot, ignoreTop: ignoreTop)
+            else { continue }
+            // Shaking can set off something outside the app (the camera on
+            // the lock screen, an Action button): not the app's answer.
+            if let target = probeEnvironment?.bundleID,
+               let foreground = await appium.foregroundAppID(), foreground != target {
+                trace("Shake: the phone left the app (\(foreground)); bringing it back", Log.crawler)
+                await appium.activateApp(bundleID: target)
+                try? await Task.sleep(nanoseconds: configuration.settleDelayNanoseconds)
+                guide.update(progress: "The phone left the app. Shake again, with the app open.")
+                continue
+            }
+            let now = (try? await readRoot()) ?? current
+            let appeared = ProbeNodes.contentLabels(in: now).subtracting(before)
+            // A toast is drawn, not in the tree: read the changed area, minus
+            // words that were already on screen (the feed under it).
+            let scale = Double(shot.width) / max(1, Double(current.frame.width))
+            let context = AccessibilityRuleContext(
+                screenshotData: shotData, screenshotWidth: Double(shot.width), screenshotHeight: Double(shot.height),
+                hierarchyWidth: current.frame.width, hierarchyHeight: current.frame.height)
+            let points = CGRect(x: region.minX / scale, y: region.minY / scale, width: region.width / scale, height: region.height / scale)
+            let onScreenBefore = before.joined(separator: " ").lowercased()
+            seenText = TextRecognizer.text(in: points, context: context).map { text in
+                text.split(separator: " ").filter { word in
+                    let letters = word.lowercased().filter { $0.isLetter || $0.isNumber }
+                    return !letters.isEmpty && !onScreenBefore.contains(letters)
+                }.joined(separator: " ")
+            }.flatMap { $0.isEmpty ? nil : $0 }
+            after = now
+            trace("Shake: screen changed in \(region.integral) px; new text: \(appeared.sorted().prefix(3).joined(separator: ", ")) \(seenText ?? "")", Log.crawler)
+            guide.finish(.detected)
+        }
+        let reply = await guide.waitForReply()
+
+        switch reply {
+        case .skipAll:
+            shakeSkipped = true
+            return []
+        case .detected:
+            guard let after else { return [] }
+            return [try await shakeResult(before: current, after: after, seenText: seenText, screen: screen, depth: depth, statusHandler: statusHandler)]
+        case .nothingHappened where !handlers.isEmpty:
+            return [ProbeEvaluation.make(
+                ruleID: "motion-alternative", status: .validate,
+                message: "Shake is handled in \(handlers.joined(separator: ", ")) (read from the app's build), but shaking the phone on this screen changed nothing on screen. Check what shaking does here; if it acts with no on-screen control that does the same, record it as a failure.",
+                remediation: "Give every motion action an on-screen control, and let users turn motion actions off.",
+                node: current)]
+        case .nothingHappened:
+            return [ProbeEvaluation.make(
+                ruleID: "motion-alternative", status: .notTested,
+                message: "Shaking the phone changed nothing on this screen, so there is no motion action here to check.",
+                node: current)]
+        default:
+            return []
+        }
+    }
+
+    /// Makes the screen appear again: through another tab and back for a tab
+    /// screen, or back and forward for a screen opened from another one.
+    private func reappear(_ screen: AccessibilityNode, route: [NavigationAction]) async {
+        let settle = configuration.settleDelayNanoseconds
+        let last = route.last
+        let isTab = last.map { isSharedNavigation($0, in: screen) } ?? true
+        if isTab {
+            // Bottom-bar buttons; the screen's own tab is the selected one,
+            // or the one the route ended on.
+            let height = screen.frame.height
+            let tabs = ProbeNodes.all(in: screen).filter { node in
+                node.role == .button && node.visible && node.frame.minY >= screen.frame.minY + height * 0.85 &&
+                    ActionSafety.isSafeToExplore(node) && NavigationAction(node: node).xpath != nil
+            }
+            let own = tabs.first { tab in
+                if let last { return ProbeNodes.clean(tab.label) == ProbeNodes.clean(last.label) }
+                return tab.traits.lowercased().contains("selected") || tab.value == "1"
+            }
+            guard let own, let other = tabs.first(where: { $0.frame != own.frame }),
+                  let away = NavigationAction(node: other).xpath, let back = NavigationAction(node: own).xpath
+            else { return }
+            try? await appium.tapElement(usingXPath: away)
+            try? await Task.sleep(nanoseconds: settle)
+            try? await appium.tapElement(usingXPath: back)
+            try? await Task.sleep(nanoseconds: settle)
+        } else if let xpath = last?.xpath {
+            guard (try? await appium.goBack()) != nil else { return }
+            try? await Task.sleep(nanoseconds: settle)
+            try? await appium.tapElement(usingXPath: xpath)
+            try? await Task.sleep(nanoseconds: settle)
+        }
+    }
+
+    /// What shaking opened, whether the screen has a control that does the
+    /// same, and back to the screen.
+    private func shakeResult(
+        before: AccessibilityNode,
+        after: AccessibilityNode,
+        seenText: String?,
+        screen: AccessibilityNode,
+        depth: Int,
+        statusHandler: @escaping (String) -> Void
+    ) async throws -> AccessibilityRuleEvaluation {
+        let alert = ProbeNodes.all(in: after).first { $0.visible && ($0.type.contains("Alert") || $0.type.contains("Dialog")) }
+        let appeared = ProbeNodes.contentLabels(in: after).subtracting(ProbeNodes.contentLabels(in: before))
+        // What appeared, most specific first: an alert's title, text read
+        // where the screen changed (a toast), new labels, the new screen's
+        // own title.
+        let screenTitle = ScreenNaming.name(for: after, number: 0)
+        let title = alert.map { ProbeNodes.clean($0.label) }.flatMap { $0.isEmpty ? nil : $0 }
+            ?? seenText
+            ?? (appeared.isEmpty ? nil : appeared.sorted().prefix(2).joined(separator: ", "))
+            ?? (isSameScreen(after, before) || screenTitle.hasPrefix("Screen ") ? "" : screenTitle)
+        let described = title.isEmpty ? "a change on screen" : "\"\(title)\""
+
+        // A control on the screen named like what appeared does the same.
+        let stop: Set<String> = ["the", "and", "for", "you", "your", "with", "this", "that", "are", "was", "cancel", "close", "done"]
+        func words(_ text: String) -> Set<String> {
+            Set(text.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 3 && !stop.contains($0) })
+        }
+        let appearedWords = words(([title] + appeared).joined(separator: " "))
+        let alternative = ProbeNodes.all(in: before).first { node in
+            node.visible && (node.role == .button || node.role == .link) &&
+                !words(node.label).intersection(appearedWords).isEmpty
+        }
+
+        // Close what shaking opened.
+        if let alert {
+            let buttons = ProbeNodes.all(in: alert).filter { $0.role == .button }
+            if let dismiss = ActionSafety.dismissButton(in: buttons), let xpath = NavigationAction(node: dismiss).xpath {
+                try? await appium.tapElement(usingXPath: xpath)
+                try? await Task.sleep(nanoseconds: configuration.settleDelayNanoseconds)
+            }
+        }
+        if !(await isShowing(screen)), !(try await navigateBack(to: screen, statusHandler: statusHandler)) {
+            notes.record(.lostNavigation, example: "after shaking the phone")
+            isLost = true
+        }
+
+        if let alternative {
+            return ProbeEvaluation.make(
+                ruleID: "motion-alternative", status: .pass,
+                message: "Shaking the phone showed \(described). The screen also has the \"\(ProbeNodes.clean(alternative.label))\" control, which offers the same without motion.",
+                node: before)
+        }
+        return ProbeEvaluation.make(
+            ruleID: "motion-alternative", status: .fail,
+            message: "Shaking the phone showed \(described). No control on this screen does the same, so people who cannot shake the device (a mounted phone, limited movement) cannot reach it.",
+            remediation: "Add an on-screen button for this action, and let users turn shake actions off.",
+            node: before)
     }
 
     // MARK: - Row tap (BB40282)

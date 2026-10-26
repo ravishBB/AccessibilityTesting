@@ -37,6 +37,9 @@ final class KeyboardActivationProbe {
     private let maximumTabsPerControl: Int
     private let focusResult: KeyboardFocusTester.Result?
     private let alreadyTested: Set<String>
+    /// iOS: asks the tester to press Tab and Space on the keyboard connected
+    /// to the phone when Appium's keys do not reach Full Keyboard Access.
+    private let guide: GuidedChecks?
 
     private(set) var testedKeys = Set<String>()
     init(
@@ -44,8 +47,10 @@ final class KeyboardActivationProbe {
         maximumControls: Int = 3,
         maximumTabsPerControl: Int = 30,
         focusResult: KeyboardFocusTester.Result? = nil,
-        alreadyTested: Set<String> = []
+        alreadyTested: Set<String> = [],
+        guide: GuidedChecks? = nil
     ) {
+        self.guide = guide
         self.appium = appium
         self.maximumControls = maximumControls
         self.maximumTabsPerControl = maximumTabsPerControl
@@ -84,6 +89,10 @@ final class KeyboardActivationProbe {
 
         let candidates = eligible.prefix(maximumControls)
         guard !candidates.isEmpty else { return [] }
+
+        if appium.platform == .ios {
+            return try await testWithScreenshots(candidates: Array(candidates), tabLimit: tabLimit, rootNode: rootNode)
+        }
 
         // Start from what is on screen now, not the earlier snapshot.
         guard let currentSource = try? await appium.getSource(),
@@ -189,6 +198,160 @@ final class KeyboardActivationProbe {
 
         }
 
+        return results
+    }
+
+    // MARK: iOS (focus seen in screenshots)
+
+    /// iOS: WebDriverAgent does not report Full Keyboard Access focus, so the
+    /// focused control is the one ringed in the focus ring's colour learned
+    /// during the Tab traversal. Tab and Space come from Appium when they
+    /// reach the phone's keyboard focus, otherwise from the tester.
+    private func testWithScreenshots(candidates: [AccessibilityNode], tabLimit: Int, rootNode: AccessibilityNode) async throws -> [AccessibilityRuleEvaluation] {
+        guard let guide, let ring = focusResult?.ringColour else {
+            return [ProbeEvaluation.make(
+                ruleID: ruleID, status: .notTested,
+                message: "Keyboard activation was not tested: it needs the keyboard focus check to have run with a keyboard connected to the phone.",
+                remediation: "Tab to each button and link with a hardware keyboard and press Space to confirm it activates.",
+                node: rootNode)]
+        }
+        let tabByAppium = focusResult?.tabByAppium == true
+        var results: [AccessibilityRuleEvaluation] = []
+
+        func screenshot() async -> CGImage? { KeyboardFocusTester.image(try? await appium.getScreenshot()) }
+        func readRoot() async -> AccessibilityNode? {
+            guard let source = try? await appium.getSource() else { return nil }
+            return try? appium.makeParser().parse(source)
+        }
+        /// The control ringed in the focus colour now.
+        func focused(in root: AccessibilityNode, shot: CGImage) -> AccessibilityNode? {
+            ProbeNodes.all(in: root)
+                .filter { $0.visible && AccessibilityRole.controls.contains($0.role) }
+                .map { ($0, KeyboardFocusTester.ringMatch(shot, node: $0, color: ring, hierarchySize: root.frame.size)) }
+                .filter { $0.1 >= 0.25 }
+                .max { $0.1 < $1.1 }?.0
+        }
+        /// Shows a card and waits until the screen changes or the tester
+        /// answers. Returns the changed screenshot, or nil.
+        func waitForChange(_ step: GuidedChecks.Step, from start: CGImage) async throws -> CGImage? {
+            guide.present(step)
+            defer { if guide.isWaiting(step.id) { guide.finish(.detected) } }
+            let deadline = Date().addingTimeInterval(45)
+            let ignoreTop = Int(Double(start.height) * 0.07)
+            while guide.isWaiting(step.id), Date() < deadline {
+                try await Task.sleep(nanoseconds: 300_000_000)
+                guard let shot = await screenshot() else { continue }
+                if KeyboardFocusTester.changedRegion(start, shot, ignoreTop: ignoreTop) != nil {
+                    try await Task.sleep(nanoseconds: 400_000_000)
+                    return await screenshot() ?? shot
+                }
+            }
+            return nil
+        }
+
+        for control in candidates {
+            try Task.checkCancellation()
+            testedKeys.insert(ProbeNodes.probeKey(control))
+            let name = control.hasAccessibleName ? control.label : control.identifier
+
+            // 1. Focus onto the control.
+            var onControl = false
+            guard var shot = await screenshot(), var root = await readRoot() else { break }
+            for _ in 0..<tabLimit {
+                if let node = focused(in: root, shot: shot), matches(node, control) { onControl = true; break }
+                if tabByAppium {
+                    try? await appium.pressTab()
+                    try await Task.sleep(nanoseconds: 400_000_000)
+                    guard let next = await screenshot() else { break }
+                    shot = next
+                } else {
+                    let step = GuidedChecks.Step(
+                        title: "Press Tab on the keyboard",
+                        message: "Press Tab once to move focus towards \"\(name)\". The scanner then checks that pressing Space activates it.",
+                        actions: [GuidedChecks.Action(reply: .skip, title: "Skip")],
+                        progress: "Press Tab")
+                    guard let next = try await waitForChange(step, from: shot) else { break }
+                    shot = next
+                }
+                guard let next = await readRoot() else { break }
+                root = next
+            }
+            guard onControl else {
+                results.append(ProbeEvaluation.make(
+                    ruleID: ruleID, status: .notTested,
+                    message: "Keyboard focus could not be moved onto \"\(name)\", so keyboard activation was not tested.",
+                    remediation: "Tab to the control with a hardware keyboard and press Space to confirm it activates.",
+                    node: control))
+                continue
+            }
+
+            // 2. Activate it from the keyboard.
+            let beforeLabels = ProbeNodes.contentLabels(in: root)
+            var activated: CGImage?
+            if tabByAppium {
+                try? await appium.pressActivate()
+                try await Task.sleep(nanoseconds: 700_000_000)
+                if let after = await screenshot(),
+                   KeyboardFocusTester.changedRegion(shot, after, ignoreTop: Int(Double(shot.height) * 0.07)) != nil {
+                    activated = after
+                }
+            }
+            if activated == nil {
+                let step = GuidedChecks.Step(
+                    title: "Press Space on the keyboard",
+                    message: "Focus is on \"\(name)\". Press Space once to activate it. If nothing happens, press Nothing happened.",
+                    actions: [GuidedChecks.Action(reply: .skip, title: "Skip"),
+                              GuidedChecks.Action(reply: .nothingHappened, title: "Nothing happened")],
+                    progress: "Watching the screen…")
+                activated = try await waitForChange(step, from: shot)
+                if activated == nil, guide.lastReply == .skip {
+                    results.append(ProbeEvaluation.make(
+                        ruleID: ruleID, status: .notTested,
+                        message: "Keyboard activation of \"\(name)\" was skipped by the tester.",
+                        remediation: "Press Space on the control with a hardware keyboard and confirm it activates.",
+                        node: control))
+                    continue
+                }
+            }
+
+            if activated != nil {
+                results.append(ProbeEvaluation.make(
+                    ruleID: ruleID, status: .pass,
+                    message: "\"\(name)\" responded to Space from the keyboard.",
+                    node: control))
+                let now = await readRoot() ?? root
+                _ = await restoreIfNavigated(from: now, baselineLabels: beforeLabels, fallback: now)
+                continue
+            }
+
+            // 3. Nothing from the keyboard: does a tap do anything?
+            guard let xpath = NavigationAction(node: control).xpath,
+                  (try? await appium.tapElement(usingXPath: xpath)) != nil else {
+                results.append(ProbeEvaluation.make(
+                    ruleID: ruleID, status: .validate,
+                    message: "Pressing Space on \"\(name)\" produced no visible change, and it could not be tapped to compare.",
+                    remediation: "Press Space on the control with a hardware keyboard and confirm it activates.",
+                    node: control))
+                continue
+            }
+            try await Task.sleep(nanoseconds: 700_000_000)
+            if let tapped = await screenshot(),
+               KeyboardFocusTester.changedRegion(shot, tapped, ignoreTop: Int(Double(shot.height) * 0.07)) != nil {
+                results.append(ProbeEvaluation.make(
+                    ruleID: ruleID, status: .fail,
+                    message: "\"\(name)\" responds to a tap but not to Space from a keyboard, so keyboard users cannot operate it.",
+                    remediation: "Make the control respond to keyboard activation the same way it responds to a tap (a UIButton or accessibilityActivate()).",
+                    node: control))
+                let now = await readRoot() ?? root
+                _ = await restoreIfNavigated(from: now, baselineLabels: beforeLabels, fallback: now)
+            } else {
+                results.append(ProbeEvaluation.make(
+                    ruleID: ruleID, status: .validate,
+                    message: "Neither a tap nor Space on \"\(name)\" produced a visible change, so keyboard operability could not be confirmed.",
+                    remediation: "Press Space on the control with a hardware keyboard and confirm it activates.",
+                    node: control))
+            }
+        }
         return results
     }
 

@@ -183,13 +183,15 @@ final class AppiumClient {
             var message = extractErrorMessage(from: data)
             Log.appium.error("Session could not be created (HTTP \(statusCode)): \(message, privacy: .public)")
 
-            // The usual physical-iPhone failure: WebDriverAgent cannot be
-            // signed because no team is configured.
+            // WebDriverAgent failed to build for a physical iPhone: say why,
+            // from the phone's own state.
             let lower = message.lowercased()
-            if configuration.platform == .ios,
-               configuration.xcodeOrgID.isEmpty,
+            if configuration.platform == .ios, !Self.isSimulatorUDID(configuration.udid),
                lower.contains("xcodebuild") || lower.contains("code 65") || lower.contains("signing") || lower.contains("webdriveragent") {
-                message += "\n\nWebDriverAgent could not be built for this device. For a physical iPhone, enter your Apple Team ID in Settings (⌘,) so it can be signed."
+                let udid = configuration.udid
+                let teamID = configuration.xcodeOrgID
+                let advice = (try? await ProcessRunner.offMain { Self.webDriverAgentAdvice(udid: udid, teamID: teamID) }) ?? nil
+                message += "\n\n" + (advice ?? Self.signingAdvice(teamID: configuration.xcodeOrgID))
             }
 
             throw AppiumError.appiumError(
@@ -1188,6 +1190,43 @@ final class AppiumClient {
     }
 
     /// Simulator UDIDs are UUIDs (8-4-4-4-12); physical ones are not.
+    /// Why WebDriverAgent could not be built for a physical iPhone, from
+    /// the phone's state as Xcode's device tools report it.
+    nonisolated static func webDriverAgentAdvice(udid: String, teamID: String) -> String? {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("device-\(udid).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        guard let output = try? ProcessRunner.run("/usr/bin/xcrun", ["devicectl", "device", "info", "details", "--device", udid, "--json-output", file.path], timeout: 30),
+              output.status == 0,
+              let data = try? Data(contentsOf: file),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = json["result"] as? [String: Any]
+        else {
+            return "WebDriverAgent could not be built for this iPhone, and the phone did not answer Xcode. Unlock it, keep it unlocked, check it is connected (USB or the same Wi-Fi as this Mac) and that it trusts this Mac, then start the scan again."
+        }
+        let device = result["deviceProperties"] as? [String: Any] ?? [:]
+        let connection = result["connectionProperties"] as? [String: Any] ?? [:]
+        if let mode = device["developerModeStatus"] as? String, mode != "enabled" {
+            return "WebDriverAgent could not be installed because Developer Mode is off on this iPhone. Turn it on in Settings › Privacy & Security › Developer Mode (the phone restarts), then start the scan again."
+        }
+        if let pairing = connection["pairingState"] as? String, pairing != "paired" {
+            return "This iPhone is not paired with this Mac. Connect it with a cable, unlock it and tap Trust on the phone, then start the scan again."
+        }
+        if device["ddiServicesAvailable"] as? Bool == false {
+            return "This iPhone's developer services are not ready. Unlock the phone and keep it unlocked while the scan starts; if it still fails, connect it with a cable once so Xcode can prepare it."
+        }
+        return signingAdvice(teamID: teamID)
+    }
+
+    /// A ready phone that still fails to build: WebDriverAgent cannot be
+    /// signed for it, nearly always because it is not in the team yet.
+    nonisolated static func signingAdvice(teamID: String) -> String {
+        var text = "WebDriverAgent could not be signed for this iPhone. Usually the phone is not yet registered in your Apple developer team. Open Xcode › Settings › Accounts and make sure you are signed in with an account in that team: the scanner then registers new phones automatically while it builds WebDriverAgent. If it still fails, open WebDriverAgent.xcodeproj (in ~/.appium/node_modules/appium-xcuitest-driver/node_modules/appium-webdriveragent) in Xcode, choose the WebDriverAgentRunner scheme and this iPhone, and run Product › Build For › Testing once."
+        if teamID.isEmpty {
+            text += " If WebDriverAgent was never signed on this Mac, also enter your Apple Team ID in the scanner's Settings (⌘,)."
+        }
+        return text
+    }
+
     static func isSimulatorUDID(_ udid: String) -> Bool {
         let parts = udid.split(separator: "-").map(\.count)
         return parts == [8, 4, 4, 4, 12]
@@ -1244,6 +1283,10 @@ final class AppiumClient {
 
             if !Self.isSimulatorUDID(configuration.udid) {
                 capabilities["appium:wdaLocalPort"] = Self.wdaPort(forUDID: configuration.udid)
+                // A phone not yet in the team's provisioning profile is
+                // added while WebDriverAgent builds, as Xcode does when an
+                // app is first run on a new phone.
+                capabilities["appium:allowProvisioningDeviceRegistration"] = true
             }
             if !configuration.xcodeOrgID.isEmpty {
                 capabilities["appium:xcodeOrgId"] = configuration.xcodeOrgID

@@ -85,10 +85,9 @@ nonisolated enum AccessibilityRuleCatalog {
     /// keyboard focus, live regions, input types, hints or missing roles.
     static let notAutomatableOnIOS: Set<String> = [
         "live-region", "form-autocomplete", "missing-role", "name-via-hint",
-        "keyboard-focus", "keyboard-activation", "keyboard-focus-hidden-content",
-        "keyboard-focus-noninteractive", "keyboard-focus-context-change",
-        "focus-indicator", "focus-order", "focus-indicator-contrast", "focus-not-obscured", "focus-indicator-color-only",
-        "modal-accessibility", "modal-focus-containment"
+        // Keyboard checks run on iOS as guided checks (a keyboard on the
+        // phone, focus read from screenshots).
+        "modal-accessibility"
     ]
 
     /// Rules that by design only raise manual-review items, never pass/fail.

@@ -51,6 +51,9 @@ struct ContentView: View {
         .background(
             Color(nsColor: .windowBackgroundColor)
         )
+        .overlay {
+            GuidedChecksOverlay(guided: viewModel.guided)
+        }
         .onAppear {
             viewModel.loadDevices()
         }
@@ -353,6 +356,9 @@ struct ContentView: View {
                     Toggle("Don't relaunch the app", isOn: $viewModel.keepAppRunning)
                         .disabled(viewModel.isScanning)
                         .help("Start from the app as it is now, keeping settings and sign-in that are not saved. The larger-text check needs a relaunch and is skipped.")
+                    Toggle("Ask me to shake the phone and use a keyboard", isOn: $viewModel.guidedChecksEnabled)
+                        .disabled(viewModel.isScanning)
+                        .help("During the scan, the scanner pauses and asks you to shake the phone (motion actuation) and to press Tab on a keyboard connected to the iPhone (keyboard focus), and watches the screen for the result.")
                 }
 
                 Text(

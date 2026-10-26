@@ -12,9 +12,17 @@ final class KeyboardFocusTester {
         let evidenceAvailable: Bool
         /// Controls keyboard focus reached, in the order it reached them.
         var reachedNodes: [AccessibilityNode] = []
+        /// iOS: the focus ring's colour seen in screenshots, and whether
+        /// Appium's Tab moved Full Keyboard Access focus (else the tester
+        /// pressed Tab). Used again by the keyboard activation check.
+        var ringColour: [Int]? = nil
+        var tabByAppium: Bool? = nil
     }
 
     private let appium: AppiumClient
+    /// iOS: asks the tester to press Tab on a keyboard connected to the
+    /// phone when Appium's Tab does not move Full Keyboard Access focus.
+    private let guide: GuidedChecks?
     private let maxAdditionalTabs: Int
     private let settleMilliseconds: UInt64
 
@@ -24,11 +32,13 @@ final class KeyboardFocusTester {
 
     init(
         appium: AppiumClient,
+        guide: GuidedChecks? = nil,
         // A full cycle needs one Tab per control plus the wrap back.
         maxAdditionalTabs: Int = 60,
         settleMilliseconds: UInt64 = 60
     ) {
         self.appium = appium
+        self.guide = guide
         self.maxAdditionalTabs = maxAdditionalTabs
         self.settleMilliseconds = settleMilliseconds
     }
@@ -49,7 +59,7 @@ final class KeyboardFocusTester {
     /// `viewportRoots`: the hierarchy at each scroll position of this screen,
     /// top first, so controls below the fold are expected too.
     func test(rootNode: AccessibilityNode, viewportRoots: [AccessibilityNode] = []) async throws -> Result {
-        if appium.platform == .ios {
+        if appium.platform == .ios, guide == nil {
             return Result(
                 evaluations: [baseEvaluation(
                     ruleID: "keyboard-focus",
@@ -113,13 +123,145 @@ final class KeyboardFocusTester {
         var textFieldsLeftByArrow = Set<String>()
         var skipNextTab = false
 
+        // iOS: WebDriverAgent does not report Full Keyboard Access focus, so
+        // focus is found in screenshots: the control around which pixels
+        // changed since the screenshot taken before the first Tab, or, once
+        // the screen has scrolled, the control ringed in the focus ring's
+        // colour learned from the first step.
+        let visual = appium.platform == .ios
+        var tabByAppium: Bool?
+        var lastShot = visual ? Self.image(baselineScreenshot) : nil
+        var previousShot: CGImage?
+        let noFocusShot = lastShot
+        let noFocusData = baselineScreenshot
+        var testerFinished = false
+        var unmappedSteps = 0
+        var noFocusLayout = true
+        var ringColour: [Int]?
+        var promptID: UUID?
+        var recorded = 0
+        var lastFocusedName = ""
+
+        /// Waits for the tester to press Tab: the next change on screen.
+        /// false: the tester pressed Done or skipped, or nothing changed.
+        func waitForTesterTab() async throws -> Bool {
+            guard let guide else { return false }
+            if promptID == nil {
+                let step = GuidedChecks.Step(
+                    title: "Press Tab on the keyboard",
+                    message: "Press Tab on the keyboard connected to the iPhone, once each time this card says Press Tab. Keep going until focus is back on the first control, then press Done.",
+                    actions: [GuidedChecks.Action(reply: .skip, title: "Skip this screen"),
+                              GuidedChecks.Action(reply: .done, title: "Done")],
+                    progress: "Press Tab"
+                )
+                guide.present(step)
+                promptID = step.id
+            } else {
+                guide.update(progress: "Recorded \(recorded) step\(recorded == 1 ? "" : "s")\(lastFocusedName.isEmpty ? "" : ", last: \"\(lastFocusedName)\""). Press Tab")
+            }
+            let deadline = Date().addingTimeInterval(45)
+            while let id = promptID, guide.isWaiting(id), Date() < deadline {
+                try await Task.sleep(nanoseconds: 300_000_000)
+                guard let shot = Self.image(try? await appium.getScreenshot()), let last = lastShot else { continue }
+                if Self.screenChanged(last, shot) {
+                    // Let the ring finish drawing before reading it.
+                    try await Task.sleep(nanoseconds: 250_000_000)
+                    previousShot = lastShot
+                    lastShot = Self.image(try? await appium.getScreenshot()) ?? shot
+                    guide.update(progress: "Reading where focus went…")
+                    return true
+                }
+            }
+            // Done: the tester saw focus come back to the first control.
+            if guide.lastReply == .done { testerFinished = true }
+            return false
+        }
+
+        /// Moves focus one step: Appium's Tab when it works, else the tester.
+        func advanceVisualFocus() async throws -> Bool {
+            if tabByAppium != false {
+                try? await appium.pressTab()
+                try await Task.sleep(nanoseconds: 400_000_000)
+                let shot = Self.image(try? await appium.getScreenshot())
+                if tabByAppium == nil, let shot, let last = lastShot {
+                    tabByAppium = Self.screenChanged(last, shot)
+                }
+                if tabByAppium == true {
+                    previousShot = lastShot
+                    lastShot = shot ?? lastShot
+                    return true
+                }
+            }
+            return try await waitForTesterTab()
+        }
+
+        func visualFocus(in root: AccessibilityNode) -> AccessibilityNode? {
+            guard let shot = lastShot else { return nil }
+            let size = root.frame.size
+            if noFocusLayout, ProbeNodes.contentScrolled(from: rootNode, to: root) { noFocusLayout = false }
+            let candidates = interactiveControls(in: [root])
+            var found: AccessibilityNode?
+            if ringColour == nil {
+                // Learn the ring from a control in the content: translucent
+                // tab and navigation bars change with what scrolls behind
+                // them, which reads like a ring.
+                let inBars = Self.barControlFrames(in: root)
+                if let reference = noFocusLayout ? noFocusShot : previousShot {
+                    let learned = candidates
+                        .filter { control in !inBars.contains { $0.intersects(control.frame) } }
+                        .map { ($0, Self.changeRatio(before: reference, after: shot, node: $0, hierarchySize: size)) }
+                        .filter { $0.1 >= 0.015 }
+                        .max { $0.1 < $1.1 }?.0
+                    if let learned, let colour = Self.ringColor(before: reference, after: shot, node: learned, hierarchySize: size) {
+                        ringColour = colour
+                        found = learned
+                    }
+                }
+                if found == nil { unmappedSteps += 1 }
+            } else if let ringColour {
+                // Where the ring arrived: in its colour now and not before.
+                func arrival(_ nodes: [AccessibilityNode]) -> AccessibilityNode? {
+                    nodes.map { node -> (AccessibilityNode, Double, Double) in
+                        let now = Self.ringMatch(shot, node: node, color: ringColour, hierarchySize: size)
+                        let before = previousShot.map { Self.ringMatch($0, node: node, color: ringColour, hierarchySize: size) } ?? 0
+                        return (node, now, now - before)
+                    }
+                    .filter { $0.1 >= 0.25 && $0.2 >= 0.1 }
+                    .max { $0.2 < $1.2 }?.0
+                }
+                let screenArea = root.frame.width * root.frame.height
+                found = arrival(candidates)
+                    ?? arrival(ProbeNodes.all(in: root).filter {
+                        $0.visible && $0.accessible && $0.role != .application && $0.frame.width * $0.frame.height < screenArea * 0.5
+                    })
+                if found == nil {
+                    // The ring arrived on something not shown or not exposed.
+                    let hidden = ProbeNodes.all(in: root).filter { !($0.visible && $0.accessible) && $0.frame.width > 0 && $0.frame.height > 0 }
+                    if let node = arrival(hidden) {
+                        hiddenFocused[stableKey(for: node)] = node
+                    } else {
+                        unmappedSteps += 1
+                    }
+                }
+            }
+            if let found {
+                recorded += 1
+                lastFocusedName = ProbeNodes.clean(found.label)
+            }
+            return found
+        }
+
         for tabIndex in 0..<maxTabs {
             try Task.checkCancellation()
-            if !observedFocusedElement && hiddenFocused.isEmpty && tabIndex >= tabsBeforeGivingUp {
+            // On iOS the first steps can land in a bar before the ring's
+            // colour is known.
+            if !observedFocusedElement && hiddenFocused.isEmpty && tabIndex >= (visual ? 6 : tabsBeforeGivingUp) {
                 break
             }
             if skipNextTab {
                 skipNextTab = false
+            } else if visual {
+                guard try await advanceVisualFocus() else { break }
             } else {
                 try await appium.pressTab()
             }
@@ -151,7 +293,7 @@ final class KeyboardFocusTester {
                 }
             }
 
-            guard let focused = firstFocusedNode(in: root) else {
+            guard let focused = visual ? visualFocus(in: root) : firstFocusedNode(in: root) else {
                 continue
             }
 
@@ -163,8 +305,18 @@ final class KeyboardFocusTester {
             observedFocusedElement = true
             let key = stableKey(for: focused)
 
+            if visual, key == sequence.last || sequence.contains(key) {
+                // Screenshots can show the same control twice; the cycle is
+                // complete only when focus is back on the first control
+                // after most of the screen, or when the tester says so.
+                if key == sequence.first, sequence.count >= max(2, controls.count / 2) {
+                    traversalCompleted = true
+                    break
+                }
+                continue
+            }
             if key == sequence.last || sequence.contains(key) {
-                if Self.isTextInput(focused), textFieldsLeftByArrow.insert(key).inserted {
+                if !visual, Self.isTextInput(focused), textFieldsLeftByArrow.insert(key).inserted {
                     try await appium.pressArrowDown()
                     if settleMilliseconds > 0 {
                         try await Task.sleep(for: .milliseconds(settleMilliseconds))
@@ -186,9 +338,20 @@ final class KeyboardFocusTester {
             if let matching = controls.first(where: { stableKey(for: $0) == key }) {
                 reachedKeys.insert(key)
 
-                // Compare against a screenshot of the same scroll position;
-                // after a scroll every pixel moved, so there is no evidence.
-                if scrolledSinceScreenshot {
+                // iOS: focus was found by its ring, so it is visible; contrast
+                // and cue need the screenshot taken before any focus.
+                if visual {
+                    visualEvidence[key] = true
+                    if noFocusLayout, let noFocusData {
+                        let focusedScreenshot = try? await appium.getScreenshot()
+                        if let ratio = indicatorContrastRatio(before: noFocusData, after: focusedScreenshot, node: focused, hierarchySize: root.frame.size) {
+                            indicatorContrast[key] = (matching, ratio)
+                        }
+                        if let cue = Self.focusCue(before: noFocusData, after: focusedScreenshot, node: focused, hierarchySize: root.frame.size) {
+                            focusCues[key] = (matching, cue)
+                        }
+                    }
+                } else if scrolledSinceScreenshot {
                     baselineScreenshot = try? await appium.getScreenshot()
                     scrolledSinceScreenshot = false
                 } else if let baselineScreenshot {
@@ -219,6 +382,11 @@ final class KeyboardFocusTester {
                 }
             }
         }
+
+        if visual && testerFinished { traversalCompleted = true }
+
+        // Close the Press Tab card if the traversal ended on its own.
+        if let promptID, guide?.isWaiting(promptID) == true { guide?.finish(.done) }
 
         guard observedFocusedElement else {
             return Result(
@@ -266,6 +434,17 @@ final class KeyboardFocusTester {
                     severity: .info,
                     message: "Keyboard focus reached this interactive element during runtime Tab navigation.",
                     remediation: ""
+                ))
+            } else if traversalCompleted && visual {
+                evaluations.append(baseEvaluation(
+                    ruleID: "keyboard-focus",
+                    name: "Interactive elements focusable using a keyboard interface",
+                    description: "Interactive controls should be reachable through the supported keyboard focus mechanism.",
+                    node: control,
+                    status: .validate,
+                    severity: .warning,
+                    message: "Tab went round the whole screen, but the scanner did not see focus on this control in the screenshots. Check whether Tab reaches it.",
+                    remediation: "Make the control keyboard focusable (a UIButton or UIControl, or accessibilityRespondsToUserInteraction with focus support)."
                 ))
             } else if traversalCompleted {
                 evaluations.append(baseEvaluation(
@@ -482,7 +661,15 @@ final class KeyboardFocusTester {
                 node: node
             ))
         }
-        if hiddenFocused.isEmpty {
+        if hiddenFocused.isEmpty && visual && unmappedSteps > 0 {
+            evaluations.append(ProbeEvaluation.make(
+                ruleID: "keyboard-focus-hidden-content",
+                status: .notTested,
+                message: "\(unmappedSteps) focus step\(unmappedSteps == 1 ? "" : "s") could not be matched to an element in the screenshots, so focus landing on hidden content cannot be ruled out.",
+                remediation: "Tab through the screen and check focus never disappears onto something not shown.",
+                node: rootNode
+            ))
+        } else if hiddenFocused.isEmpty {
             evaluations.append(ProbeEvaluation.make(
                 ruleID: "keyboard-focus-hidden-content",
                 status: .pass,
@@ -544,7 +731,9 @@ final class KeyboardFocusTester {
             evidenceAvailable: true,
             reachedNodes: sequence.compactMap { key in
                 controls.first { stableKey(for: $0) == key }
-            }
+            },
+            ringColour: ringColour,
+            tabByAppium: tabByAppium
         )
     }
 
@@ -805,6 +994,124 @@ final class KeyboardFocusTester {
 
         let samples = max(1, beforePixels.count / (stride * 3))
         return Double(changed) / Double(samples) >= 0.002
+    }
+
+    // MARK: Focus seen in screenshots (iOS)
+
+    /// Decodes a screenshot once for the comparisons below.
+    static func image(_ data: Data?) -> CGImage? {
+        guard let data, let image = NSImage(data: data) else { return nil }
+        return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    }
+
+    /// Share of sampled pixels around `node` (6 pt margin) that differ
+    /// between two screenshots of the same layout.
+    static func changeRatio(before: CGImage, after: CGImage, node: AccessibilityNode, hierarchySize: CGSize) -> Double {
+        let width = min(before.width, after.width), height = min(before.height, after.height)
+        let scaleX = CGFloat(width) / max(1, hierarchySize.width), scaleY = CGFloat(height) / max(1, hierarchySize.height)
+        let x = max(0, Int((node.frame.minX - 6) * scaleX)), y = max(0, Int((node.frame.minY - 6) * scaleY))
+        let w = min(width - x, Int((node.frame.width + 12) * scaleX)), h = min(height - y, Int((node.frame.height + 12) * scaleY))
+        guard w > 1, h > 1,
+              let a = pixelBytes(before, x: x, y: y, width: w, height: h),
+              let b = pixelBytes(after, x: x, y: y, width: w, height: h), a.count == b.count else { return 0 }
+        var changed = 0, samples = 0
+        for i in Swift.stride(from: 0, to: a.count, by: 12) {
+            samples += 1
+            if abs(Int(a[i]) - Int(b[i])) + abs(Int(a[i + 1]) - Int(b[i + 1])) + abs(Int(a[i + 2]) - Int(b[i + 2])) > 24 { changed += 1 }
+        }
+        return Double(changed) / Double(max(1, samples))
+    }
+
+    /// Whether anything on screen changed (a focus ring appeared or moved).
+    static func screenChanged(_ before: CGImage, _ after: CGImage) -> Bool {
+        let width = min(before.width, after.width), height = min(before.height, after.height)
+        guard let a = pixelBytes(before, x: 0, y: 0, width: width, height: height),
+              let b = pixelBytes(after, x: 0, y: 0, width: width, height: height) else { return false }
+        var changed = 0
+        for i in Swift.stride(from: 0, to: a.count, by: 4 * 7) where
+            abs(Int(a[i]) - Int(b[i])) + abs(Int(a[i + 1]) - Int(b[i + 1])) + abs(Int(a[i + 2]) - Int(b[i + 2])) > 40 {
+            changed += 1
+            if changed > 40 { return true }
+        }
+        return false
+    }
+
+    /// Frames of tab, navigation and tool bars: translucent, so their pixels
+    /// change with the content behind them.
+    static func barControlFrames(in root: AccessibilityNode) -> [CGRect] {
+        ProbeNodes.all(in: root)
+            .filter { $0.visible && ($0.role == .tabBar || $0.role == .navigationBar || $0.type.contains("Toolbar")) }
+            .map(\.frame)
+    }
+
+    /// The area that differs between two screenshots, in pixels, below
+    /// `ignoreTop` pixels (the status bar's clock). nil: nothing changed.
+    static func changedRegion(_ before: CGImage, _ after: CGImage, ignoreTop: Int) -> CGRect? {
+        let width = min(before.width, after.width), height = min(before.height, after.height)
+        guard height > ignoreTop,
+              let a = pixelBytes(before, x: 0, y: ignoreTop, width: width, height: height - ignoreTop),
+              let b = pixelBytes(after, x: 0, y: ignoreTop, width: width, height: height - ignoreTop) else { return nil }
+        var minX = Int.max, minY = Int.max, maxX = -1, maxY = -1, changed = 0
+        let step = 3
+        for y in Swift.stride(from: 0, to: height - ignoreTop, by: step) {
+            for x in Swift.stride(from: 0, to: width, by: step) {
+                let i = (y * width + x) * 4
+                if abs(Int(a[i]) - Int(b[i])) + abs(Int(a[i + 1]) - Int(b[i + 1])) + abs(Int(a[i + 2]) - Int(b[i + 2])) > 40 {
+                    changed += 1
+                    minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+                }
+            }
+        }
+        guard changed >= 30 else { return nil }
+        return CGRect(x: minX, y: minY + ignoreTop, width: maxX - minX + step, height: maxY - minY + step)
+    }
+
+    /// The thin band where a focus ring is drawn: 3 pt inside to 6 pt
+    /// outside the control's frame, in pixels.
+    private static func ringBand(_ node: AccessibilityNode, width: Int, height: Int, hierarchySize: CGSize) -> [(x: Int, y: Int, w: Int, h: Int)] {
+        let sx = CGFloat(width) / max(1, hierarchySize.width), sy = CGFloat(height) / max(1, hierarchySize.height)
+        let outer = node.frame.insetBy(dx: -6, dy: -6), inner = node.frame.insetBy(dx: 3, dy: 3)
+        let rects = [
+            CGRect(x: outer.minX, y: outer.minY, width: outer.width, height: inner.minY - outer.minY),
+            CGRect(x: outer.minX, y: inner.maxY, width: outer.width, height: outer.maxY - inner.maxY),
+            CGRect(x: outer.minX, y: inner.minY, width: inner.minX - outer.minX, height: inner.height),
+            CGRect(x: inner.maxX, y: inner.minY, width: outer.maxX - inner.maxX, height: inner.height)
+        ]
+        return rects.compactMap { rect in
+            let x = max(0, Int(rect.minX * sx)), y = max(0, Int(rect.minY * sy))
+            let w = min(width - x, Int(rect.width * sx)), h = min(height - y, Int(rect.height * sy))
+            return w > 0 && h > 0 ? (x, y, w, h) : nil
+        }
+    }
+
+    /// The focus ring's colour: the median of the band pixels that changed
+    /// when focus arrived.
+    static func ringColor(before: CGImage, after: CGImage, node: AccessibilityNode, hierarchySize: CGSize) -> [Int]? {
+        var reds: [Int] = [], greens: [Int] = [], blues: [Int] = []
+        for band in ringBand(node, width: min(before.width, after.width), height: min(before.height, after.height), hierarchySize: hierarchySize) {
+            guard let a = pixelBytes(before, x: band.x, y: band.y, width: band.w, height: band.h),
+                  let b = pixelBytes(after, x: band.x, y: band.y, width: band.w, height: band.h) else { continue }
+            for i in Swift.stride(from: 0, to: min(a.count, b.count), by: 4) where
+                abs(Int(a[i]) - Int(b[i])) + abs(Int(a[i + 1]) - Int(b[i + 1])) + abs(Int(a[i + 2]) - Int(b[i + 2])) > 60 {
+                reds.append(Int(b[i])); greens.append(Int(b[i + 1])); blues.append(Int(b[i + 2]))
+            }
+        }
+        guard reds.count >= 20 else { return nil }
+        func median(_ values: [Int]) -> Int { values.sorted()[values.count / 2] }
+        return [median(reds), median(greens), median(blues)]
+    }
+
+    /// Share of a control's ring band drawn in the focus ring's colour.
+    static func ringMatch(_ shot: CGImage, node: AccessibilityNode, color: [Int], hierarchySize: CGSize) -> Double {
+        var matching = 0, total = 0
+        for band in ringBand(node, width: shot.width, height: shot.height, hierarchySize: hierarchySize) {
+            guard let pixels = pixelBytes(shot, x: band.x, y: band.y, width: band.w, height: band.h) else { continue }
+            for i in Swift.stride(from: 0, to: pixels.count, by: 8) {
+                total += 1
+                if abs(Int(pixels[i]) - color[0]) + abs(Int(pixels[i + 1]) - color[1]) + abs(Int(pixels[i + 2]) - color[2]) < 60 { matching += 1 }
+            }
+        }
+        return Double(matching) / Double(max(1, total))
     }
 
     static func pixelBytes(

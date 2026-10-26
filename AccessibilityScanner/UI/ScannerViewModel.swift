@@ -45,6 +45,15 @@ final class ScannerViewModel: ObservableObject {
     @Published var keepAppRunning: Bool = UserDefaults.standard.bool(forKey: "settings.keepAppRunning") {
         didSet { UserDefaults.standard.set(keepAppRunning, forKey: "settings.keepAppRunning") }
     }
+
+    /// Ask the tester to shake the phone and press Tab on a keyboard during
+    /// the scan (on unless turned off).
+    @Published var guidedChecksEnabled: Bool = UserDefaults.standard.object(forKey: "settings.guidedChecks") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(guidedChecksEnabled, forKey: "settings.guidedChecks") }
+    }
+
+    /// The card a guided check shows while it waits for the tester.
+    let guided = GuidedChecks()
     @Published var maximumScreens: Int = 10
     @Published private(set) var partialScreenCount: Int = 0
 
@@ -234,6 +243,7 @@ final class ScannerViewModel: ObservableObject {
         guard isScanning else { return }
 
         status = "Stopping scan and preparing partial report..."
+        guided.finish(.skipAll)
         scanTask?.cancel()
     }
 
@@ -400,6 +410,15 @@ final class ScannerViewModel: ObservableObject {
                 crawlerLimit = 100
             }
 
+            // Shake and device-motion handlers, read from the app's build:
+            // which screens to ask the tester to shake the phone on.
+            var motionFindings: MotionHandlerInspector.Findings?
+            if device.platform == .ios {
+                status = "Reading the app's build for motion handlers..."
+                let bundleID = application.bundleID
+                motionFindings = try await ProcessRunner.offMain { MotionHandlerInspector.inspect(bundleID: bundleID) }
+            }
+
             let crawler = AppCrawler(
                 appium: appium,
                 scanner: scanner,
@@ -416,7 +435,9 @@ final class ScannerViewModel: ObservableObject {
                     udid: device.udid,
                     allowAppRelaunch: mode != .currentPage && !keepAppRunning,
                     allowAppInteraction: mode != .currentPage
-                )
+                ),
+                guide: guidedChecksEnabled ? guided : nil,
+                motionFindings: motionFindings
             )
 
             let crawledScreens = try await crawler.crawl(
@@ -451,6 +472,12 @@ final class ScannerViewModel: ObservableObject {
                 screenResults.append(screenResult)
             }
 
+            // Screens not shaken during the scan get the build's findings.
+            var screens = ScreenNaming.uniquified(screenResults)
+            if device.platform == .ios {
+                screens = MotionHandlerInspector.settle(screens, findings: motionFindings, installedVersion: application.version)
+            }
+
             let finishedAt = Date()
 
             var draftResult = AccessibilityScanResult(
@@ -460,7 +487,7 @@ final class ScannerViewModel: ObservableObject {
                 deviceUDID: device.udid,
                 startedAt: startedAt,
                 finishedAt: finishedAt,
-                screens: ScreenNaming.uniquified(screenResults),
+                screens: screens,
                 rulesExecuted: AccessibilityRules.all.count
             )
             draftResult.environment = environment

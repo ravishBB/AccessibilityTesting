@@ -1436,8 +1436,10 @@ nonisolated struct MotionAlternativeRule: AccessibilityRule {
     let id = "motion-alternative"
     let title = "No On-Screen Alternative for Motion Action"
     let description = "Motion-driven actions should have an accessible non-motion alternative."
+    /// One result per screen. The scan replaces it with what the app's
+    /// build shows (MotionHandlerInspector).
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.visible else { return nil }
+        guard node.role == .application else { return nil }
         return RuleHelper.notTested(ruleID: id, name: title, description: description, node: node,
                                      message: "Motion-based interaction cannot be tested from the Appium accessibility hierarchy alone.",
                                      remediation: "Exercise motion features and verify an equivalent on-screen control exists.")

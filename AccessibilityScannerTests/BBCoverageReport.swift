@@ -72,6 +72,7 @@ struct BBCoverageReport {
         "text-truncation": [.pass, .fail, .notTested],
         "icon-control-role": [.validate],
         "row-role": [.validate, .fail],
+        "motion-alternative": [.validate, .notTested],
         "language-change": [.validate],
         "text-overlap": [.pass, .fail, .notTested],
         "focus-indicator-color-only": [.pass, .fail],
