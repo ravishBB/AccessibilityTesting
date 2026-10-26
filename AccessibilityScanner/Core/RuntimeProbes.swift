@@ -91,11 +91,6 @@ enum ProbeNodes {
         }
     }
 
-    /// Visible named elements plus controls. Flutter builds its accessibility
-    /// tree only once something asks for it, so the first reads after a
-    /// launch can be nearly empty.
-    /// The same content is still on screen, shifted by one common offset:
-    /// a scroll, not a change caused by activating something.
     static func contentScrolled(from before: AccessibilityNode, to after: AccessibilityNode) -> Bool {
         func positions(_ root: AccessibilityNode) -> [String: CGPoint] {
             var result: [String: CGPoint] = [:]
@@ -120,8 +115,7 @@ enum ProbeNodes {
         return Double(moved) / Double(shifts.count) >= 0.6
     }
 
-    /// The drawn text when it is the start of `label` cut off with an
-    /// ellipsis; nil when it is the whole label or something else.
+
     static func shortenedText(drawn: String, label: String) -> String? {
         var shown = drawn
         if shown.hasSuffix("…") { shown.removeLast() }
@@ -199,8 +193,6 @@ final class OrientationProbe {
         do {
             try await appium.setOrientation(target)
         } catch {
-            // WebDriverAgent answers "Unable To Rotate Device" when the app
-            // does not support the other orientation: the screen is locked.
             let text = error.localizedDescription.lowercased()
             if text.contains("unable to rotate") || text.contains("rotate device") {
                 return [ProbeEvaluation.make(
@@ -227,8 +219,6 @@ final class OrientationProbe {
             await restore(original)
             throw error
         }
-
-        // Always put the device back the way it was.
         await restore(original)
 
         guard rotated != original else {
@@ -268,8 +258,6 @@ final class OrientationProbe {
             ]
         }
 
-        // Labels can also be scrolled off-screen in landscape, so this is
-        // for a tester to confirm (BB40055). A locked screen is the Fail.
         let status: RuleResultStatus = .validate
         return [
             ProbeEvaluation.make(
@@ -305,7 +293,6 @@ final class OrientationProbe {
 }
 
 // MARK: - State after interaction (BB40067 to BB40070)
-
 final class StateUpdateProbe {
 
     private let appium: AppiumClient
@@ -322,11 +309,6 @@ final class StateUpdateProbe {
         self.alreadyTested = alreadyTested
     }
 
-    /// Only switches and checkboxes are activated: they are the controls whose
-    /// state change is visible and that are safe to toggle and put back.
-    /// Every control is tapped a second time whatever the hierarchy showed: a
-    /// toggle that flipped without updating its accessibility state is flipped
-    /// back, and one that ignores taps is unaffected.
     func test(rootNode: AccessibilityNode) async throws -> [AccessibilityRuleEvaluation] {
 
         let candidates = ProbeNodes.all(in: rootNode)
@@ -351,8 +333,6 @@ final class StateUpdateProbe {
             let switchPoint = Self.switchPoint(of: control)
             let beforeShot = try? await appium.getScreenshot()
 
-            // A SwiftUI Toggle row only toggles on the switch itself; its
-            // label area ignores taps.
             func activate() async throws {
                 if let switchPoint {
                     try await appium.tap(at: switchPoint)
@@ -377,9 +357,7 @@ final class StateUpdateProbe {
                 )
                 continue
             }
-
-            // The control was tapped: read its new state, then always put it
-            // back, even if reading failed or the scan was stopped.
+            
             var updated: AccessibilityNode?
             var updatedRoot: AccessibilityNode?
             var readError: Error?
@@ -474,6 +452,9 @@ final class TextSizeProbe {
     private let appium: AppiumClient
     private let environment: RuntimeProbeEnvironment
     private let scanner: AccessibilityScanner
+    /// XPaths of the taps from the app's first screen to the screen under
+    /// test, replayed after each relaunch.
+    private let route: [String]
 
     private static let iosCategory = "UICTContentSizeCategoryAccessibilityXXXL"
     private static let androidScale = "2.0"
@@ -481,11 +462,23 @@ final class TextSizeProbe {
     init(
         appium: AppiumClient,
         environment: RuntimeProbeEnvironment,
-        scanner: AccessibilityScanner = AccessibilityScanner()
+        scanner: AccessibilityScanner = AccessibilityScanner(),
+        route: [String] = []
     ) {
         self.appium = appium
         self.environment = environment
         self.scanner = scanner
+        self.route = route
+    }
+
+    /// Back to the screen under test after a relaunch opened the first one.
+    private func replayRoute() async {
+        guard !route.isEmpty else { return }
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        for xpath in route {
+            try? await appium.tapElement(usingXPath: xpath)
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+        }
     }
 
     func test(rootNode: AccessibilityNode) async throws -> [AccessibilityRuleEvaluation] {
@@ -507,8 +500,6 @@ final class TextSizeProbe {
 
         do {
             if environment.platform == .android {
-                // An earlier run that never restored this device left its
-                // font scale changed: its recorded original is the real one.
                 if let outstanding = AndroidFontScaleRecovery.outstanding(serial: environment.udid) {
                     originalAndroidScale = outstanding
                 } else {
@@ -536,13 +527,12 @@ final class TextSizeProbe {
         }
 
         lap("relaunch at large size")
+        await replayRoute()
         var largeRoot: AccessibilityNode?
         var largeShot: Data?
         do {
             try await Task.sleep(nanoseconds: 2_000_000_000)
             largeRoot = try await ProbeNodes.readSettledRoot(using: appium)
-            // The relaunched screen can still be building: wait until it
-            // shows at least three of the texts the normal layout showed.
             let normalTexts = Set(textHeights(in: rootNode).keys)
             var attempts = 0
             while let current = largeRoot, normalTexts.count >= 3,
@@ -551,8 +541,6 @@ final class TextSizeProbe {
                 try await Task.sleep(nanoseconds: 2_000_000_000)
                 largeRoot = (try? appium.makeParser().parse(try await appium.getSource())) ?? current
             }
-            // What is actually drawn: labels keep the full text even when
-            // the screen shows it shortened with "…".
             largeShot = try? await appium.getScreenshot()
         } catch {
             await restore(originalAndroidScale: originalAndroidScale)
@@ -561,6 +549,7 @@ final class TextSizeProbe {
 
         lap("read large layout")
         await restore(originalAndroidScale: originalAndroidScale)
+        await replayRoute()
         lap("restore normal size")
 
         guard let largeRoot else {
@@ -576,8 +565,6 @@ final class TextSizeProbe {
     }
 
     // MARK: Truncation and overlap (BB40033)
-
-    /// Text the screen draws as the start of its label followed by "…".
     static func truncation(normal: AccessibilityNode, large: AccessibilityNode, screenshot: Data?) -> [AccessibilityRuleEvaluation] {
         guard let screenshot, let size = ProbeNodes.imageSize(screenshot) else {
             return [ProbeEvaluation.make(ruleID: "text-truncation", status: .notTested,
@@ -616,8 +603,6 @@ final class TextSizeProbe {
                                      node: normal)]
     }
 
-    /// Text that overlaps other text at the largest size but did not at the
-    /// normal size.
     static func overlap(normal: AccessibilityNode, large: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
         func texts(_ root: AccessibilityNode) -> [AccessibilityNode] {
             ProbeNodes.all(in: root).filter {
@@ -689,8 +674,6 @@ final class TextSizeProbe {
             )
         } else {
             let median = ratios.sorted()[ratios.count / 2]
-            // Text that stayed the same size while the rest grew: a fixed
-            // font size on that element (BB40031 for the element itself).
             let normalNodes = Dictionary(
                 ProbeNodes.all(in: normal)
                     .filter { $0.visible && $0.role == .staticText && !ProbeNodes.clean($0.label).isEmpty }
@@ -747,8 +730,6 @@ final class TextSizeProbe {
             }
         }
 
-        // Clipping at the larger size, summarised on the normal screen so the
-        // annotation never points at the wrong layout.
         let clipped = scanner.evaluateForReport(rootNode: large)
             .filter { $0.ruleID == "text-clipping" && $0.status == .fail }
 
@@ -850,8 +831,6 @@ final class PointerCancellationProbe {
 
     func test(rootNode: AccessibilityNode) async throws -> [AccessibilityRuleEvaluation] {
         let screen = rootNode.frame
-        // Tab and bottom-bar buttons switch screens, so they cannot show
-        // cancellation and would move the crawl off this screen.
         let bottomBarTop = screen.minY + screen.height * 0.85
         guard let control = ProbeNodes.all(in: rootNode).first(where: { node in
             node.role == .button && node.visible && node.enabled &&
@@ -879,9 +858,6 @@ final class PointerCancellationProbe {
         try await Task.sleep(nanoseconds: 700_000_000)
         guard let afterSlide = try? await currentRoot() else { return [] }
 
-        // In a scrolling screen the slide scrolls the content: the
-        // platform then cancels the touch, which says nothing about
-        // touch-down activation. Put the content back and report nothing.
         if ProbeNodes.contentScrolled(from: before, to: afterSlide) {
             try? await appium.pressAndSlideAway(from: end, to: start)
             try? await Task.sleep(nanoseconds: 500_000_000)
@@ -889,8 +865,6 @@ final class PointerCancellationProbe {
         }
 
         if ProbeNodes.contentSignature(in: afterSlide) != beforeSignature {
-            // Sliding back restores a scrolled screen but not a screen the
-            // control navigated to: only the latter is touch-down activation.
             try? await appium.pressAndSlideAway(from: end, to: start)
             try? await Task.sleep(nanoseconds: 500_000_000)
             if let back = try? await currentRoot() {

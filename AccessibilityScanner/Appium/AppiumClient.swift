@@ -640,6 +640,38 @@ final class AppiumClient {
         try validateResponse(response, data: data)
     }
 
+    /// A horizontal drag inside one row (a carousel), in hierarchy points:
+    /// moves that row's content without scrolling the page.
+    func horizontalDrag(atY y: CGFloat, fromX startX: CGFloat, toX endX: CGFloat) async throws {
+        guard let sessionID else { throw AppiumError.noActiveSession }
+        var request = URLRequest(url: baseURL
+            .appendingPathComponent("session")
+            .appendingPathComponent(sessionID)
+            .appendingPathComponent("actions"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15
+        let py = Int(y * displayScale)
+        let payload: [String: Any] = [
+            "actions": [[
+                "type": "pointer",
+                "id": "a11yCarouselPointer",
+                "parameters": ["pointerType": "touch"],
+                "actions": [
+                    ["type": "pointerMove", "duration": 0, "x": Int(startX * displayScale), "y": py],
+                    ["type": "pointerDown", "button": 0],
+                    ["type": "pause", "duration": 100],
+                    ["type": "pointerMove", "duration": 400, "x": Int(endX * displayScale), "y": py],
+                    ["type": "pause", "duration": 250],
+                    ["type": "pointerUp", "button": 0]
+                ]
+            ]]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+    }
+
     func pressAndSlideAway(from start: CGPoint, to end: CGPoint) async throws {
         guard let sessionID = sessionID else {
             throw AppiumError.noActiveSession

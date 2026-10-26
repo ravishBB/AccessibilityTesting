@@ -16,7 +16,7 @@ struct BBCoverageReport {
         "accessible-name": [.fail, .pass],
         "adjustable-accessibility-value": [.fail, .pass, .validate],
         "button-disabled-state": [.pass],
-        "button-name-descriptive": [.fail, .pass],
+        "button-name-descriptive": [.fail, .pass, .validate],
         "contrast-large-text-3": [.fail, .pass, .validate, .notTested],
         "contrast-standard-text-4-5": [.fail, .pass, .validate, .notTested],
         "contrast-text-over-image": [.fail, .pass, .validate, .notTested],

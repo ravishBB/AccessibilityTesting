@@ -582,8 +582,32 @@ nonisolated struct DescriptiveButtonNameRule: AccessibilityRule {
                                    message: "Button accessible name is missing or generic.",
                                    remediation: "Provide a concise name describing the button's action or purpose.")
         }
+        // "See all Trending": a generic call to action, maybe with context.
+        // Whether the rest makes it clear out of context needs a person.
+        let name = RuleHelper.clean(node.label)
+        if let phrase = Self.genericStart(of: name) {
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                         message: "The button's name \"\(name)\" starts with the generic \"\(phrase)\". Check it says what the button opens when heard out of context, for example in a list of buttons.",
+                                         remediation: "Name the destination or result (\"See all trending topics\") rather than relying on nearby text.")
+        }
         return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                message: "Button has a descriptive-looking accessible name.")
+    }
+
+    private static let genericPhrases = [
+        "see all", "see more", "view all", "view more", "show all", "show more", "browse all",
+        "read more", "learn more", "more", "details",
+        "もっと見る", "すべて見る", "查看更多", "查看全部", "更多"
+    ]
+
+    /// The generic phrase the name starts with, as a whole word.
+    private static func genericStart(of name: String) -> String? {
+        let lower = name.lowercased()
+        return genericPhrases.first { phrase in
+            guard lower.hasPrefix(phrase) else { return false }
+            let rest = lower.dropFirst(phrase.count)
+            return rest.isEmpty || rest.first.map { !$0.isLetter || phrase.unicodeScalars.contains { $0.value > 0x2E80 } } == true
+        }
     }
 }
 
@@ -1342,20 +1366,44 @@ nonisolated struct DecorativeImageRule: ScreenAccessibilityRule {
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 
-    /// One question per distinct image a screen reader reaches on its own.
-    /// Icons inside a button or tab are part of that control's name, and a
-    /// repeated icon (rating stars, list bullets) is asked about once.
+    /// One question per distinct image a screen reader reaches on its own,
+    /// and per picture inside a larger element (a card) that VoiceOver reads
+    /// in its place. Icons inside a button or tab are part of that control's
+    /// name, and a repeated icon (rating stars, list bullets) is asked about
+    /// once.
     func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
         var seen = Set<String>()
-        return RuleHelper.allNodes(rootNode).compactMap { node in
-            guard node.role == .image, node.visible, node.accessible,
-                  !node.semantics.mergedIntoAncestor, !node.semantics.insideActionable,
-                  seen.insert(node.identifier + "|" + RuleHelper.clean(node.label)).inserted
-            else { return nil }
-            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                         message: "Screen readers announce this image as \"\(RuleHelper.clean(node.label).isEmpty ? "image" : RuleHelper.clean(node.label))\". Only the design intent decides whether it adds information or is decorative.",
-                                         remediation: "If decorative, hide it from assistive technology (.accessibilityHidden(true) / importantForAccessibility=no); otherwise keep a description of what it conveys.")
+        var results: [AccessibilityRuleEvaluation] = []
+
+        func visit(_ node: AccessibilityNode, element: AccessibilityNode?) {
+            if node.role == .image, node.visible {
+                if node.accessible, !node.semantics.mergedIntoAncestor, !node.semantics.insideActionable,
+                   seen.insert(node.identifier + "|" + RuleHelper.clean(node.label)).inserted {
+                    results.append(RuleHelper.validation(
+                        ruleID: id, name: title, description: description, node: node,
+                        message: "Screen readers announce this image as \"\(RuleHelper.clean(node.label).isEmpty ? "image" : RuleHelper.clean(node.label))\". Only the design intent decides whether it adds information or is decorative.",
+                        remediation: "If decorative, hide it from assistive technology (.accessibilityHidden(true) / importantForAccessibility=no); otherwise keep a description of what it conveys."))
+                } else if let element, Self.isPicture(node, in: element) {
+                    let name = RuleHelper.clean(element.label)
+                    results.append(RuleHelper.validation(
+                        ruleID: id, name: title, description: description, node: node,
+                        message: "A \(Int(node.frame.width.rounded()))×\(Int(node.frame.height.rounded())) pt image inside \"\(name)\", which VoiceOver reads in its place. Confirm that name covers anything this image shows, or that the image is decorative.",
+                        remediation: "If the image carries information, include it in the element's accessibility label; if decorative, nothing more is needed."))
+                }
+            }
+            // The accessibility element VoiceOver reads for what is inside it.
+            let reader = element ?? (node.accessible && node.role != .application && !RuleHelper.clean(node.label).isEmpty ? node : nil)
+            for child in node.children { visit(child, element: reader) }
         }
+        visit(rootNode, element: nil)
+        return results
+    }
+
+    /// A picture, not an icon: at least 30 pt each way, inside an element
+    /// four times its size or more.
+    private static func isPicture(_ image: AccessibilityNode, in element: AccessibilityNode) -> Bool {
+        let size = image.frame.size, outer = element.frame.size
+        return min(size.width, size.height) >= 30 && outer.width * outer.height >= size.width * size.height * 4
     }
 }
 

@@ -311,9 +311,7 @@ nonisolated enum PixelAnalyzer {
     struct ComponentMeasurement {
         let fillRatio: Double
         let borderRatio: Double
-        /// Share of the control's pixels at 3:1 or more against the
-        /// background: an outline, thumb, check mark or icon drawn inside
-        /// touch padding, where the frame's edge and centre miss it.
+   
         var strongPartShare: Double = 0
         /// Typical contrast of those strong pixels.
         var strongPartRatio: Double = 1
@@ -323,8 +321,6 @@ nonisolated enum PixelAnalyzer {
 
         var best: Double { max(fillRatio, borderRatio) }
 
-        /// False when neither a border nor a fill is distinguishable, which means
-        /// the control is identified by its text or icon rather than its shape.
         var hasBoundary: Bool { best >= 1.05 }
     }
 
@@ -441,10 +437,7 @@ nonisolated enum TextRecognizer {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        // Inside this app Vision's Neural Engine model fails to compile
-        // (ANECCompile FAILED) and retries on every call. usesCPUOnly turns
-        // the Neural Engine off entirely; it is deprecated, so it is set
-        // through KVC only when the request still supports it.
+        
         if request.responds(to: NSSelectorFromString("setUsesCPUOnly:")) {
             request.setValue(true, forKey: "usesCPUOnly")
         }
@@ -458,8 +451,6 @@ nonisolated enum TextRecognizer {
         return request
     }
 
-    /// Text rendered inside `frame`, or nil when none is legible. Results are
-    /// cached per screenshot and frame: viewports repeat the same controls.
     static func text(in frame: CGRect, context: AccessibilityRuleContext) -> String? {
         guard let data = context.screenshotData,
               frame.width >= 8, frame.height >= 8

@@ -126,7 +126,6 @@ final class AppCrawler {
     private var firstScreenSharedActions = Set<String>()
     private var probedControlKeys = Set<String>()
 
-    private var orientationProbed = false
     private var pointerCancellationRuns = 0
     private let pointerCancellationScreens = 2
     private var isLost = false
@@ -170,7 +169,6 @@ final class AppCrawler {
         firstScreenSharedActions.removeAll()
         discoveredScreens.removeAll()
         probedControlKeys.removeAll()
-        orientationProbed = false
         pointerCancellationRuns = 0
         isLost = false
 
@@ -191,6 +189,7 @@ final class AppCrawler {
     private func runtimeProbeEvaluations(
         rootNode: AccessibilityNode,
         isFirstScreen: Bool,
+        route: [NavigationAction],
         focusResult: KeyboardFocusTester.Result?
     ) async throws -> [AccessibilityRuleEvaluation] {
 
@@ -249,19 +248,21 @@ final class AppCrawler {
         }
         probedControlKeys.formUnion(errorProbe.testedKeys)
 
-        if !orientationProbed {
-            orientationProbed = true
-            results += try await timedProbe("Orientation", ruleIDs: ["orientation-support"], rootNode: rootNode) {
-                try await OrientationProbe(appium: appium).test(rootNode: rootNode)
-            }
+        results += try await timedProbe("Orientation", ruleIDs: ["orientation-support"], rootNode: rootNode) {
+            try await OrientationProbe(appium: appium).test(rootNode: rootNode)
         }
 
-        if isFirstScreen, let environment = probeEnvironment {
+        // Larger text relaunches the app: screens up to two taps from the
+        // first one are reached again by replaying those taps.
+        let routeXPaths = route.compactMap(\.xpath)
+        if let environment = probeEnvironment,
+           isFirstScreen || (routeXPaths.count == route.count && route.count <= 2) {
             results += try await timedProbe("Larger text", ruleIDs: ["text-resize", "text-clipping"], rootNode: rootNode) {
                 try await TextSizeProbe(
                     appium: appium,
                     environment: environment,
-                    scanner: scanner
+                    scanner: scanner,
+                    route: isFirstScreen ? [] : routeXPaths
                 ).test(rootNode: rootNode)
             }
         }
@@ -295,9 +296,12 @@ final class AppCrawler {
         }
     }
 
+    /// `route`: the taps that led here from the first screen, replayed by
+    /// checks that relaunch the app (larger text).
     private func explore(
         snapshot: StableScanSnapshot,
         depth: Int,
+        route: [NavigationAction] = [],
         statusHandler: @escaping (String) -> Void,
         screenHandler: ((CrawledScreen) -> Void)? = nil
     ) async throws {
@@ -383,6 +387,7 @@ final class AppCrawler {
         let runtimeEvaluations = try await runtimeProbeEvaluations(
             rootNode: topSnapshot.rootNode,
             isFirstScreen: discoveredScreens.isEmpty,
+            route: route,
             focusResult: focusResult
         )
 
@@ -646,6 +651,7 @@ final class AppCrawler {
                     try await explore(
                         snapshot: nextSnapshot,
                         depth: depth + 1,
+                        route: route + [action],
                         statusHandler: statusHandler,
                         screenHandler: screenHandler
                     )
@@ -1109,6 +1115,7 @@ final class AppCrawler {
             Set<String> = []
         var viewportCaptures: [ScrollableViewportCapture] = []
         var seenScreenshotData: Set<Data> = []
+        var carouselsDone = Set<String>()
 
         let maximumScrolls = 20
 
@@ -1170,6 +1177,16 @@ final class AppCrawler {
             }
             
             trace("Crawl timing: viewport \(viewportCount) rules \(String(format: "%.1f", Date().timeIntervalSince(viewportStarted)))s", Log.crawler)
+
+            // Rows that scroll sideways hide items past the right edge.
+            for capture in try await carouselCaptures(in: currentSnapshot, done: &carouselsDone, statusHandler: statusHandler) {
+                for evaluation in capture.evaluations where seenEvaluationKeys.insert(evaluationKey(for: evaluation)).inserted {
+                    collectedEvaluations.append(evaluation)
+                }
+                if seenScreenshotData.insert(capture.snapshot.screenshotData).inserted {
+                    viewportCaptures.append(capture)
+                }
+            }
 
             if scrollIndex == maximumScrolls {
 
@@ -1314,6 +1331,60 @@ final class AppCrawler {
         )
     }
     
+    /// Swipes each sideways-scrolling row (chips, carousels) on this
+    /// viewport left until its last items have been on screen, captures
+    /// what appeared, and swipes it back. A row is handled once per screen.
+    private func carouselCaptures(
+        in snapshot: StableScanSnapshot,
+        done: inout Set<String>,
+        statusHandler: @escaping (String) -> Void
+    ) async throws -> [ScrollableViewportCapture] {
+        let root = snapshot.rootNode
+        let screen = root.frame
+        let carousels = ProbeNodes.all(in: root).filter { node in
+            let frame = node.frame
+            guard node.visible, node.role == .scrollView || node.type.contains("CollectionView") ||
+                    node.traits.split(separator: " ").contains("scrollable"),
+                  frame.width >= screen.width * 0.6, frame.height <= screen.height * 0.4,
+                  frame.minY >= screen.minY + 40, frame.maxY <= screen.maxY - 90,
+                  !node.semantics.partiallyVisible
+            else { return false }
+            // Named content past the right edge.
+            return ProbeNodes.all(in: node).dropFirst().contains {
+                $0.frame.minX >= screen.maxX - 2 && !ProbeNodes.clean($0.label).isEmpty
+            }
+        }
+
+        var captures: [ScrollableViewportCapture] = []
+        for carousel in carousels.prefix(3) {
+            try Task.checkCancellation()
+            let key = ProbeNodes.all(in: carousel).dropFirst().map { ProbeNodes.clean($0.label) }
+                .filter { !$0.isEmpty }.prefix(8).joined(separator: "|")
+            guard done.insert(key).inserted else { continue }
+
+            statusHandler("Scrolling a row sideways to check its hidden items...")
+            let frame = carousel.frame
+            var swipes = 0
+            var previous = contentFingerprint(from: root)
+            for _ in 0..<3 {
+                guard (try? await appium.horizontalDrag(atY: frame.midY, fromX: frame.maxX - 24, toX: frame.minX + 24)) != nil else { break }
+                swipes += 1
+                try await Task.sleep(nanoseconds: configuration.settleDelayNanoseconds)
+                let next = try await captureStableSnapshot()
+                let fingerprint = contentFingerprint(from: next.rootNode)
+                if fingerprint == previous { break }
+                previous = fingerprint
+                captures.append(ScrollableViewportCapture(snapshot: next, evaluations: scanner.evaluateForReport(rootNode: next.rootNode)))
+            }
+            for _ in 0..<swipes {
+                try? await appium.horizontalDrag(atY: frame.midY, fromX: frame.minX + 24, toX: frame.maxX - 24)
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
+            trace("Carousel at y \(Int(frame.minY)): \(swipes) swipe(s), \(captures.count) capture(s)", Log.crawler)
+        }
+        return captures
+    }
+
     private func scrolledToTop(
         _ snapshot: StableScanSnapshot,
         statusHandler: @escaping (String) -> Void
