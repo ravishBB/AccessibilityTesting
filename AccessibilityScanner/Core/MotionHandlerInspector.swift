@@ -1,35 +1,21 @@
-//
 //  MotionHandlerInspector.swift
 //  AccessibilityScanner
-//
-//  Motion actuation (BB40052) from the app's own build. Appium cannot shake
-//  a real device or see a shake handler, but the compiled app names every
-//  class that overrides motionEnded/motionBegan (shake) and whether it uses
-//  CoreMotion (tilt, movement). The build is the one Xcode left on this Mac
-//  for the scanned bundle ID.
 
 import Foundation
 
 nonisolated enum MotionHandlerInspector {
 
     struct Findings {
-        /// The .app the findings were read from.
         let buildPath: String
         let buildVersion: String?
-        /// Classes that handle shake, e.g. "HomeViewController".
         let shakeClasses: [String]
-        /// The app reads device motion (CMMotionManager).
         let usesCoreMotion: Bool
-        /// A shake handler whose class could not be named (stripped build).
         let unnamedShakeHandler: Bool
 
         var hasMotion: Bool { !shakeClasses.isEmpty || usesCoreMotion || unnamedShakeHandler }
     }
 
     // MARK: - Reading the build
-
-    /// The newest iOS device build of `bundleID` on this Mac, read for motion
-    /// handlers. nil when no build is found.
     static func inspect(bundleID: String) -> Findings? {
         guard let app = newestBuild(of: bundleID) else { return nil }
         let info = NSDictionary(contentsOf: app.appendingPathComponent("Info.plist")) as? [String: Any] ?? [:]
@@ -62,15 +48,10 @@ nonisolated enum MotionHandlerInspector {
             buildVersion: version.isEmpty ? nil : version,
             shakeClasses: classes.sorted(),
             usesCoreMotion: coreMotion,
-            // The selector is also in every app that only links UIKit's
-            // declarations, so it counts only with no class found and an
-            // implementation symbol missing (stripped release build).
             unnamedShakeHandler: classes.isEmpty && selectorPresent && !defined(in: binaries)
         )
     }
 
-    /// Whether the binaries still carry symbols (unstripped), so a missing
-    /// handler symbol means there is no handler.
     private static func defined(in binaries: [String]) -> Bool {
         binaries.contains { binary in
             let output = (try? ProcessRunner.run("/usr/bin/xcrun", ["nm", "-j", "-U", binary], timeout: 60))?.stdoutText ?? ""
@@ -78,9 +59,6 @@ nonisolated enum MotionHandlerInspector {
         }
     }
 
-    /// The class a shake-handler symbol belongs to: Swift
-    /// `$s8BloomApp18HomeViewControllerC11motionEnded_4with…` or Objective-C
-    /// `-[HomeViewController motionEnded:withEvent:]`.
     static func shakeClass(inSymbol symbol: String) -> String? {
         if symbol.hasPrefix("-["), symbol.contains(" motionEnded:withEvent:]") || symbol.contains(" motionBegan:withEvent:]") {
             return symbol.dropFirst(2).split(separator: " ").first.map(String.init)
@@ -103,8 +81,7 @@ nonisolated enum MotionHandlerInspector {
         return names.count >= 2 ? names.last : nil
     }
 
-    /// Xcode's device builds and archives of the app, newest first.
-    private static func newestBuild(of bundleID: String) -> URL? {
+    static func newestBuild(of bundleID: String) -> URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let roots = [
             home.appendingPathComponent("Library/Developer/Xcode/DerivedData"),
@@ -133,12 +110,6 @@ nonisolated enum MotionHandlerInspector {
     }
 
     // MARK: - Report
-
-    /// The motion result on each screen, from the build's findings: Validate
-    /// on a screen whose view controller handles shake (named alike: Home ↔
-    /// HomeViewController), any other handler on the first screen. With no
-    /// build or no handler, the screens keep their Not tested result with
-    /// the reason.
     static func settle(
         _ screens: [ScreenScanResult],
         findings: Findings?,
@@ -175,9 +146,6 @@ nonisolated enum MotionHandlerInspector {
             guard !shaken(screen) else { return screen }
             return screen.settlingMotion(as: .validate, message: "Shake is handled in \(handlers.joined(separator: ", ")) (read from the app's build). Check this screen has an on-screen control that does the same; if not, record it as a failure.\(versionNote)")
         }
-
-        // Handlers of screens not scanned or not recognised, and CoreMotion,
-        // are reported once, on the first screen.
         var appLevel: [String] = []
         if !unmatched.isEmpty { appLevel.append("Shake is also handled in \(unmatched.joined(separator: ", "))") }
         if findings.unnamedShakeHandler { appLevel.append("The app handles shake") }
@@ -192,7 +160,6 @@ nonisolated enum MotionHandlerInspector {
         return settled
     }
 
-    /// "HomeViewController" belongs to the screen named "Home".
     static func matches(_ className: String, screen: String) -> Bool {
         var base = className
         for suffix in ["ViewController", "Controller", "VC", "Screen", "View", "Page"] where base.hasSuffix(suffix) && base.count > suffix.count {

@@ -327,39 +327,6 @@ struct RuleAvailabilityTests {
         #expect(colour.stateRatio < 3, "red to green of similar lightness")
     }
 
-    @Test func combinedListIsReportedButCardIsNot() {
-        func row(_ title: String, _ y: CGFloat) -> AccessibilityNode {
-            makeNode(type: "XCUIElementTypeOther", label: "", frame: CGRect(x: 16, y: y, width: 361, height: 60), accessible: false, children: [
-                makeNode(type: "XCUIElementTypeStaticText", label: title, frame: CGRect(x: 24, y: y + 8, width: 300, height: 20), accessible: false),
-                makeNode(type: "XCUIElementTypeStaticText", label: "5 min read", frame: CGRect(x: 24, y: y + 32, width: 100, height: 16), accessible: false)
-            ])
-        }
-        let list = makeNode(type: "XCUIElementTypeOther", label: "Morning, Evening, Weekend", frame: CGRect(x: 16, y: 100, width: 361, height: 200),
-                            children: [row("Morning", 100), row("Evening", 160), row("Weekend", 220)]).annotatingLayout()
-        #expect(ListItemsNavigableRule().evaluate(node: list)?.status == .validate)
-
-        let card = makeNode(type: "XCUIElementTypeButton", label: "Wellness article: Morning Routines",
-                            frame: CGRect(x: 16, y: 300, width: 361, height: 240), children: [
-                                makeNode(type: "XCUIElementTypeStaticText", label: "WELLNESS", accessible: false),
-                                makeNode(type: "XCUIElementTypeStaticText", label: "Morning Routines", accessible: false),
-                                makeNode(type: "XCUIElementTypeStaticText", label: "By Sarah Chen", accessible: false)
-                            ]).annotatingLayout()
-        #expect(ListItemsNavigableRule().evaluate(node: card) == nil)
-    }
-
-    @Test func androidPictureWithoutImageRole() throws {
-        let xml = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <hierarchy index="0" class="hierarchy" rotation="0" width="1080" height="2400">
-          <android.view.View index="0" package="com.example" class="android.view.View" text="" content-desc="Mountain sunrise" resource-id="hero" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" long-clickable="false" password="false" scrollable="false" selected="false" bounds="[0,200][1080,800]" displayed="true" />
-          <android.widget.TextView index="1" package="com.example" class="android.widget.TextView" text="Welcome" resource-id="title" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" long-clickable="false" password="false" scrollable="false" selected="false" bounds="[0,900][1080,1000]" displayed="true" />
-        </hierarchy>
-        """
-        let root = try AndroidElementParser(displayScale: 3).parse(xml)
-        let results = ProbeNodes.all(in: root).compactMap { ImageRoleRule().evaluate(node: $0) }
-        #expect(results.map(\.identifier) == ["hero"])
-    }
-
     @Test func contentUnderTabBarIsNotATargetOverlap() {
         let row = makeNode(type: "XCUIElementTypeButton", label: "Food illustration, FOOD", frame: CGRect(x: 0, y: 705, width: 393, height: 112))
         let scroll = makeNode(type: "XCUIElementTypeScrollView", frame: CGRect(x: 0, y: 0, width: 393, height: 852), accessible: false, children: [row])

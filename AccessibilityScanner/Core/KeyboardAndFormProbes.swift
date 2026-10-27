@@ -228,7 +228,7 @@ final class KeyboardActivationProbe {
             ProbeNodes.all(in: root)
                 .filter { $0.visible && AccessibilityRole.controls.contains($0.role) }
                 .map { ($0, KeyboardFocusTester.ringMatch(shot, node: $0, color: ring, hierarchySize: root.frame.size)) }
-                .filter { $0.1 >= 0.25 }
+                .filter { $0.1 >= KeyboardFocusTester.ringPresent }
                 .max { $0.1 < $1.1 }?.0
         }
         /// Shows a card and waits until the screen changes or the tester
@@ -266,10 +266,10 @@ final class KeyboardActivationProbe {
                     shot = next
                 } else {
                     let step = GuidedChecks.Step(
-                        title: "Press Tab on the keyboard",
-                        message: "Press Tab once to move focus towards \"\(name)\". The scanner then checks that pressing Space activates it.",
+                        title: "Move focus with the keyboard",
+                        message: "Press Tab or an arrow key once to move focus towards \"\(name)\". The scanner then checks that pressing Space activates it.",
                         actions: [GuidedChecks.Action(reply: .skip, title: "Skip")],
-                        progress: "Press Tab")
+                        progress: "Press a key")
                     guard let next = try await waitForChange(step, from: shot) else { break }
                     shot = next
                 }

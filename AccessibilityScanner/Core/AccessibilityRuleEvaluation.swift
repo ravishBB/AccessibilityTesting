@@ -70,9 +70,6 @@ nonisolated struct AccessibilityRuleEvaluation: Identifiable, Codable {
         self.frameHeight = node.frame.height
         self.textSizePoints = node.semantics.textSizePoints
     }
-
-    /// The same result for the same element with a new verdict, for checks
-    /// a later runtime test settles (a row found to open a screen).
     func settled(as status: RuleResultStatus, message: String) -> AccessibilityRuleEvaluation {
         var copy = self
         copy.status = status
@@ -80,8 +77,6 @@ nonisolated struct AccessibilityRuleEvaluation: Identifiable, Codable {
         copy.message = message
         return copy
     }
-
-    /// Platform the evaluated element was captured on.
     var platform: MobilePlatform {
         MobilePlatform.infer(fromElementType: elementType)
     }

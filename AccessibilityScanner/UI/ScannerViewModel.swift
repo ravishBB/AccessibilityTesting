@@ -413,10 +413,12 @@ final class ScannerViewModel: ObservableObject {
             // Shake and device-motion handlers, read from the app's build:
             // which screens to ask the tester to shake the phone on.
             var motionFindings: MotionHandlerInspector.Findings?
+            var languageFindings: AppLanguageInspector.Findings?
             if device.platform == .ios {
-                status = "Reading the app's build for motion handlers..."
+                status = "Reading the app's build for motion handlers and languages..."
                 let bundleID = application.bundleID
                 motionFindings = try await ProcessRunner.offMain { MotionHandlerInspector.inspect(bundleID: bundleID) }
+                languageFindings = try await ProcessRunner.offMain { AppLanguageInspector.inspect(bundleID: bundleID) }
             }
 
             let crawler = AppCrawler(
@@ -476,6 +478,7 @@ final class ScannerViewModel: ObservableObject {
             var screens = ScreenNaming.uniquified(screenResults)
             if device.platform == .ios {
                 screens = MotionHandlerInspector.settle(screens, findings: motionFindings, installedVersion: application.version)
+                screens = AppLanguageInspector.settle(screens, findings: languageFindings)
             }
 
             let finishedAt = Date()

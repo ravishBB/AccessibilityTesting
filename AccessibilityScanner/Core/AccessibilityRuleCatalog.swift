@@ -6,14 +6,13 @@
 import Foundation
 
 nonisolated enum AccessibilityImpact: String, Codable, CaseIterable {
-    case critical   // blocks a task for some users
-    case serious    // causes major difficulty
-    case moderate   // causes difficulty or annoyance
-    case minor      // polish / best practice
+    case critical
+    case serious
+    case moderate
+    case minor
 
     var displayName: String { rawValue.capitalized }
 
-    /// Lower is more important. Used for sorting.
     var rank: Int {
         switch self {
         case .critical: return 0
@@ -26,10 +25,8 @@ nonisolated enum AccessibilityImpact: String, Codable, CaseIterable {
 
 nonisolated struct AccessibilityRuleMetadata: Codable, Hashable {
     let ruleID: String
-    /// WCAG 2.2 success criterion number, e.g. "4.1.2". Nil when no criterion applies.
     let wcagCriterion: String?
     let wcagTitle: String?
-    /// "A", "AA" or "AAA".
     let wcagLevel: String?
     let impact: AccessibilityImpact
     let affectedUsers: String
@@ -46,7 +43,6 @@ nonisolated struct AccessibilityRuleMetadata: Codable, Hashable {
 
 nonisolated enum AccessibilityRuleCatalog {
 
-    /// Bump whenever a rule is added, removed, re-mapped or its logic changes.
     static let version = "2026.10.19"
 
     static func metadata(for ruleID: String) -> AccessibilityRuleMetadata {
@@ -69,28 +65,18 @@ nonisolated enum AccessibilityRuleCatalog {
     static var ruleCount: Int { table.count }
 
     // MARK: - What can run where
-
-    /// Rules Appium cannot give a result for on any platform: the evidence
-    /// (language, opacity, gestures, assistive-technology behaviour) is not
-    /// exposed. They are reported as Not tested.
     static let notAutomatable: Set<String> = [
-        "language", "contrast-opacity",
+        "contrast-opacity",
         "accessibility-interface-operable", "cancel-undo-mechanism", "input-context-change",
         "screen-reader-modal-focus", "screen-reader-trap", "screen-reader-focus-context-change",
         "motion-alternative", "multi-point-gesture-alternative", "path-based-gesture-alternative",
         "gesture-keyboard-operable"
     ]
-
-    /// Rules that also cannot run on iOS: WebDriverAgent does not report
-    /// keyboard focus, live regions, input types, hints or missing roles.
     static let notAutomatableOnIOS: Set<String> = [
         "live-region", "form-autocomplete", "missing-role", "name-via-hint",
-        // Keyboard checks run on iOS as guided checks (a keyboard on the
-        // phone, focus read from screenshots).
         "modal-accessibility"
     ]
-
-    /// Rules that by design only raise manual-review items, never pass/fail.
+    
     static let reviewOnly: Set<String> = [
         "decorative-image", "segmented-control-interactive", "tab-accessibility",
         "screen-reader-focus-order", "text-spacing", "time-limited-ui", "heading-candidate",
@@ -101,13 +87,11 @@ nonisolated enum AccessibilityRuleCatalog {
         platform == .ios ? notAutomatable.union(notAutomatableOnIOS) : notAutomatable
     }
 
-    /// Rules that can give a pass or fail on this platform.
     static func verdictCapableRuleCount(on platform: MobilePlatform) -> Int {
         Set(table.keys).subtracting(cannotRun(on: platform)).subtracting(reviewOnly).count
     }
 
     // MARK: - Table
-
     private static func e(
         _ id: String,
         _ criterion: String?,
@@ -231,6 +215,7 @@ nonisolated enum AccessibilityRuleCatalog {
 
         // Language and timing
         e("language", "3.1.1", "Language of Page / App", "A", .moderate, sr, "Use VoiceOver/TalkBack on the content and confirm pronunciation matches the language."),
+        e("content-language", "3.1.1", "Language of Page / App", "A", .serious, sr, "Check each screen's text is in the app's language, so VoiceOver/TalkBack reads it with the right voice."),
         e("language-change", "3.1.2", "Language of Parts", "AA", .minor, sr, "Focus content in a different language and confirm it is pronounced correctly."),
         e("time-limited-ui", "2.2.1", "Timing Adjustable", "A", .serious, "Users who need more time", "Let the timer approach expiry and confirm the user can extend or disable the limit."),
 

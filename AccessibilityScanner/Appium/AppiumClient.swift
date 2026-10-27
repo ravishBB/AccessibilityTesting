@@ -783,18 +783,66 @@ final class AppiumClient {
     /// On iOS XCUITest, this is used by the keyboard-focus probe to advance
     /// the native keyboard focus without tapping a particular control.
     func pressTab() async throws {
+        if platform == .ios, (try? await pressHardwareKeys(["XCUIKeyboardKeyTab"])) != nil { return }
         try await pressKey(value: "\u{E004}")
     }
 
-    /// Moves keyboard focus out of a text field that keeps Tab for itself.
+    /// Moves keyboard focus out of a text field that keeps Tab for itself,
+    /// or down inside a list.
     func pressArrowDown() async throws {
+        if platform == .ios, (try? await pressHardwareKeys(["XCUIKeyboardKeyDownArrow"])) != nil { return }
         try await pressKey(value: "\u{E015}")
+    }
+
+    func pressArrowRight() async throws {
+        if platform == .ios, (try? await pressHardwareKeys(["XCUIKeyboardKeyRightArrow"])) != nil { return }
+        try await pressKey(value: "\u{E014}")
     }
 
     /// Activates the keyboard-focused control: Space on iOS (Full Keyboard
     /// Access), Enter on Android.
     func pressActivate() async throws {
+        if platform == .ios, (try? await pressHardwareKeys(["XCUIKeyboardKeySpace"])) != nil { return }
         try await pressKey(value: platform == .ios ? "\u{E00D}" : "\u{E007}")
+    }
+
+    /// iOS: real hardware-keyboard key presses through XCTest (typeKey),
+    /// which reach keyboard focus the way a connected keyboard does. W3C key
+    /// actions only type into a focused text field. Throws where XCTest
+    /// does not support typeKey.
+    func pressHardwareKeys(_ names: [String]) async throws {
+        _ = try await executeMobile("mobile: keys", arguments: ["keys": names])
+    }
+
+    // MARK: - VoiceOver (iOS 27+, driven by XCTest)
+
+    func enableVoiceOver() async throws {
+        _ = try await executeMobile("mobile: enableVoiceOver", arguments: [:])
+    }
+
+    func disableVoiceOver() async throws {
+        _ = try await executeMobile("mobile: disableVoiceOver", arguments: [:])
+    }
+
+    /// Moves VoiceOver ("forward", "backward") and returns what it spoke.
+    func voiceOverMove(_ direction: String) async throws -> String? {
+        Self.utterance(try await executeMobile("mobile: voiceOverMove", arguments: ["direction": direction]))
+    }
+
+    /// What VoiceOver speaks for the element it is on now.
+    func voiceOverCurrentSpeech() async throws -> String? {
+        Self.utterance(try await executeMobile("mobile: voiceOverCurrentSpeech", arguments: [:]))
+    }
+
+    private static func utterance(_ value: Any?) -> String? {
+        if let text = value as? String { return text }
+        if let object = value as? [String: Any] { return object["utterance"] as? String }
+        return nil
+    }
+
+    /// Simulator only: Appium cannot shake a real device.
+    func shakeSimulator() async throws {
+        _ = try await executeMobile("mobile: shake", arguments: [:])
     }
 
     private func pressKey(value: String) async throws {

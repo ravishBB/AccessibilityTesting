@@ -189,6 +189,8 @@ nonisolated enum BBIssueCatalog {
         // Language
         case ("language", .fail): return "BB40105"
         case ("language", .pass): return "BB40106"
+        case ("content-language", .fail): return "BB40109"
+        case ("content-language", .pass): return "BB40112"
         case ("language-change", .fail): return "BB40107"
         case ("language-change", .pass): return "BB40108"
 
@@ -332,6 +334,8 @@ nonisolated enum BBIssueCatalog {
         "BB40104": "4.1.3",
         "BB40105": "3.1.1",
         "BB40106": "3.1.1",
+        "BB40109": "3.1.1",
+        "BB40112": "3.1.1",
         "BB40107": "3.1.2",
         "BB40108": "3.1.2",
         "BB40124": "4.1.2",
@@ -454,6 +458,8 @@ nonisolated enum BBIssueCatalog {
         "BB40104": "Live region is defined for dynamic content",
         "BB40105": "Missing app language",
         "BB40106": "App language is defined",
+        "BB40109": "Language of content does not match app language",
+        "BB40112": "Language of content matches the language attribute",
         "BB40107": "Change in language not defined correctly",
         "BB40108": "Change in language is defined correctly",
         "BB40124": "Non-descriptive accessible name for interactive control",

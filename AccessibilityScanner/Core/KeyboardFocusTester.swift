@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import AppKit
+import ImageIO
 
 final class KeyboardFocusTester {
 
@@ -136,6 +137,11 @@ final class KeyboardFocusTester {
         let noFocusData = baselineScreenshot
         var testerFinished = false
         var unmappedSteps = 0
+        var nextKey = "tab"
+        // Every screenshot the iOS traversal reads, kept for diagnosis.
+        let stepsFolder = visual ? Self.stepsFolder("KeyboardSteps") : nil
+        if let stepsFolder, let noFocusShot { Self.save(noFocusShot, in: stepsFolder, as: "00-before.png") }
+        var stepNumber = 0
         var noFocusLayout = true
         var ringColour: [Int]?
         var promptID: UUID?
@@ -148,16 +154,16 @@ final class KeyboardFocusTester {
             guard let guide else { return false }
             if promptID == nil {
                 let step = GuidedChecks.Step(
-                    title: "Press Tab on the keyboard",
-                    message: "Press Tab on the keyboard connected to the iPhone, once each time this card says Press Tab. Keep going until focus is back on the first control, then press Done.",
+                    title: "Move focus with the keyboard",
+                    message: "On the keyboard connected to the iPhone, press Tab to move between areas (navigation bar, list, tab bar) and the arrow keys to move inside an area, one key each time this card says Press a key. Visit every control on the screen, then press Done.",
                     actions: [GuidedChecks.Action(reply: .skip, title: "Skip this screen"),
                               GuidedChecks.Action(reply: .done, title: "Done")],
-                    progress: "Press Tab"
+                    progress: "Press a key"
                 )
                 guide.present(step)
                 promptID = step.id
             } else {
-                guide.update(progress: "Recorded \(recorded) step\(recorded == 1 ? "" : "s")\(lastFocusedName.isEmpty ? "" : ", last: \"\(lastFocusedName)\""). Press Tab")
+                guide.update(progress: "Recorded \(recorded) step\(recorded == 1 ? "" : "s")\(lastFocusedName.isEmpty ? "" : ", last: \"\(lastFocusedName)\""). Press a key")
             }
             let deadline = Date().addingTimeInterval(45)
             while let id = promptID, guide.isWaiting(id), Date() < deadline {
@@ -177,20 +183,35 @@ final class KeyboardFocusTester {
             return false
         }
 
-        /// Moves focus one step: Appium's Tab when it works, else the tester.
+        /// Moves focus one step. Keys come from Appium (XCTest presses them
+        /// like a connected keyboard) the way iOS navigates: Tab between
+        /// areas, the arrows inside one; after Tab enters an area, Down,
+        /// then Right when Down stops moving, then Tab to the next area.
+        /// Without Appium keys, the tester presses them.
         func advanceVisualFocus() async throws -> Bool {
             if tabByAppium != false {
-                try? await appium.pressTab()
-                try await Task.sleep(nanoseconds: 400_000_000)
-                let shot = Self.image(try? await appium.getScreenshot())
-                if tabByAppium == nil, let shot, let last = lastShot {
-                    tabByAppium = Self.screenChanged(last, shot)
+                let plan: [(String, () async throws -> Void)] = nextKey == "tab"
+                    ? [("tab", { try await self.appium.pressTab() })]
+                    : nextKey == "down"
+                        ? [("down", { try await self.appium.pressArrowDown() }), ("right", { try await self.appium.pressArrowRight() }), ("tab", { try await self.appium.pressTab() })]
+                        : [("right", { try await self.appium.pressArrowRight() }), ("tab", { try await self.appium.pressTab() })]
+                for (key, press) in plan {
+                    try? await press()
+                    try await Task.sleep(nanoseconds: 400_000_000)
+                    guard let shot = Self.image(try? await appium.getScreenshot()), let last = lastShot else { continue }
+                    let moved = Self.screenChanged(last, shot)
+                    if tabByAppium == nil { tabByAppium = moved }
+                    guard tabByAppium == true else { break }
+                    if moved {
+                        previousShot = lastShot
+                        lastShot = shot
+                        nextKey = key == "tab" ? "down" : key
+                        return true
+                    }
                 }
-                if tabByAppium == true {
-                    previousShot = lastShot
-                    lastShot = shot ?? lastShot
-                    return true
-                }
+                // Appium's keys moved focus before: no key moves it now,
+                // the end of the screen.
+                if tabByAppium == true { return false }
             }
             return try await waitForTesterTab()
         }
@@ -199,25 +220,38 @@ final class KeyboardFocusTester {
             guard let shot = lastShot else { return nil }
             let size = root.frame.size
             if noFocusLayout, ProbeNodes.contentScrolled(from: rootNode, to: root) { noFocusLayout = false }
-            let candidates = interactiveControls(in: [root])
+            // What keyboard focus can land on: controls, list rows, and
+            // other elements exposed to assistive technology.
+            let screenArea = root.frame.width * root.frame.height
+            let candidates = (interactiveControls(in: [root]) + ProbeNodes.all(in: root).filter {
+                $0.visible && $0.accessible && $0.role != .application && !$0.semantics.mergedIntoAncestor &&
+                    ($0.role == .cell || $0.type.contains("Cell")) && $0.frame.width * $0.frame.height < screenArea * 0.5
+            }).reduce(into: [AccessibilityNode]()) { list, node in
+                if !list.contains(where: { stableKey(for: $0) == stableKey(for: node) }) { list.append(node) }
+            }
             var found: AccessibilityNode?
             if ringColour == nil {
-                // Learn the ring from a control in the content: translucent
-                // tab and navigation bars change with what scrolls behind
-                // them, which reads like a ring.
+                // Learn the ring's colour from whatever it surrounds first:
+                // often a whole area (the list) when Tab enters it. Not from
+                // the translucent tab and navigation bars, whose pixels
+                // change with what scrolls behind them.
                 let inBars = Self.barControlFrames(in: root)
                 if let reference = noFocusLayout ? noFocusShot : previousShot {
-                    let learned = candidates
-                        .filter { control in !inBars.contains { $0.intersects(control.frame) } }
+                    let ringed = ProbeNodes.all(in: root)
+                        .filter { node in
+                            node.visible && node.role != .application && node.frame.width > 0 && node.frame.height > 0 &&
+                                !inBars.contains { $0.intersects(node.frame) }
+                        }
                         .map { ($0, Self.changeRatio(before: reference, after: shot, node: $0, hierarchySize: size)) }
                         .filter { $0.1 >= 0.015 }
                         .max { $0.1 < $1.1 }?.0
-                    if let learned, let colour = Self.ringColor(before: reference, after: shot, node: learned, hierarchySize: size) {
+                    if let ringed, let colour = Self.ringColor(before: reference, after: shot, node: ringed, hierarchySize: size) {
                         ringColour = colour
-                        found = learned
+                        // A whole area is entered, not a control reached.
+                        found = candidates.first { stableKey(for: $0) == stableKey(for: ringed) }
                     }
                 }
-                if found == nil { unmappedSteps += 1 }
+                if found == nil && ringColour == nil { unmappedSteps += 1 }
             } else if let ringColour {
                 // Where the ring arrived: in its colour now and not before.
                 func arrival(_ nodes: [AccessibilityNode]) -> AccessibilityNode? {
@@ -226,7 +260,7 @@ final class KeyboardFocusTester {
                         let before = previousShot.map { Self.ringMatch($0, node: node, color: ringColour, hierarchySize: size) } ?? 0
                         return (node, now, now - before)
                     }
-                    .filter { $0.1 >= 0.25 && $0.2 >= 0.1 }
+                    .filter { $0.1 >= Self.ringPresent && $0.2 >= Self.ringArrived }
                     .max { $0.2 < $1.2 }?.0
                 }
                 let screenArea = root.frame.width * root.frame.height
@@ -243,6 +277,17 @@ final class KeyboardFocusTester {
                         unmappedSteps += 1
                     }
                 }
+            }
+            stepNumber += 1
+            if let stepsFolder {
+                Self.save(shot, in: stepsFolder, as: String(format: "%02d-step.png", stepNumber))
+                let scores: String = ringColour.map { colour in
+                    candidates
+                        .map { (ProbeNodes.clean($0.label), Self.ringMatch(shot, node: $0, color: colour, hierarchySize: size)) }
+                        .sorted { $0.1 > $1.1 }.prefix(3)
+                        .map { "\"\($0.0)\" \(String(format: "%.2f", $0.1))" }.joined(separator: ", ")
+                } ?? "ring colour not learned"
+                trace("Keyboard step \(stepNumber): \(found.map { "\"\(ProbeNodes.clean($0.label))\"" } ?? "no element"); colour \(ringColour.map { "\($0)" } ?? "-"); best ring matches: \(scores)", Log.probes)
             }
             if let found {
                 recorded += 1
@@ -997,6 +1042,31 @@ final class KeyboardFocusTester {
     }
 
     // MARK: Focus seen in screenshots (iOS)
+
+    /// Share of a control's ring band in the ring's colour for the ring to
+    /// be there. The band is 9 pt wide and the iOS focus ring about 3 pt,
+    /// so even a ring right on it fills only about a third.
+    static let ringPresent = 0.12
+    /// How much more of the band is in the ring's colour than a step before,
+    /// for the ring to have arrived there.
+    static let ringArrived = 0.06
+
+    /// Keeps a screenshot a guided check read, for diagnosis.
+    static func save(_ image: CGImage, in folder: URL, as name: String) {
+        guard let destination = CGImageDestinationCreateWithURL(folder.appendingPathComponent(name) as CFURL, "public.png" as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(destination, image, nil)
+        CGImageDestinationFinalize(destination)
+    }
+
+    /// A fresh folder for one guided check's screenshots, under the
+    /// scanner's temporary folder.
+    static func stepsFolder(_ kind: String) -> URL {
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AccessibilityScanner/\(kind)/\(stamp)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
 
     /// Decodes a screenshot once for the comparisons below.
     static func image(_ data: Data?) -> CGImage? {

@@ -117,7 +117,7 @@ struct PlatformSemanticsTests {
         let entries = BBCoverage.entries(for: report)
         #expect(entries.count == BBRuleset.rules.count)
         #expect(entries.first { $0.id == "BB40003" }?.outcome == .found)
-        #expect(entries.first { $0.id == "BB40105" }?.outcome == .unavailable)
+        #expect(entries.first { $0.id == "BB40049" }?.outcome == .unavailable)
         #expect(entries.first { $0.id == "BB40001" }?.outcome == .manual)
     }
 

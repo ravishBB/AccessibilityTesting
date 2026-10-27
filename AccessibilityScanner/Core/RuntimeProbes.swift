@@ -407,8 +407,6 @@ final class StateUpdateProbe {
                       !KeyboardFocusTester.focusRegionChanged(
                         before: beforeShot, after: afterShot, node: control,
                         hierarchySize: (updatedRoot ?? rootNode).frame.size) {
-                // Nothing changed on screen either: the tap did not reach the
-                // control, so there is no evidence of a defect.
                 results.append(
                     ProbeEvaluation.make(
                         ruleID: ruleID,
@@ -434,8 +432,6 @@ final class StateUpdateProbe {
         return results
     }
 
-    /// Where to tap a toggle: its inner switch, or the trailing end of a
-    /// wide toggle row (the switch sits there). nil: tap the element.
     private static func switchPoint(of control: AccessibilityNode) -> CGPoint? {
         if let inner = ProbeNodes.all(in: control).dropFirst().first(where: { $0.role == .toggle && $0.visible }) {
             return CGPoint(x: inner.frame.midX, y: inner.frame.midY)
@@ -625,8 +621,6 @@ final class TextSizeProbe {
                 let a = largeTexts[i], b = largeTexts[j]
                 let labelA = ProbeNodes.clean(a.label), labelB = ProbeNodes.clean(b.label)
                 guard labelA != labelB, overlapping(a.frame, b.frame) else { continue }
-                // Already overlapping at normal size: a design choice (a
-                // badge on a title), not caused by scaling.
                 if let na = normalFrames[labelA], let nb = normalFrames[labelB], overlapping(na, nb) { continue }
                 pairs.append("\"\(labelA)\" and \"\(labelB)\"")
             }
@@ -644,7 +638,6 @@ final class TextSizeProbe {
     }
 
     // MARK: Evaluation
-
     private func evaluate(
         normal: AccessibilityNode,
         large: AccessibilityNode

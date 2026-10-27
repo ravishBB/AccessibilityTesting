@@ -78,6 +78,7 @@ nonisolated struct AccessibilityRules {
             OrientationRule(),
             ScreenReaderContentRule(),
             LanguageRule(),
+            ContentLanguageRule(),
             ModalAccessibilityRule(),
             LoadingIndicatorContrastRule(),
             StatusLiveRegionRule(),
@@ -118,9 +119,6 @@ nonisolated struct AccessibilityRules {
             FocusNotObscuredRule(),
             ModalClosableRule(),
             TextTruncationRule(),
-            TextInImageRule(),
-            ImageRoleRule(),
-            ListItemsNavigableRule(),
             IconControlRoleRule(),
             TableRowRoleRule(),
             TextOverlapRule(),
@@ -1517,6 +1515,21 @@ nonisolated struct ScreenReaderContentRule: AccessibilityRule {
     private static func flatten(_ nodes: [AccessibilityNode]) -> [AccessibilityNode] { nodes.flatMap { [$0] + flatten($0.children) } }
 }
 
+/// BB40109 / BB40112. Whether a screen's text is in the app's language.
+/// The app's language is read from its build at the end of the scan
+/// (AppLanguageInspector), which settles this placeholder.
+nonisolated struct ContentLanguageRule: AccessibilityRule {
+    let id = "content-language"
+    let title = "Language of content matches the app language"
+    let description = "A screen's text should be in the app's language, so screen readers read it with the right voice."
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
+        guard node.role == .application else { return nil }
+        return RuleHelper.notTested(ruleID: id, name: title, description: description, node: node,
+                                    message: "The app's language could not be read, so the screen's language could not be compared with it.",
+                                    remediation: "Check the screen's text is in the app's language, or marked with its own language.")
+    }
+}
+
 nonisolated struct LanguageRule: AccessibilityRule {
     let id = "language"
     let title = "Missing language attribute for content"
@@ -1729,60 +1742,6 @@ nonisolated struct FocusIndicatorContrastRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 
-/// Abra "Text presented as plain text" (1.4.5). Words drawn inside an image.
-/// Logos and essential images are allowed, so this is for a tester to judge.
-nonisolated struct TextInImageRule: AccessibilityRule, ContextualAccessibilityRule {
-    let id = "text-in-image"
-    let title = "Text presented as plain text"
-    let description = "Text should be real text, not part of an image, unless it is a logo or essential."
-
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
-
-    func evaluate(node: AccessibilityNode, context: AccessibilityRuleContext) -> AccessibilityRuleEvaluation? {
-        guard node.role == .image, node.visible, !node.semantics.partiallyVisible,
-              node.frame.width >= 40, node.frame.height >= 16,
-              let text = TextRecognizer.text(in: node.frame, context: context)
-        else { return nil }
-        let words = RuleHelper.wordList(text)
-        let letters = text.filter(\.isLetter).count
-        guard words.count >= 2 || letters >= 5 else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "This image shows the text \"\(RuleHelper.clean(text))\". Images of text cannot be resized, recoloured or reflowed, unless the image is a logo or the presentation is essential.",
-                                     remediation: "Render the words as real text styled over the image, or confirm the image is a logo or essential.")
-    }
-}
-
-/// Abra "Image role present". A picture exposed without the image role.
-nonisolated struct ImageRoleRule: AccessibilityRule {
-    let id = "image-role"
-    let title = "Image role present"
-    let description = "Pictures should be exposed with the image role so screen readers say what they are."
-
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard node.role == .other, node.visible, node.accessible, node.children.isEmpty,
-              !node.semantics.mergedIntoAncestor, !node.semantics.insideActionable,
-              !RuleHelper.clean(node.label).isEmpty,
-              node.frame.width >= 24, node.frame.height >= 24,
-              !RuleHelper.hasTrait(node, ["clickable", "checkable", "scrollable", "focusable", "heading"])
-        else { return nil }
-        let looksLikeImage: Bool
-        switch node.platform {
-        case .android:
-            // Named only by a content description, with no text of its own:
-            // how Compose, Flutter and React Native expose an untagged picture.
-            looksLikeImage = node.semantics.visibleText == nil && !node.type.contains("Text")
-        case .ios:
-            let hint = (node.identifier + " " + node.label).lowercased()
-            looksLikeImage = ["image", "photo", "picture", "illustration", "icon", "logo", "avatar", "thumbnail"]
-                .contains { hint.contains($0) }
-        }
-        guard looksLikeImage else { return nil }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "\"\(RuleHelper.clean(node.label))\" looks like a picture but is not exposed with the image role, so screen readers do not say it is an image.",
-                                     remediation: "If it is a picture, give it the image role (.accessibilityAddTraits(.isImage), Role.Image, accessibilityRole=\"image\", Semantics(image: true)); if it is decorative, hide it.")
-    }
-}
-
 /// BB40282 on iOS. A small icon with an action name (Add, Like, Share,
 /// Bookmark…) exposed as an image: SwiftUI's Image with onTapGesture and no
 /// button trait. iOS does not say whether an image is tappable, so a
@@ -1847,53 +1806,6 @@ nonisolated struct TableRowRoleRule: AccessibilityRule {
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "The row \"\(texts.prefix(3).joined(separator: ", "))\" is read as \(texts.count) separate items and the row itself has no button role. \(Self.unconfirmedNote)",
                                      remediation: "Make the selectable row one accessibility element (isAccessibilityElement = true) with a combined label and the .button trait.")
-    }
-}
-
-/// Abra "List items separately navigable" (1.3.1). Several list items merged
-/// into one screen-reader stop.
-nonisolated struct ListItemsNavigableRule: AccessibilityRule {
-    let id = "list-items-navigable"
-    let title = "List items separately navigable"
-    let description = "Each item in a list should be a separate stop for screen readers."
-
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        // One stop for screen readers: an iOS accessibility element, or an
-        // Android element TalkBack focuses as a whole.
-        let isOneStop = node.platform == .ios
-            ? node.accessible && node.role != .application
-            : RuleHelper.hasTrait(node, ["clickable", "focusable"])
-        guard isOneStop, node.visible, !node.semantics.mergedIntoAncestor else { return nil }
-
-        // Repeated item groups: siblings of the same kind and similar size,
-        // stacked or side by side, each with its own text.
-        let groups = Self.itemGroups(in: node)
-        guard groups.count >= 3 else { return nil }
-        let examples = groups.prefix(3).compactMap { RuleHelper.childTextSegments(of: $0)?.first ?? RuleHelper.clean($0.label) }
-        return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
-                                     message: "\(groups.count) separate items (for example: \(examples.map { "\"\($0)\"" }.joined(separator: ", "))) are read as one screen-reader stop, so users cannot move between them one at a time.",
-                                     remediation: "Make each list item its own accessibility element instead of combining the whole list.")
-    }
-
-    private static func itemGroups(in node: AccessibilityNode) -> [AccessibilityNode] {
-        var container = node
-        // Look through single wrapper layers.
-        while container.children.count == 1, let only = container.children.first { container = only }
-        let withText = container.children.filter { child in
-            child.visible && child.frame.width > 0 && child.frame.height > 0 &&
-                (RuleHelper.childTextSegments(of: child) != nil || (RuleHelper.isText(child) && !RuleHelper.clean(child.label).isEmpty))
-        }
-        guard withText.count >= 3 else { return [] }
-        let sameKind = Dictionary(grouping: withText, by: \.type).values.max { $0.count < $1.count } ?? []
-        guard sameKind.count >= 3 else { return [] }
-        let heights = sameKind.map(\.frame.height).sorted()
-        let median = heights[heights.count / 2]
-        let similar = sameKind.filter { abs($0.frame.height - median) <= median * 0.3 }
-        // Items, not lines of one paragraph: each group has more than one
-        // line of text or is a container of its own.
-        let structured = similar.filter { !$0.children.isEmpty }
-        let distinctTexts = Set(structured.compactMap { RuleHelper.childTextSegments(of: $0)?.joined(separator: " ") })
-        return structured.count >= 3 && distinctTexts.count >= 3 ? structured : []
     }
 }
 
