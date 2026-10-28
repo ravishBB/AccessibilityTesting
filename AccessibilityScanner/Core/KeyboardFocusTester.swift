@@ -60,24 +60,6 @@ final class KeyboardFocusTester {
     /// `viewportRoots`: the hierarchy at each scroll position of this screen,
     /// top first, so controls below the fold are expected too.
     func test(rootNode: AccessibilityNode, viewportRoots: [AccessibilityNode] = []) async throws -> Result {
-        if appium.platform == .ios, guide == nil {
-            return Result(
-                evaluations: [baseEvaluation(
-                    ruleID: "keyboard-focus",
-                    name: "Interactive elements focusable using a keyboard interface",
-                    description: "Interactive controls should be reachable through the supported keyboard focus mechanism.",
-                    node: rootNode,
-                    status: .notTested,
-                    severity: .warning,
-                    message: "Keyboard focus cannot be tested on iOS through Appium: WebDriverAgent does not report Full Keyboard Access focus.",
-                    remediation: "Connect a keyboard, turn on Full Keyboard Access, and Tab through the screen to confirm every control is reachable, visibly focused and operable."
-                )],
-                focusedSequence: [],
-                reachedControlCount: 0,
-                requiredControlCount: 0,
-                evidenceAvailable: false
-            )
-        }
         let activeModal = modalNode(in: rootNode)
         let controlsRoot = activeModal ?? rootNode
         let controls = activeModal == nil
@@ -318,7 +300,9 @@ final class KeyboardFocusTester {
             let source = try await appium.getSource()
             let root = try appium.makeParser().parse(source)
             
-            if let anyFocused = anyFocusedNode(in: root), !(anyFocused.visible && anyFocused.accessible) {
+            // iOS: WebDriverAgent's focused flag is not Full Keyboard Access
+            // focus; hidden focus there comes from the screenshots.
+            if !visual, let anyFocused = anyFocusedNode(in: root), !(anyFocused.visible && anyFocused.accessible) {
                 hiddenFocused[stableKey(for: anyFocused)] = anyFocused
             }
             if !baselineLabels.isEmpty {
@@ -343,7 +327,11 @@ final class KeyboardFocusTester {
             }
 
             stepsObserved += 1
-            if !(focused.isInteractive || focused.isKeyboardFocusable) {
+            // iOS: Tab first rings a whole area (a list, a row of chips),
+            // which is a focus group, not a stop on non-interactive content.
+            let focusGroup = visual && (focused.role == .cell || focused.type.contains("Cell") ||
+                !interactiveControls(in: [focused]).filter { stableKey(for: $0) != stableKey(for: focused) }.isEmpty)
+            if !(focused.isInteractive || focused.isKeyboardFocusable) && !focusGroup {
                 nonInteractiveFocused[stableKey(for: focused)] = focused
             }
 
@@ -443,7 +431,9 @@ final class KeyboardFocusTester {
                         node: rootNode,
                         status: .notTested,
                         severity: .warning,
-                        message: "The scanner could not observe a focused element after keyboard navigation.",
+                        message: visual && tabByAppium == false
+                            ? "The scanner pressed Tab on the phone but focus did not move. Full Keyboard Access is probably off (Settings › Accessibility › Keyboards & Typing)."
+                            : "The scanner could not observe a focused element after keyboard navigation.",
                         remediation: "Verify keyboard navigation is enabled on the device and that Appium exposes the focused/focusable state for this platform."
                     ),
                     baseEvaluation(
@@ -460,7 +450,8 @@ final class KeyboardFocusTester {
                 focusedSequence: sequence,
                 reachedControlCount: 0,
                 requiredControlCount: controls.count,
-                evidenceAvailable: false
+                evidenceAvailable: false,
+                tabByAppium: tabByAppium
             )
         }
 

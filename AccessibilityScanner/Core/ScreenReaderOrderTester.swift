@@ -104,6 +104,14 @@ final class ScreenReaderOrderTester {
         var spoken: [String] = []
         do {
             try await Task.sleep(nanoseconds: 1_000_000_000)
+            // VoiceOver starts wherever it lands; back to the first element,
+            // where a user starts reading.
+            var last = try? await appium.voiceOverCurrentSpeech()
+            for _ in 0..<80 {
+                try Task.checkCancellation()
+                guard let previous = try? await appium.voiceOverMove("backward"), !previous.isEmpty, previous != last else { break }
+                last = previous
+            }
             if let first = try? await appium.voiceOverCurrentSpeech(), !first.isEmpty { spoken.append(first) }
             var repeats = 0
             for _ in 0..<80 {
@@ -122,11 +130,30 @@ final class ScreenReaderOrderTester {
         trace("VoiceOver read \(spoken.count) items: \(spoken.prefix(8).joined(separator: " | "))", Log.probes)
 
         let elements = readable(in: screen).filter { !ProbeNodes.clean($0.label).isEmpty }
-        let order = spoken.compactMap { utterance -> AccessibilityNode? in
+        var order: [AccessibilityNode] = []
+        var used = Set<String>()
+        for utterance in spoken {
             let said = utterance.lowercased()
-            return elements
-                .filter { said.hasPrefix(ProbeNodes.clean($0.label).lowercased()) }
-                .max { ProbeNodes.clean($0.label).count < ProbeNodes.clean($1.label).count }
+            // Its label, then the end of a word: "Tech" is not "Technology".
+            let matching = elements.filter { node in
+                let label = ProbeNodes.clean(node.label).lowercased()
+                guard said.hasPrefix(label) else { return false }
+                return said.dropFirst(label.count).first.map { !($0.isLetter || $0.isNumber) } ?? true
+            }
+            guard let length = matching.map({ ProbeNodes.clean($0.label).count }).max() else { continue }
+            // Elements sharing the name (the "Tech" filter and a card's
+            // "TECH" tag): the one not read yet that follows what was read
+            // last, as VoiceOver reads; else the first on screen.
+            let candidates = matching.filter { ProbeNodes.clean($0.label).count == length }
+                .sorted { ($0.frame.minY, $0.frame.minX) < ($1.frame.minY, $1.frame.minX) }
+            let fresh = candidates.filter { !used.contains(Self.key($0)) }
+            let previous = order.last
+            let chosen = fresh.first { node in previous.map { !VisualOrder.mustPrecedeVertically(node.frame, $0.frame) } ?? true }
+                ?? fresh.first ?? candidates.first
+            if let chosen {
+                used.insert(Self.key(chosen))
+                order.append(chosen)
+            }
         }
         return verdict(order: order, screen: screen, reader: "VoiceOver", spokenCount: spoken.count)
     }
@@ -187,7 +214,7 @@ final class ScreenReaderOrderTester {
             return topElements[key]
         }
 
-        guard read.count >= 3, let assessment = VisualOrder.assess(frames: read.map(\.frame)) else {
+        guard read.count >= 3, let assessment = VisualOrder.assess(frames: read.map(\.frame), precedes: VisualOrder.mustPrecedeVertically) else {
             return [ProbeEvaluation.make(
                 ruleID: "reading-order", status: .notTested,
                 message: spokenCount.map { "\(reader) spoke \($0) item\($0 == 1 ? "" : "s") on this screen, of which \(read.count) could be matched to elements at the top of the screen: too few to judge the reading order." }
@@ -198,7 +225,7 @@ final class ScreenReaderOrderTester {
 
         let names = read.map { "\"\(ProbeNodes.clean($0.label).prefix(40))\"" }
         if assessment.ratio >= VisualOrder.passThreshold {
-            let message = "\(reader) read the screen's \(read.count) elements in visual order (top to bottom, left to right): \(names.prefix(4).joined(separator: ", "))…"
+            let message = "\(reader) read the screen's \(read.count) elements in visual order (top to bottom): \(names.prefix(4).joined(separator: ", "))…"
             return [
                 ProbeEvaluation.make(ruleID: "reading-order", status: .pass, message: message, node: screen),
                 ProbeEvaluation.make(ruleID: "screen-reader-focus-order", status: .pass, message: message, node: screen)
@@ -207,7 +234,7 @@ final class ScreenReaderOrderTester {
 
         // The first place it read something that comes earlier on screen.
         var example = ""
-        for index in read.indices.dropFirst() where VisualOrder.mustPrecede(read[index].frame, read[index - 1].frame) {
+        for index in read.indices.dropFirst() where VisualOrder.mustPrecedeVertically(read[index].frame, read[index - 1].frame) {
             example = " For example, it read \(names[index]) after \(names[index - 1]), though \(names[index]) comes first on screen."
             break
         }

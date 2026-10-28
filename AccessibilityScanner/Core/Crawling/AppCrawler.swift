@@ -124,6 +124,10 @@ final class AppCrawler {
     private enum KeyboardSetup { case unasked, ready, skipped }
     private var keyboardSetup = KeyboardSetup.unasked
     private var shakeSkipped = false
+    /// iOS: Full Keyboard Access as it was before the scan turned it on;
+    /// nil until then, or when Settings could not be driven.
+    private var fullKeyboardAccessWasOn: Bool?
+    private var fullKeyboardAccessPrepared = false
     private var screenReaderSkipped = false
 
     private var visitedScreens:
@@ -190,12 +194,18 @@ final class AppCrawler {
             "Scanning initial screen..."
         )
 
-        try await explore(
-            snapshot: initialSnapshot,
-            depth: 0,
-            statusHandler: statusHandler,
-            screenHandler: screenHandler
-        )
+        do {
+            try await explore(
+                snapshot: initialSnapshot,
+                depth: 0,
+                statusHandler: statusHandler,
+                screenHandler: screenHandler
+            )
+        } catch {
+            await restoreFullKeyboardAccess()
+            throw error
+        }
+        await restoreFullKeyboardAccess()
 
         return discoveredScreens
     }
@@ -378,15 +388,20 @@ final class AppCrawler {
         let keyboardFocusEvaluations: [AccessibilityRuleEvaluation]
         var focusResult: KeyboardFocusTester.Result?
         let focusStarted = Date()
-        var keyboardGuide = await keyboardGuideForThisScreen()
-        if keyboardGuide != nil, !(try await ensureOnScreen(topSnapshot.rootNode, depth: depth, statusHandler: statusHandler)) {
-            keyboardGuide = nil
-        }
         do {
-            focusResult = try await KeyboardFocusTester(appium: appium, guide: keyboardGuide).test(
-                rootNode: topSnapshot.rootNode,
-                viewportRoots: scrollResult.viewportCaptures.map(\.snapshot.rootNode)
-            )
+            let viewportRoots = scrollResult.viewportCaptures.map(\.snapshot.rootNode)
+            if appium.platform == .ios {
+                await prepareFullKeyboardAccess(statusHandler: statusHandler)
+                _ = try await ensureOnScreen(topSnapshot.rootNode, depth: depth, statusHandler: statusHandler)
+            }
+            focusResult = try await KeyboardFocusTester(appium: appium).test(rootNode: topSnapshot.rootNode, viewportRoots: viewportRoots)
+            // The scanner's keys did not move focus: Full Keyboard Access is
+            // off. Ask once to turn it on, then try again.
+            if focusResult?.tabByAppium == false,
+               let keyboardGuide = await keyboardGuideForThisScreen(),
+               try await ensureOnScreen(topSnapshot.rootNode, depth: depth, statusHandler: statusHandler) {
+                focusResult = try await KeyboardFocusTester(appium: appium, guide: keyboardGuide).test(rootNode: topSnapshot.rootNode, viewportRoots: viewportRoots)
+            }
             keyboardFocusEvaluations = focusResult?.evaluations ?? []
         } catch is CancellationError {
             throw CancellationError()
@@ -790,14 +805,33 @@ final class AppCrawler {
         return try await returnToScreen(screen, depth: depth, statusHandler: statusHandler)
     }
 
-    /// On iOS, the keyboard check needs a keyboard connected to the phone
-    /// with Full Keyboard Access on: asked once per scan.
+    /// On iOS, the scanner's keys move focus only with Full Keyboard Access
+    /// on. The scanner turns it on in Settings once per scan, and turns it
+    /// back off at the end if it was off.
+    private func prepareFullKeyboardAccess(statusHandler: (String) -> Void) async {
+        guard !fullKeyboardAccessPrepared, let environment = probeEnvironment, environment.allowAppInteraction else { return }
+        fullKeyboardAccessPrepared = true
+        statusHandler("Turning on Full Keyboard Access in Settings...")
+        fullKeyboardAccessWasOn = await appium.setFullKeyboardAccess(true, returningTo: environment.bundleID)
+        trace("Full Keyboard Access before the scan: \(fullKeyboardAccessWasOn.map { $0 ? "on" : "off" } ?? "could not be read")", Log.crawler)
+    }
+
+    private func restoreFullKeyboardAccess() async {
+        guard fullKeyboardAccessWasOn == false, let environment = probeEnvironment else { return }
+        let appium = appium
+        await DeviceRestore.run { _ = await appium.setFullKeyboardAccess(false, returningTo: environment.bundleID) }
+        fullKeyboardAccessWasOn = nil
+    }
+
+    /// When Settings could not be driven: asked once per scan, only after
+    /// the keys did not move focus.
     private func keyboardGuideForThisScreen() async -> GuidedChecks? {
-        guard let guide, appium.platform == .ios, probeEnvironment?.allowAppInteraction != false else { return nil }
+        guard let guide, appium.platform == .ios, probeEnvironment?.allowAppInteraction != false,
+              fullKeyboardAccessWasOn == nil else { return nil }
         if keyboardSetup == .unasked {
             let reply = await guide.ask(GuidedChecks.Step(
                 title: "Turn on Full Keyboard Access",
-                message: "To test keyboard focus, turn on Full Keyboard Access on the iPhone (Settings › Accessibility › Keyboards & Typing › Full Keyboard Access), then press Ready. No keyboard needs to be connected: the scanner presses the keys itself. Only if the phone does not take the scanner's keys will it ask you to press them on a connected keyboard.",
+                message: "The scanner pressed Tab on the iPhone but focus did not move. Turn on Full Keyboard Access (Settings › Accessibility › Keyboards & Typing › Full Keyboard Access), then press Ready. No keyboard needs to be connected: the scanner presses the keys itself.",
                 actions: [GuidedChecks.Action(reply: .skipAll, title: "Skip keyboard checks"),
                           GuidedChecks.Action(reply: .ready, title: "Ready")]
             ))
@@ -840,7 +874,7 @@ final class AppCrawler {
 
         // The Simulator can be shaken by Appium; a real phone cannot.
         if let udid = probeEnvironment?.udid, AppiumClient.isSimulatorUDID(udid) {
-            return [try await shakeSimulator(current: current, base: base, before: before, screen: screen, depth: depth, statusHandler: statusHandler)]
+            return [try await shakeSimulator(current: current, base: base, baseData: baseShot, screen: screen, depth: depth, statusHandler: statusHandler)]
         }
 
         guard let guide else { return [] }
@@ -890,20 +924,7 @@ final class AppCrawler {
             }
             let now = (try? await readRoot()) ?? current
             let appeared = ProbeNodes.contentLabels(in: now).subtracting(before)
-            // A toast is drawn, not in the tree: read the changed area, minus
-            // words that were already on screen (the feed under it).
-            let scale = Double(shot.width) / max(1, Double(current.frame.width))
-            let context = AccessibilityRuleContext(
-                screenshotData: shotData, screenshotWidth: Double(shot.width), screenshotHeight: Double(shot.height),
-                hierarchyWidth: current.frame.width, hierarchyHeight: current.frame.height)
-            let points = CGRect(x: region.minX / scale, y: region.minY / scale, width: region.width / scale, height: region.height / scale)
-            let onScreenBefore = before.joined(separator: " ").lowercased()
-            seenText = TextRecognizer.text(in: points, context: context).map { text in
-                text.split(separator: " ").filter { word in
-                    let letters = word.lowercased().filter { $0.isLetter || $0.isNumber }
-                    return !letters.isEmpty && !onScreenBefore.contains(letters)
-                }.joined(separator: " ")
-            }.flatMap { $0.isEmpty ? nil : $0 }
+            seenText = toastText(in: region, shotData: shotData, shot: shot, baseData: baseShot, current: current)
             after = now
             trace("Shake: screen changed in \(region.integral) px; new text: \(appeared.sorted().prefix(3).joined(separator: ", ")) \(seenText ?? "")", Log.crawler)
             guide.finish(.detected)
@@ -936,7 +957,7 @@ final class AppCrawler {
     /// Shakes the Simulator through Appium and watches the screen, as the
     /// guided check does for a real phone.
     private func shakeSimulator(
-        current: AccessibilityNode, base: CGImage?, before: Set<String>,
+        current: AccessibilityNode, base: CGImage?, baseData: Data?,
         screen: AccessibilityNode, depth: Int, statusHandler: @escaping (String) -> Void
     ) async throws -> AccessibilityRuleEvaluation {
         statusHandler("Shaking the Simulator...")
@@ -949,18 +970,7 @@ final class AppCrawler {
             try await Task.sleep(nanoseconds: 500_000_000)
             let settledData = (try? await appium.getScreenshot()) ?? data
             let now = (try? await readRoot()) ?? current
-            let scale = Double(shot.width) / max(1, Double(current.frame.width))
-            let context = AccessibilityRuleContext(
-                screenshotData: settledData, screenshotWidth: Double(shot.width), screenshotHeight: Double(shot.height),
-                hierarchyWidth: current.frame.width, hierarchyHeight: current.frame.height)
-            let points = CGRect(x: region.minX / scale, y: region.minY / scale, width: region.width / scale, height: region.height / scale)
-            let onScreenBefore = before.joined(separator: " ").lowercased()
-            let seen = TextRecognizer.text(in: points, context: context).map { text in
-                text.split(separator: " ").filter { word in
-                    let letters = word.lowercased().filter { $0.isLetter || $0.isNumber }
-                    return !letters.isEmpty && !onScreenBefore.contains(letters)
-                }.joined(separator: " ")
-            }.flatMap { $0.isEmpty ? nil : $0 }
+            let seen = toastText(in: region, shotData: settledData, shot: shot, baseData: baseData, current: current)
             return try await shakeResult(before: current, after: now, seenText: seen, screen: screen, depth: depth, statusHandler: statusHandler)
         }
         return ProbeEvaluation.make(
@@ -968,6 +978,33 @@ final class AppCrawler {
             message: "The app's build handles shake on this screen, but shaking the Simulator changed nothing on screen. Check what shaking does here; if it acts with no on-screen control that does the same, record it as a failure.",
             remediation: "Give every motion action an on-screen control, and let users turn motion actions off.",
             node: current)
+    }
+
+    /// A toast is drawn, not in the tree: the text read where the screen
+    /// changed, minus the words the same area showed before (the feed under
+    /// it). nil for a change too large to be a toast (a new screen), which
+    /// is described by its title instead.
+    private func toastText(in region: CGRect, shotData: Data, shot: CGImage, baseData: Data?, current: AccessibilityNode) -> String? {
+        guard region.width * region.height < Double(shot.width * shot.height) * 0.4 else { return nil }
+        let scale = Double(shot.width) / max(1, Double(current.frame.width))
+        let points = CGRect(x: region.minX / scale, y: region.minY / scale, width: region.width / scale, height: region.height / scale)
+        func read(_ data: Data) -> String? {
+            TextRecognizer.text(in: points, context: AccessibilityRuleContext(
+                screenshotData: data, screenshotWidth: Double(shot.width), screenshotHeight: Double(shot.height),
+                hierarchyWidth: current.frame.width, hierarchyHeight: current.frame.height))
+        }
+        func words(_ text: String) -> [String] {
+            text.split(separator: " ").map { String($0) }
+        }
+        func letters(_ word: String) -> String { word.lowercased().filter { $0.isLetter || $0.isNumber } }
+        guard let text = read(shotData) else { return nil }
+        let under = Set((baseData.flatMap(read).map(words) ?? []).map(letters))
+        // Also fragments of words the toast half covers ("anaka" of "Tanaka").
+        let kept = words(text).filter { word in
+            let core = letters(word)
+            return !core.isEmpty && !under.contains { $0 == core || (core.count >= 3 && $0.contains(core)) }
+        }.joined(separator: " ")
+        return kept.isEmpty ? nil : kept
     }
 
     /// Makes the screen appear again: through another tab and back for a tab
@@ -1051,10 +1088,17 @@ final class AppCrawler {
         func words(_ text: String) -> Set<String> {
             Set(text.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 3 && !stop.contains($0) })
         }
-        let appearedWords = words(([title] + appeared).joined(separator: " "))
+        // The action's words, not the content it names: a toast naming a
+        // product or the screen ("Flash Deal: Water Bottle", "Profile link
+        // copied") is not matched by that product's or tab's button.
+        let content = words(ProbeNodes.all(in: before)
+            .filter { $0.visible && $0.role == .staticText }
+            .map(\.label).joined(separator: " "))
+        let actionWords = words(([title] + appeared).joined(separator: " ")).subtracting(content)
+        let tabBarTop = before.frame.minY + before.frame.height * 0.88
         let alternative = ProbeNodes.all(in: before).first { node in
-            node.visible && (node.role == .button || node.role == .link) &&
-                !words(node.label).intersection(appearedWords).isEmpty
+            node.visible && (node.role == .button || node.role == .link) && node.frame.minY < tabBarTop &&
+                !words(node.label).intersection(actionWords).isEmpty
         }
 
         // Close what shaking opened.

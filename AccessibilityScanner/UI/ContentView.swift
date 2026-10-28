@@ -356,9 +356,9 @@ struct ContentView: View {
                     Toggle("Don't relaunch the app", isOn: $viewModel.keepAppRunning)
                         .disabled(viewModel.isScanning)
                         .help("Start from the app as it is now, keeping settings and sign-in that are not saved. The larger-text check needs a relaunch and is skipped.")
-                    Toggle("Ask me to shake the phone and use a keyboard", isOn: $viewModel.guidedChecksEnabled)
+                    Toggle("Ask me to shake the phone", isOn: $viewModel.guidedChecksEnabled)
                         .disabled(viewModel.isScanning)
-                        .help("During the scan, the scanner pauses and asks you to shake the phone (motion actuation) and to press Tab on a keyboard connected to the iPhone (keyboard focus), and watches the screen for the result.")
+                        .help("Appium cannot shake a real iPhone, so on screens whose code reacts to shake the scanner pauses and asks you to shake it, then watches the screen for the result. Keyboard and VoiceOver checks run on their own; if Full Keyboard Access is off, the scanner also asks you to turn it on.")
                 }
 
                 Text(

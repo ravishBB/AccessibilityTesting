@@ -64,8 +64,6 @@ nonisolated enum AccessibilityRole: String, Codable, Hashable {
         }
     }
 
-    /// Android class names are matched on their simple name so AndroidX,
-    /// Material and AppCompat variants resolve to the same role.
     private static func resolveAndroid(_ type: String) -> AccessibilityRole {
         if type == "hierarchy" { return .application }
 

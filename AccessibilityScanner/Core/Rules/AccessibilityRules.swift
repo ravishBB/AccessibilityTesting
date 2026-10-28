@@ -1809,7 +1809,7 @@ nonisolated struct TableRowRoleRule: AccessibilityRule {
     }
 }
 
-/// Runtime-only: checked by TextSizeProbe at the largest text size.
+/// Runtime-only: checked by TextSizeProbe at 200% text size.
 nonisolated struct TextTruncationRule: AccessibilityRule {
     let id = "text-truncation"
     let title = "Scaled text not truncated"
@@ -1817,7 +1817,7 @@ nonisolated struct TextTruncationRule: AccessibilityRule {
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 }
 
-/// Runtime-only: checked by TextSizeProbe at the largest text size.
+/// Runtime-only: checked by TextSizeProbe at 200% text size.
 nonisolated struct TextOverlapRule: AccessibilityRule {
     let id = "text-overlap"
     let title = "Scaled text not obscured"

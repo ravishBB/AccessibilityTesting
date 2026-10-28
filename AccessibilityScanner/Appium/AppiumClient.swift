@@ -845,6 +845,149 @@ final class AppiumClient {
         _ = try await executeMobile("mobile: shake", arguments: [:])
     }
 
+    // MARK: - Full Keyboard Access (iOS)
+
+    /// Turns Full Keyboard Access on or off in the Settings app
+    /// (Accessibility › Keyboards & Typing › Full Keyboard Access), then
+    /// brings `bundleID` back to the front. Returns whether it was on
+    /// before, or nil when the switch could not be reached.
+    func setFullKeyboardAccess(_ on: Bool, returningTo bundleID: String) async -> Bool? {
+        let settings = "com.apple.Preferences"
+        let fullKeyboardAccess = "type == 'XCUIElementTypeSwitch' AND label == 'Full Keyboard Access'"
+        // Each step's screenshot and outcome, kept for diagnosis.
+        let folder = KeyboardFocusTester.stepsFolder("FullKeyboardAccessSteps")
+        var log: [String] = []
+        func note(_ text: String) async {
+            log.append(text)
+            if let shot = try? await getScreenshot() {
+                try? shot.write(to: folder.appendingPathComponent(String(format: "%02d.png", log.count)))
+            }
+            trace("Full Keyboard Access: \(text)", Log.appium)
+        }
+        defer { try? log.joined(separator: "\n").write(to: folder.appendingPathComponent("log.txt"), atomically: true, encoding: .utf8) }
+
+        try? await terminateApp(bundleID: settings)
+        do {
+            try await launchApp(bundleID: settings, arguments: [])
+        } catch {
+            await note("Settings could not be opened: \(error.localizedDescription)")
+            await activateApp(bundleID: bundleID)
+            return nil
+        }
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        await note("Settings opened; foreground app \(await foregroundAppID() ?? "unknown")")
+
+        // Each row, then the element that shows its page opened.
+        let path: [(row: String, opens: String)] = [
+            ("label == 'Accessibility'", "label BEGINSWITH 'Keyboards'"),
+            ("label BEGINSWITH 'Keyboards'", "label == 'Full Keyboard Access'"),
+            ("label == 'Full Keyboard Access'", fullKeyboardAccess)
+        ]
+        var toggle = await findElementID(predicate: fullKeyboardAccess)
+        for step in path where toggle == nil {
+            // Settings may already be past this page.
+            if await findElementID(predicate: step.opens) != nil, step.opens != fullKeyboardAccess { continue }
+            var opened = false
+            for attempt in 0..<5 where !opened {
+                if attempt > 0 { try? await scrollDown(); try? await Task.sleep(nanoseconds: 600_000_000) }
+                var found = await findElementID(predicate: "type IN {'XCUIElementTypeCell', 'XCUIElementTypeButton'} AND \(step.row)")
+                if found == nil { found = await findElementID(predicate: "type == 'XCUIElementTypeStaticText' AND \(step.row)") }
+                // A row under the floating search bar, or below the screen,
+                // takes no tap: scroll it up first.
+                guard let id = found, let frame = try? await elementRect(id), let size = try? await windowSize(),
+                      frame.minY > size.height * 0.08, frame.maxY < size.height * 0.85 else { continue }
+                try? await tap(at: CGPoint(x: frame.midX, y: frame.midY))
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                opened = await findElementID(predicate: step.opens) != nil
+            }
+            await note(opened ? "Opened \(step.row)" : "Could not open \(step.row)")
+            guard opened else { break }
+            toggle = await findElementID(predicate: fullKeyboardAccess)
+        }
+
+        var before: Bool?
+        if let toggle, let value = try? await elementAttribute(toggle, "value") {
+            before = value == "1"
+            if before != on, let frame = try? await elementRect(toggle) {
+                // The switch element can span the whole row; its control is
+                // at the right end.
+                try? await tap(at: CGPoint(x: frame.maxX - 30, y: frame.midY))
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                if (try? await elementAttribute(toggle, "value")) == value { try? await clickElement(toggle) }
+            }
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            await note("Switch was \(value == "1" ? "on" : "off"), now \((try? await elementAttribute(toggle, "value")) ?? "unknown")")
+            if on {
+                // The first key from XCTest makes iOS ask to add a keyboard
+                // language; answer it here, not over the app.
+                try? await pressHardwareKeys(["XCUIKeyboardKeyTab"])
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                await note("Pressed Tab")
+                await dismissKeyboardDetectedAlert()
+            }
+        } else {
+            await note("Full Keyboard Access switch not found")
+        }
+        try? await terminateApp(bundleID: settings)
+        await activateApp(bundleID: bundleID)
+        return before
+    }
+
+    /// "Keyboard Detected: add a keyboard for this language?", shown the
+    /// first time a hardware key arrives.
+    func dismissKeyboardDetectedAlert() async {
+        _ = try? await executeMobile("mobile: alert", arguments: ["action": "accept", "buttonLabel": "Not Now"])
+    }
+
+    private func findElementID(predicate: String) async -> String? {
+        guard let sessionID else { return nil }
+        var request = URLRequest(url: baseURL.appendingPathComponent("session").appendingPathComponent(sessionID).appendingPathComponent("element"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["using": "-ios predicate string", "value": predicate])
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (try? validateResponse(response, data: data)) != nil,
+              let value = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["value"] as? [String: Any]
+        else { return nil }
+        return value["element-6066-11e4-a52e-4f735466cecf"] as? String ?? value["ELEMENT"] as? String
+    }
+
+    private func clickElement(_ id: String) async throws {
+        guard let sessionID else { throw AppiumError.noActiveSession }
+        var request = URLRequest(url: baseURL.appendingPathComponent("session").appendingPathComponent(sessionID)
+            .appendingPathComponent("element").appendingPathComponent(id).appendingPathComponent("click"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+    }
+
+    private func elementRect(_ id: String) async throws -> CGRect {
+        guard let sessionID else { throw AppiumError.noActiveSession }
+        let url = baseURL.appendingPathComponent("session").appendingPathComponent(sessionID)
+            .appendingPathComponent("element").appendingPathComponent(id).appendingPathComponent("rect")
+        let (data, response) = try await URLSession.shared.data(from: url)
+        try validateResponse(response, data: data)
+        guard let rect = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["value"] as? [String: Any],
+              let x = (rect["x"] as? NSNumber)?.doubleValue, let y = (rect["y"] as? NSNumber)?.doubleValue,
+              let width = (rect["width"] as? NSNumber)?.doubleValue, let height = (rect["height"] as? NSNumber)?.doubleValue
+        else { throw AppiumError.invalidResponse }
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    private func elementAttribute(_ id: String, _ name: String) async throws -> String? {
+        guard let sessionID else { throw AppiumError.noActiveSession }
+        let url = baseURL.appendingPathComponent("session").appendingPathComponent(sessionID)
+            .appendingPathComponent("element").appendingPathComponent(id)
+            .appendingPathComponent("attribute").appendingPathComponent(name)
+        let (data, response) = try await URLSession.shared.data(from: url)
+        try validateResponse(response, data: data)
+        let value = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["value"]
+        return value as? String ?? (value as? NSNumber)?.stringValue
+    }
+
     private func pressKey(value: String) async throws {
         guard let sessionID else {
             throw AppiumError.noActiveSession

@@ -250,7 +250,11 @@ nonisolated enum ScreenResultBuilder {
     /// again on every viewport here, so a verdict the crawler reached (a row
     /// that opened a screen) is applied after them, not before.
     private static func settled(_ evaluations: [AccessibilityRuleEvaluation], _ screen: CrawledScreen) -> [AccessibilityRuleEvaluation] {
-        screen.rowTap?.settle(evaluations) ?? evaluations
+        let settled = screen.rowTap?.settle(evaluations) ?? evaluations
+        // A check that ran (VoiceOver's reading order) replaces the "cannot
+        // tell from the hierarchy" result for the same element.
+        let decided = Set(settled.filter { $0.status != .notTested }.map(evaluationKey))
+        return settled.filter { $0.status != .notTested || !decided.contains(evaluationKey($0)) }
     }
 
     static func evaluationKey(_ evaluation: AccessibilityRuleEvaluation) -> String {

@@ -208,14 +208,14 @@ final class KeyboardActivationProbe {
     /// during the Tab traversal. Tab and Space come from Appium when they
     /// reach the phone's keyboard focus, otherwise from the tester.
     private func testWithScreenshots(candidates: [AccessibilityNode], tabLimit: Int, rootNode: AccessibilityNode) async throws -> [AccessibilityRuleEvaluation] {
-        guard let guide, let ring = focusResult?.ringColour else {
+        let tabByAppium = focusResult?.tabByAppium == true
+        guard let ring = focusResult?.ringColour, tabByAppium || guide != nil else {
             return [ProbeEvaluation.make(
                 ruleID: ruleID, status: .notTested,
-                message: "Keyboard activation was not tested: it needs the keyboard focus check to have run with a keyboard connected to the phone.",
-                remediation: "Tab to each button and link with a hardware keyboard and press Space to confirm it activates.",
+                message: "Keyboard activation was not tested: keyboard focus could not be moved on the phone (Full Keyboard Access may be off).",
+                remediation: "Turn on Full Keyboard Access, Tab to each button and link and press Space to confirm it activates.",
                 node: rootNode)]
         }
-        let tabByAppium = focusResult?.tabByAppium == true
         var results: [AccessibilityRuleEvaluation] = []
 
         func screenshot() async -> CGImage? { KeyboardFocusTester.image(try? await appium.getScreenshot()) }
@@ -234,6 +234,7 @@ final class KeyboardActivationProbe {
         /// Shows a card and waits until the screen changes or the tester
         /// answers. Returns the changed screenshot, or nil.
         func waitForChange(_ step: GuidedChecks.Step, from start: CGImage) async throws -> CGImage? {
+            guard let guide else { return nil }
             guide.present(step)
             defer { if guide.isWaiting(step.id) { guide.finish(.detected) } }
             let deadline = Date().addingTimeInterval(45)
@@ -296,7 +297,7 @@ final class KeyboardActivationProbe {
                     activated = after
                 }
             }
-            if activated == nil {
+            if activated == nil, !tabByAppium, let guide {
                 let step = GuidedChecks.Step(
                     title: "Press Space on the keyboard",
                     message: "Focus is on \"\(name)\". Press Space once to activate it. If nothing happens, press Nothing happened.",

@@ -169,8 +169,8 @@ nonisolated enum AccessibilityRuleCatalog {
         // Text resizing and spacing
         e("text-resize", "1.4.4", "Resize Text", "AA", .serious, "Low-vision users", "Increase the system text size to the maximum and confirm text stays readable without clipping or overlap."),
         e("text-clipping", "1.4.4", "Resize Text", "AA", .serious, "Low-vision users", "Increase the system text size and confirm no text is cut off or truncated."),
-        e("text-truncation", "1.4.4", "Resize Text", "AA", .serious, "Low-vision users", "Set the largest text size and confirm no text is shortened with an ellipsis (…)."),
-        e("text-overlap", "1.4.4", "Resize Text", "AA", .serious, "Low-vision users", "Set the largest text size and confirm no text overlaps other text."),
+        e("text-truncation", "1.4.4", "Resize Text", "AA", .serious, "Low-vision users", "Set text to 200% and confirm no text is shortened with an ellipsis (…)."),
+        e("text-overlap", "1.4.4", "Resize Text", "AA", .serious, "Low-vision users", "Set text to 200% and confirm no text overlaps other text."),
         e("text-spacing", "1.4.12", "Text Spacing", "AA", .moderate, "Users with dyslexia or low vision", "Increase text spacing settings and confirm content does not overlap or get cut off."),
 
         // Keyboard / focus / gestures

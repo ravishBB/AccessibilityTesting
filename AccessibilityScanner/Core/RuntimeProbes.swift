@@ -452,7 +452,9 @@ final class TextSizeProbe {
     /// test, replayed after each relaunch.
     private let route: [String]
 
-    private static let iosCategory = "UICTContentSizeCategoryAccessibilityXXXL"
+    /// 200% text, as WCAG 1.4.4 asks: Accessibility L sets body text from
+    /// 17 pt to 33 pt (194%), the iOS size closest to double.
+    private static let iosCategory = "UICTContentSizeCategoryAccessibilityL"
     private static let androidScale = "2.0"
 
     init(
@@ -564,8 +566,8 @@ final class TextSizeProbe {
     static func truncation(normal: AccessibilityNode, large: AccessibilityNode, screenshot: Data?) -> [AccessibilityRuleEvaluation] {
         guard let screenshot, let size = ProbeNodes.imageSize(screenshot) else {
             return [ProbeEvaluation.make(ruleID: "text-truncation", status: .notTested,
-                                         message: "No screenshot could be taken at the largest text size, so shortened text could not be checked.",
-                                         remediation: "Set the largest text size and confirm no text ends with \"…\".", node: normal)]
+                                         message: "No screenshot could be taken at 200% text size, so shortened text could not be checked.",
+                                         remediation: "Set text to 200% and confirm no text ends with \"…\".", node: normal)]
         }
         let context = AccessibilityRuleContext(
             screenshotData: screenshot, screenshotWidth: size.width, screenshotHeight: size.height,
@@ -590,11 +592,11 @@ final class TextSizeProbe {
 
         if truncated.isEmpty {
             return [ProbeEvaluation.make(ruleID: "text-truncation", status: .pass,
-                                         message: "No text was shortened with an ellipsis at the largest text size (\(texts.count) text elements read).",
+                                         message: "No text was shortened with an ellipsis at 200% text size (\(texts.count) text elements read).",
                                          node: normal)]
         }
         return [ProbeEvaluation.make(ruleID: "text-truncation", status: .fail,
-                                     message: "\(truncated.count) text element\(truncated.count == 1 ? " is" : "s are") shortened with an ellipsis at the largest text size, so part of the text cannot be read (for example: \(truncated.prefix(2).joined(separator: "; "))).",
+                                     message: "\(truncated.count) text element\(truncated.count == 1 ? " is" : "s are") shortened with an ellipsis at 200% text size, so part of the text cannot be read (for example: \(truncated.prefix(2).joined(separator: "; "))).",
                                      remediation: "Let the text wrap onto more lines (lineLimit(nil) / maxLines unset) instead of truncating it.",
                                      node: normal)]
     }
@@ -628,11 +630,11 @@ final class TextSizeProbe {
 
         if pairs.isEmpty {
             return [ProbeEvaluation.make(ruleID: "text-overlap", status: .pass,
-                                         message: "No text overlapped other text at the largest text size.",
+                                         message: "No text overlapped other text at 200% text size.",
                                          node: normal)]
         }
         return [ProbeEvaluation.make(ruleID: "text-overlap", status: .fail,
-                                     message: "\(pairs.count) pair\(pairs.count == 1 ? "" : "s") of text overlap at the largest text size (for example: \(pairs.prefix(2).joined(separator: "; "))).",
+                                     message: "\(pairs.count) pair\(pairs.count == 1 ? "" : "s") of text overlap at 200% text size (for example: \(pairs.prefix(2).joined(separator: "; "))).",
                                      remediation: "Let containers grow with the text (no fixed heights) so scaled text pushes other content down instead of drawing over it.",
                                      node: normal)]
     }
@@ -661,7 +663,7 @@ final class TextSizeProbe {
                     ruleID: "text-resize",
                     status: .validate,
                     message: "The larger text size was applied but fewer than three text elements could be matched between the two layouts, so the result is inconclusive.",
-                    remediation: "Open the app at the largest text size and confirm text grows and stays readable.",
+                    remediation: "Open the app at 200% text size and confirm text grows and stays readable.",
                     node: normal
                 )
             )
@@ -681,7 +683,7 @@ final class TextSizeProbe {
                     results.append(ProbeEvaluation.make(
                         ruleID: "text-resize",
                         status: .fail,
-                        message: "\"\(ProbeNodes.clean(label))\" stayed the same size at the largest text size while other text grew \(String(format: "%.1f", median))×, so it uses a fixed font size.",
+                        message: "\"\(ProbeNodes.clean(label))\" stayed the same size at 200% text size while other text grew \(String(format: "%.1f", median))×, so it uses a fixed font size.",
                         remediation: "Use a scalable font for this text (UIFontMetrics / preferredFont with adjustsFontForContentSizeCategory, or Dynamic Type in SwiftUI).",
                         node: node
                     ))
@@ -692,7 +694,7 @@ final class TextSizeProbe {
                     ProbeEvaluation.make(
                         ruleID: "text-resize",
                         status: .fail,
-                        message: "Text did not grow at the largest text size (median size change \(String(format: "%.2f", median))x across \(ratios.count) elements).",
+                        message: "Text did not grow at 200% text size (median size change \(String(format: "%.2f", median))x across \(ratios.count) elements).",
                         remediation: "Use scalable text (Dynamic Type on iOS, sp units on Android) instead of fixed font sizes.",
                         node: normal
                     )
@@ -708,7 +710,7 @@ final class TextSizeProbe {
                     grown.append(ProbeEvaluation.make(
                         ruleID: "text-resize",
                         status: .pass,
-                        message: "\"\(ProbeNodes.clean(label))\" grew \(String(format: "%.1f", Double(largeHeight / normalHeight)))× at the largest text size.",
+                        message: "\"\(ProbeNodes.clean(label))\" grew \(String(format: "%.1f", Double(largeHeight / normalHeight)))× at 200% text size.",
                         node: node
                     ))
                 }
@@ -716,7 +718,7 @@ final class TextSizeProbe {
                     ? [ProbeEvaluation.make(
                         ruleID: "text-resize",
                         status: .pass,
-                        message: "Text grew at the largest text size (median size change \(String(format: "%.2f", median))x across \(ratios.count) elements).",
+                        message: "Text grew at 200% text size (median size change \(String(format: "%.2f", median))x across \(ratios.count) elements).",
                         node: normal
                     )]
                     : grown
@@ -731,7 +733,7 @@ final class TextSizeProbe {
                 ProbeEvaluation.make(
                     ruleID: "text-clipping",
                     status: .pass,
-                    message: "No clipped text was detected at the largest text size.",
+                    message: "No clipped text was detected at 200% text size.",
                     node: normal
                 )
             )
@@ -741,7 +743,7 @@ final class TextSizeProbe {
                 ProbeEvaluation.make(
                     ruleID: "text-clipping",
                     status: .fail,
-                    message: "\(clipped.count) text element\(clipped.count == 1 ? "" : "s") clipped at the largest text size (for example: \(sample)).",
+                    message: "\(clipped.count) text element\(clipped.count == 1 ? "" : "s") clipped at 200% text size (for example: \(sample)).",
                     remediation: "Let text wrap or the container grow so no text is cut off at larger text sizes.",
                     node: normal
                 )
@@ -801,7 +803,7 @@ final class TextSizeProbe {
                 ruleID: $0,
                 status: .notTested,
                 message: "Larger text was not tested. \(reason)",
-                remediation: "Set the device to its largest text size and review the app manually.",
+                remediation: "Set the device text size to 200% and review the app manually.",
                 node: node
             )
         }
