@@ -806,13 +806,40 @@ final class AppiumClient {
         try await pressKey(value: platform == .ios ? "\u{E00D}" : "\u{E007}")
     }
 
-    /// iOS: real hardware-keyboard key presses through XCTest (typeKey),
-    /// which reach keyboard focus the way a connected keyboard does. W3C key
-    /// actions only type into a focused text field. Throws where XCTest
-    /// does not support typeKey.
+    /// iOS: hardware-keyboard key presses. Sent as IOHID keyboard events
+    /// first: Full Keyboard Access ignores keys typed through XCTest's
+    /// typeKey (`mobile: keys`), so Tab drew no focus ring even with it on.
+    /// W3C key actions only type into a focused text field. Throws where
+    /// neither is supported.
     func pressHardwareKeys(_ names: [String]) async throws {
+        let usages = names.compactMap { Self.hidKeyboardUsage[$0] }
+        if usages.count == names.count {
+            do {
+                for usage in usages {
+                    // Page 7 is the HID keyboard page; 0.005 s is one press.
+                    _ = try await executeMobile("mobile: performIoHidEvent",
+                                                arguments: ["page": 7, "usage": usage, "durationSeconds": 0.005])
+                }
+                return
+            } catch {}
+        }
         _ = try await executeMobile("mobile: keys", arguments: ["keys": names])
     }
+
+    /// iOS: presses Shift, which moves no focus. The first key iOS sees
+    /// hides the home indicator; doing that here keeps the change out of
+    /// the first Tab's screenshot.
+    func wakeHardwareKeyboard() async {
+        _ = try? await executeMobile("mobile: performIoHidEvent",
+                                     arguments: ["page": 7, "usage": 0xE1, "durationSeconds": 0.005])
+    }
+
+    private static let hidKeyboardUsage: [String: Int] = [
+        "XCUIKeyboardKeyTab": 0x2B,
+        "XCUIKeyboardKeySpace": 0x2C,
+        "XCUIKeyboardKeyRightArrow": 0x4F,
+        "XCUIKeyboardKeyDownArrow": 0x51
+    ]
 
     // MARK: - VoiceOver (iOS 27+, driven by XCTest)
 

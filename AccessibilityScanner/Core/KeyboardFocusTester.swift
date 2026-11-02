@@ -101,6 +101,10 @@ final class KeyboardFocusTester {
 
         // Enough Tabs to pass every control and wrap back to the first one.
         let maxTabs = min(maxAdditionalTabs, max(4, controls.count * 2 + 4))
+        if appium.platform == .ios {
+            await appium.wakeHardwareKeyboard()
+            try await Task.sleep(nanoseconds: 800_000_000)
+        }
         var baselineScreenshot = try? await appium.getScreenshot()
 
         var textFieldsLeftByArrow = Set<String>()

@@ -42,9 +42,6 @@ nonisolated enum RowTapResult {
     case inert
 }
 
-/// Row taps on one screen: one tap per kind of row, since a profile header
-/// and the article rows under it behave differently. Rows of a kind are
-/// rows of about the same height in the same list.
 nonisolated struct RowTaps {
     struct Verdict {
         let rowHeight: Double
@@ -128,6 +125,7 @@ final class AppCrawler {
     /// nil until then, or when Settings could not be driven.
     private var fullKeyboardAccessWasOn: Bool?
     private var fullKeyboardAccessPrepared = false
+    private var fullKeyboardAccessOn: Bool?
     private var screenReaderSkipped = false
 
     private var visitedScreens:
@@ -144,8 +142,6 @@ final class AppCrawler {
     private let pointerCancellationScreens = 2
     private var isLost = false
 
-    /// Every label seen on a scanned screen, at all its scroll positions:
-    /// returning to a screen often lands part-way down it.
     private var screenContentLabels: [String: Set<String>] = [:]
     
     private static let overlayPackages: Set<String> = [
@@ -424,9 +420,6 @@ final class AppCrawler {
             route: route,
             focusResult: focusResult
         )
-
-        // Tab scrolls the screen to each focused control; the actions below
-        // use positions from the top of the screen.
         if focusResult?.evidenceAvailable == true {
             _ = try? await scrolledToTop(topSnapshot, statusHandler: statusHandler)
         }
@@ -809,18 +802,35 @@ final class AppCrawler {
     /// on. The scanner turns it on in Settings once per scan, and turns it
     /// back off at the end if it was off.
     private func prepareFullKeyboardAccess(statusHandler: (String) -> Void) async {
-        guard !fullKeyboardAccessPrepared, let environment = probeEnvironment, environment.allowAppInteraction else { return }
-        fullKeyboardAccessPrepared = true
-        statusHandler("Turning on Full Keyboard Access in Settings...")
-        fullKeyboardAccessWasOn = await appium.setFullKeyboardAccess(true, returningTo: environment.bundleID)
-        trace("Full Keyboard Access before the scan: \(fullKeyboardAccessWasOn.map { $0 ? "on" : "off" } ?? "could not be read")", Log.crawler)
+        guard let environment = probeEnvironment, environment.allowAppInteraction else { return }
+        if !fullKeyboardAccessPrepared {
+            fullKeyboardAccessPrepared = true
+            statusHandler("Turning on Full Keyboard Access in Settings...")
+            fullKeyboardAccessWasOn = await appium.setFullKeyboardAccess(true, returningTo: environment.bundleID)
+            fullKeyboardAccessOn = fullKeyboardAccessWasOn == nil ? nil : true
+            trace("Full Keyboard Access before the scan: \(fullKeyboardAccessWasOn.map { $0 ? "on" : "off" } ?? "could not be read")", Log.crawler)
+            return
+        }
+        guard fullKeyboardAccessOn == false else { return }
+        statusHandler("Turning Full Keyboard Access back on...")
+        if await appium.setFullKeyboardAccess(true, returningTo: environment.bundleID) != nil { fullKeyboardAccessOn = true }
+    }
+
+    /// Shake reaches the screen's handler (its first responder) only with
+    /// Full Keyboard Access off.
+    private func pauseFullKeyboardAccess(statusHandler: (String) -> Void) async {
+        guard fullKeyboardAccessOn == true, let environment = probeEnvironment else { return }
+        statusHandler("Turning off Full Keyboard Access for the shake check...")
+        if await appium.setFullKeyboardAccess(false, returningTo: environment.bundleID) != nil { fullKeyboardAccessOn = false }
     }
 
     private func restoreFullKeyboardAccess() async {
-        guard fullKeyboardAccessWasOn == false, let environment = probeEnvironment else { return }
+        guard let wasOn = fullKeyboardAccessWasOn, let on = fullKeyboardAccessOn, wasOn != on,
+              let environment = probeEnvironment else { return }
         let appium = appium
-        await DeviceRestore.run { _ = await appium.setFullKeyboardAccess(false, returningTo: environment.bundleID) }
+        await DeviceRestore.run { _ = await appium.setFullKeyboardAccess(wasOn, returningTo: environment.bundleID) }
         fullKeyboardAccessWasOn = nil
+        fullKeyboardAccessOn = nil
     }
 
     /// When Settings could not be driven: asked once per scan, only after
@@ -840,11 +850,7 @@ final class AppCrawler {
         return keyboardSetup == .ready ? guide : nil
     }
 
-    /// Asks the tester to shake the phone and watches what it does, only
-    /// where the app's build shows motion actuation: screens whose code
-    /// handles shake, and the first screen for a handler that could not be
-    /// tied to a screen. With no build read there is no evidence, so the
-    /// tester is not asked.
+    
     private func testShake(on screen: AccessibilityNode, route: [NavigationAction], depth: Int, statusHandler: @escaping (String) -> Void) async throws -> [AccessibilityRuleEvaluation] {
         guard !shakeSkipped, probeEnvironment?.allowAppInteraction != false,
               let motionFindings else { return [] }
@@ -855,9 +861,7 @@ final class AppCrawler {
         let firstScreenUnnamed = discoveredScreens.isEmpty && (motionFindings.unnamedShakeHandler || motionFindings.usesCoreMotion)
         guard !handlers.isEmpty || firstScreenUnnamed else { return [] }
 
-        // Apps listen for shake from when a screen appears (UIKit's first
-        // responder); the scanner's own checks can leave the screen without
-        // it. Show the screen again, as a user arriving at it would.
+        await pauseFullKeyboardAccess(statusHandler: statusHandler)
         guard try await ensureOnScreen(screen, depth: depth, statusHandler: statusHandler) else { return [] }
         await reappear(screen, route: route)
         var current = try? await readRoot()
@@ -867,12 +871,9 @@ final class AppCrawler {
         }
         guard let current else { return [] }
         let before = ProbeNodes.contentLabels(in: current)
-        // Shaking often answers with something brief and not in the
-        // accessibility tree (a toast): watch the screenshot, not the tree.
         let baseShot = try? await appium.getScreenshot()
         let base = KeyboardFocusTester.image(baseShot)
 
-        // The Simulator can be shaken by Appium; a real phone cannot.
         if let udid = probeEnvironment?.udid, AppiumClient.isSimulatorUDID(udid) {
             return [try await shakeSimulator(current: current, base: base, baseData: baseShot, screen: screen, depth: depth, statusHandler: statusHandler)]
         }
@@ -905,15 +906,11 @@ final class AppCrawler {
                   let first = KeyboardFocusTester.image(firstData),
                   KeyboardFocusTester.changedRegion(base, first, ignoreTop: ignoreTop) != nil
             else { continue }
-            // Something changed: let a toast finish fading in, then read it
-            // while it is still on screen.
             try await Task.sleep(nanoseconds: 500_000_000)
             guard let shotData = try? await appium.getScreenshot(),
                   let shot = KeyboardFocusTester.image(shotData),
                   let region = KeyboardFocusTester.changedRegion(base, shot, ignoreTop: ignoreTop)
             else { continue }
-            // Shaking can set off something outside the app (the camera on
-            // the lock screen, an Action button): not the app's answer.
             if let target = probeEnvironment?.bundleID,
                let foreground = await appium.foregroundAppID(), foreground != target {
                 trace("Shake: the phone left the app (\(foreground)); bringing it back", Log.crawler)
@@ -980,10 +977,6 @@ final class AppCrawler {
             node: current)
     }
 
-    /// A toast is drawn, not in the tree: the text read where the screen
-    /// changed, minus the words the same area showed before (the feed under
-    /// it). nil for a change too large to be a toast (a new screen), which
-    /// is described by its title instead.
     private func toastText(in region: CGRect, shotData: Data, shot: CGImage, baseData: Data?, current: AccessibilityNode) -> String? {
         guard region.width * region.height < Double(shot.width * shot.height) * 0.4 else { return nil }
         let scale = Double(shot.width) / max(1, Double(current.frame.width))
@@ -1007,15 +1000,11 @@ final class AppCrawler {
         return kept.isEmpty ? nil : kept
     }
 
-    /// Makes the screen appear again: through another tab and back for a tab
-    /// screen, or back and forward for a screen opened from another one.
     private func reappear(_ screen: AccessibilityNode, route: [NavigationAction]) async {
         let settle = configuration.settleDelayNanoseconds
         let last = route.last
         let isTab = last.map { isSharedNavigation($0, in: screen) } ?? true
         if isTab {
-            // Bottom-bar buttons; the screen's own tab is the selected one,
-            // or the one the route ended on.
             let height = screen.frame.height
             let tabs = ProbeNodes.all(in: screen).filter { node in
                 node.role == .button && node.visible && node.frame.minY >= screen.frame.minY + height * 0.85 &&
@@ -1039,12 +1028,7 @@ final class AppCrawler {
             try? await Task.sleep(nanoseconds: settle)
         }
     }
-
-    /// The tester swipes through the screen with VoiceOver (TalkBack) and
-    /// the scanner follows its cursor: the real reading order.
     private func testScreenReaderOrder(on snapshot: StableScanSnapshot, depth: Int, statusHandler: @escaping (String) -> Void) async throws -> [AccessibilityRuleEvaluation] {
-        // On iOS 27+ VoiceOver is driven automatically; the tester is only
-        // asked to swipe where it cannot be (with guided checks on).
         guard !screenReaderSkipped, probeEnvironment?.allowAppInteraction != false,
               guide != nil || appium.platform == .ios else { return [] }
         let screen = snapshot.rootNode
@@ -1055,14 +1039,10 @@ final class AppCrawler {
         let name = ScreenNaming.name(for: screen, number: discoveredScreens.count + 1)
         let outcome = try await ScreenReaderOrderTester(appium: appium, guide: guide).test(screen: screen, name: name)
         if outcome.skipAll { screenReaderSkipped = true }
-        // The tester may have left the screen scrolled; the actions explored
-        // next use positions from the top.
         _ = try? await scrolledToTop(snapshot, statusHandler: statusHandler)
         return outcome.evaluations
     }
 
-    /// What shaking opened, whether the screen has a control that does the
-    /// same, and back to the screen.
     private func shakeResult(
         before: AccessibilityNode,
         after: AccessibilityNode,
@@ -1077,8 +1057,13 @@ final class AppCrawler {
         // where the screen changed (a toast), new labels, the new screen's
         // own title.
         let screenTitle = ScreenNaming.name(for: after, number: 0)
+        // A whole other screen, with no toast or alert: named by its title,
+        // not its text, and not certain to be shaking's doing.
+        let newScreen = alert == nil && seenText == nil && !isSameScreen(after, before)
+        let newScreenTitle: String? = newScreen ? (screenTitle.hasPrefix("Screen ") ? "" : screenTitle) : nil
         let title = alert.map { ProbeNodes.clean($0.label) }.flatMap { $0.isEmpty ? nil : $0 }
             ?? seenText
+            ?? newScreenTitle
             ?? (appeared.isEmpty ? nil : appeared.sorted().prefix(2).joined(separator: ", "))
             ?? (isSameScreen(after, before) || screenTitle.hasPrefix("Screen ") ? "" : screenTitle)
         let described = title.isEmpty ? "a change on screen" : "\"\(title)\""
@@ -1088,9 +1073,7 @@ final class AppCrawler {
         func words(_ text: String) -> Set<String> {
             Set(text.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 3 && !stop.contains($0) })
         }
-        // The action's words, not the content it names: a toast naming a
-        // product or the screen ("Flash Deal: Water Bottle", "Profile link
-        // copied") is not matched by that product's or tab's button.
+    
         let content = words(ProbeNodes.all(in: before)
             .filter { $0.visible && $0.role == .staticText }
             .map(\.label).joined(separator: " "))
@@ -1101,7 +1084,6 @@ final class AppCrawler {
                 !words(node.label).intersection(actionWords).isEmpty
         }
 
-        // Close what shaking opened.
         if let alert {
             let buttons = ProbeNodes.all(in: alert).filter { $0.role == .button }
             if let dismiss = ActionSafety.dismissButton(in: buttons), let xpath = NavigationAction(node: dismiss).xpath {
@@ -1120,6 +1102,13 @@ final class AppCrawler {
                 message: "Shaking the phone showed \(described). The screen also has the \"\(ProbeNodes.clean(alternative.label))\" control, which offers the same without motion.",
                 node: before)
         }
+        if newScreen {
+            return ProbeEvaluation.make(
+                ruleID: "motion-alternative", status: .validate,
+                message: "While the scanner watched for a shake, the app moved to another screen (\(described)), with no toast or alert. Check whether shaking opened it; if it did and no control on this screen does the same, record it as a failure.",
+                remediation: "Give every motion action an on-screen control, and let users turn motion actions off.",
+                node: before)
+        }
         return ProbeEvaluation.make(
             ruleID: "motion-alternative", status: .fail,
             message: "Shaking the phone showed \(described). No control on this screen does the same, so people who cannot shake the device (a mounted phone, limited movement) cannot reach it.",
@@ -1129,9 +1118,6 @@ final class AppCrawler {
 
     // MARK: - Row tap (BB40282)
 
-    /// Taps one row of each kind that has no role (the rows `row-role`
-    /// reports), up to three kinds, on its title away from any button in the
-    /// row, and goes back. nil: no such rows, or interaction not allowed.
     private func testRowTaps(
         on screen: AccessibilityNode,
         viewportRoots: [AccessibilityNode],
@@ -1169,9 +1155,6 @@ final class AppCrawler {
         return taps.verdicts.isEmpty ? nil : taps
     }
 
-    /// Taps one row of the given kind. nil: no such row could be reached, or
-    /// the result was unclear (the row changed in place), so rows of this
-    /// kind stay Validate.
     private func tapRow(
         ofHeight kind: Double,
         on screen: AccessibilityNode,
@@ -1386,15 +1369,11 @@ final class AppCrawler {
         return false
     }
 
-    /// Already scanned: the same fingerprint, or mostly the same content as a
-    /// discovered screen (moving carousels and clocks change fingerprints).
     private func isVisited(_ root: AccessibilityNode) -> Bool {
         if visitedScreens.contains(contentFingerprint(from: root)) { return true }
         return discoveredScreens.contains { isSameScreen($0.rootNode, root) }
     }
 
-    /// Tab-bar items and buttons in a bottom bar: navigation repeated on
-    /// every screen.
     private func isSharedNavigation(_ action: NavigationAction, in screen: AccessibilityNode) -> Bool {
         if action.type.contains("TabBar") { return true }
         let height = screen.frame.height
@@ -1402,10 +1381,6 @@ final class AppCrawler {
         return action.frame.minY >= screen.frame.minY + height * 0.85 && action.frame.height <= 100
     }
 
-    /// Whether two snapshots show the same screen: at least 60% of their
-    /// visible text and control labels in common. An exact fingerprint
-    /// treats a toggled bookmark, a selected chip or a clock as a different
-    /// screen, which made the crawler think it was lost and stop.
     private func isSameScreen(_ a: AccessibilityNode, _ b: AccessibilityNode) -> Bool {
         let labelsA = ProbeNodes.contentLabels(in: a)
         let labelsB = ProbeNodes.contentLabels(in: b)
