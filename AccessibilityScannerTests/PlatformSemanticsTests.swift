@@ -82,6 +82,40 @@ struct PlatformSemanticsTests {
         #expect(BBIssueCatalog.issue(for: evaluation)?.id == "BB40028")
     }
 
+    /// BloomApp Explore at 200% text (27 Nov 2026): a trending chip with a
+    /// 44 pt minimum height grew only wider; the Settings "Issue:" label
+    /// (AppFont.fixed(9)) grew in neither direction.
+    @Test func textThatGrowsOnlyWiderIsNotFixedSize() {
+        let chip = TextSizeProbe.growth(from: CGRect(x: 16, y: 217, width: 93, height: 44),
+                                        to: CGRect(x: 16, y: 230, width: 175, height: 44))
+        #expect(chip >= 1.1)
+        let issueLabel = TextSizeProbe.growth(from: CGRect(x: 76, y: 264, width: 208, height: 12),
+                                              to: CGRect(x: 76, y: 512, width: 208, height: 12))
+        #expect(issueLabel < 1.1)
+    }
+
+    /// BloomApp at 200% text (27 Nov 2026, iPhone 16): an alert shown at
+    /// launch blocked the tab tap that leads back to the screen under test.
+    /// The text-size probe closes it with its OK button.
+    @Test func launchAlertIsClosedWithItsOKButton() throws {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <AppiumAUT>
+          <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="BloomApp" label="BloomApp" enabled="true" visible="true" accessible="false" x="0" y="0" width="393" height="852" index="0">
+            <XCUIElementTypeButton type="XCUIElementTypeButton" name="Explore" label="Explore" enabled="true" visible="true" accessible="true" x="89" y="773" width="86" height="54" index="0" traits="Button"/>
+            <XCUIElementTypeAlert type="XCUIElementTypeAlert" name="Authentication Failed" label="Authentication Failed" enabled="true" visible="true" accessible="false" x="18" y="264" width="357" height="349" index="2" traits="">
+              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Invalid API key." name="Invalid API key." label="Invalid API key." enabled="true" visible="true" accessible="true" x="48" y="458" width="297" height="37" index="1" traits="StaticText"/>
+              <XCUIElementTypeButton type="XCUIElementTypeButton" name="OK" label="OK" enabled="true" visible="true" accessible="true" x="34" y="517" width="325" height="80" index="0" traits="Button"/>
+            </XCUIElementTypeAlert>
+          </XCUIElementTypeApplication>
+        </AppiumAUT>
+        """
+        let root = try WDAElementParser().parse(xml)
+        #expect(TextSizeProbe.alertDismissXPath(in: root) == "//*[@name='OK']")
+        let noAlert = ProbeNodes.all(in: root).first { $0.identifier == "Explore" }!
+        #expect(TextSizeProbe.alertDismissXPath(in: noAlert) == nil)
+    }
+
     @Test func iOSCustomActionsAreRead() throws {
         let xml = """
         <?xml version="1.0" encoding="UTF-8"?>

@@ -494,12 +494,32 @@ final class TextSizeProbe {
 
     /// Back to the screen under test after a relaunch opened the first one.
     private func replayRoute() async {
-        guard !route.isEmpty else { return }
         try? await Task.sleep(nanoseconds: 1_500_000_000)
+        await dismissLaunchAlert()
         for xpath in route {
             try? await appium.tapElement(usingXPath: xpath)
             try? await Task.sleep(nanoseconds: 1_500_000_000)
         }
+    }
+
+    /// An alert shown at launch (BloomApp, 27 Nov 2026: "Authentication
+    /// Failed — Invalid API key.") blocks every tap behind it, so the route
+    /// back stayed on the first screen. Closed with its OK/Cancel-style
+    /// button only, never one that accepts.
+    @discardableResult
+    private func dismissLaunchAlert() async -> Bool {
+        guard let source = try? await appium.getSource(),
+              let root = try? appium.makeParser().parse(source),
+              let xpath = Self.alertDismissXPath(in: root) else { return false }
+        try? await appium.tapElement(usingXPath: xpath)
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        return true
+    }
+
+    static func alertDismissXPath(in root: AccessibilityNode) -> String? {
+        guard let alert = ProbeNodes.all(in: root).first(where: { $0.visible && $0.type.contains("Alert") }) else { return nil }
+        let buttons = ProbeNodes.all(in: alert).filter { $0.role == .button && NavigationAction(node: $0).xpath != nil }
+        return ActionSafety.dismissButton(in: buttons).flatMap { NavigationAction(node: $0).xpath }
     }
 
     func test(rootNode: AccessibilityNode) async throws -> [AccessibilityRuleEvaluation] {
@@ -556,10 +576,22 @@ final class TextSizeProbe {
             largeRoot = try await ProbeNodes.readSettledRoot(using: appium)
             let normalTexts = Set(textHeights(in: rootNode).keys)
             var attempts = 0
+            var replayedAfterAlert = false
             while let current = largeRoot, normalTexts.count >= 3,
                   Set(textHeights(in: current).keys).intersection(normalTexts).count < 3, attempts < 4 {
                 attempts += 1
-                try await Task.sleep(nanoseconds: 2_000_000_000)
+                // The alert can arrive after the first replay's taps.
+                if !replayedAfterAlert, Self.alertDismissXPath(in: current) != nil {
+                    replayedAfterAlert = true
+                    await replayRoute()
+                } else {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                }
+                largeRoot = (try? appium.makeParser().parse(try await appium.getSource())) ?? current
+            }
+            // On the first screen (no route) the alert would be read as part
+            // of the larger layout.
+            if let current = largeRoot, Self.alertDismissXPath(in: current) != nil, await dismissLaunchAlert() {
                 largeRoot = (try? appium.makeParser().parse(try await appium.getSource())) ?? current
             }
             largeShot = try? await appium.getScreenshot()
@@ -682,6 +714,12 @@ final class TextSizeProbe {
 
         let before = textHeights(in: normal)
         let after = textHeights(in: large)
+        let beforeFrames = textFrames(in: normal)
+        let afterFrames = textFrames(in: large)
+        func growth(_ label: String) -> CGFloat {
+            guard let old = beforeFrames[label], let new = afterFrames[label] else { return 1 }
+            return Self.growth(from: old, to: new)
+        }
 
         var ratios: [Double] = []
         for (label, normalHeight) in before {
@@ -712,8 +750,8 @@ final class TextSizeProbe {
             )
             if median >= 1.3 {
                 for (label, normalHeight) in before {
-                    guard let largeHeight = after[label], normalHeight > 0,
-                          largeHeight / normalHeight < 1.1,
+                    guard after[label] != nil, normalHeight > 0,
+                          growth(label) < 1.1,
                           Self.hasReadableText(label),
                           let node = normalNodes[ProbeNodes.clean(label)] else { continue }
                     results.append(ProbeEvaluation.make(
@@ -740,13 +778,13 @@ final class TextSizeProbe {
                 // element, with how much it grew.
                 var grown: [AccessibilityRuleEvaluation] = []
                 for (label, normalHeight) in before.sorted(by: { $0.key < $1.key }) {
-                    guard let largeHeight = after[label], normalHeight > 0,
-                          largeHeight / normalHeight >= 1.1,
+                    guard after[label] != nil, normalHeight > 0,
+                          growth(label) >= 1.1,
                           let node = normalNodes[ProbeNodes.clean(label)] else { continue }
                     grown.append(ProbeEvaluation.make(
                         ruleID: "text-resize",
                         status: .pass,
-                        message: "\"\(ProbeNodes.clean(label))\" grew \(String(format: "%.1f", Double(largeHeight / normalHeight)))× at 200% text size.",
+                        message: "\"\(ProbeNodes.clean(label))\" grew \(String(format: "%.1f", Double(growth(label))))× at 200% text size.",
                         node: node
                     ))
                 }
@@ -796,15 +834,30 @@ final class TextSizeProbe {
     }
 
     private func textHeights(in root: AccessibilityNode) -> [String: CGFloat] {
-        var heights: [String: CGFloat] = [:]
+        textFrames(in: root).mapValues(\.height)
+    }
+
+    private func textFrames(in root: AccessibilityNode) -> [String: CGRect] {
+        var frames: [String: CGRect] = [:]
         for node in ProbeNodes.all(in: root) {
             guard node.visible, node.role == .staticText, node.frame.height > 0 else { continue }
             let label = node.label.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !label.isEmpty, heights[label] == nil {
-                heights[label] = node.frame.height
+            if !label.isEmpty, frames[label] == nil {
+                frames[label] = node.frame
             }
         }
-        return heights
+        return frames
+    }
+
+    /// How much a text grew: in height, or in width when its container
+    /// keeps a fixed height. BloomApp's trending chips (27 Nov 2026) have a
+    /// 44 pt minimum height that the larger text still fits in, so they
+    /// grew only wider (93 → 175 pt). Fixed-size text grows in neither.
+    static func growth(from normal: CGRect, to large: CGRect) -> CGFloat {
+        guard normal.height > 0 else { return 1 }
+        let tall = large.height / normal.height
+        let wide = normal.width > 0 ? large.width / normal.width : 1
+        return max(tall, wide)
     }
 
     // MARK: Restore

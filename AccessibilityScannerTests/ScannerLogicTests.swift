@@ -493,16 +493,19 @@ struct DuplicateNameTests {
         #expect(results.allSatisfy { $0.status == .fail })
     }
 
-    /// BloomApp Settings (27 Nov 2026 scan): the hierarchy listed the form
-    /// twice, 332 pt apart, so the one text-size picker appeared twice.
-    @Test func formListedTwiceInTheHierarchyIsOneControl() {
-        func row(_ y: CGFloat) -> [AccessibilityNode] {
-            [makeNode(type: "XCUIElementTypeStaticText", label: "Preferred Text Size", frame: CGRect(x: 32, y: y - 10, width: 181, height: 53))] +
+    /// BloomApp Settings (27 Nov 2026 scans): a reused table cell kept the
+    /// text-size picker, so a second S/M/L/XL picker shows in the
+    /// "Version" row. Both are on screen with the same names.
+    @Test func controlLeftInAReusedCellIsADuplicate() {
+        func row(_ y: CGFloat, _ title: String) -> [AccessibilityNode] {
+            [makeNode(type: "XCUIElementTypeStaticText", label: title, frame: CGRect(x: 32, y: y - 10, width: 181, height: 53))] +
                 [("S", 221), ("M", 256), ("L", 291), ("XL", 326)].map { label, x in
                     makeNode(type: "XCUIElementTypeButton", label: label, frame: CGRect(x: CGFloat(x), y: y, width: 35, height: 33))
                 }
         }
-        #expect(DuplicateInteractiveNameRule().evaluate(rootNode: screen(row(305) + row(637))).isEmpty)
+        let results = DuplicateInteractiveNameRule().evaluate(rootNode: screen(row(305, "Preferred Text Size") + row(637, "Version")))
+        #expect(results.count == 8)
+        #expect(results.allSatisfy { $0.status == .fail })
     }
 
     /// BloomApp Home (same scan): identical bookmark buttons next to

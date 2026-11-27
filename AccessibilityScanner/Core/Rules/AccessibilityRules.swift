@@ -786,31 +786,6 @@ nonisolated struct DuplicateInteractiveNameRule: ScreenAccessibilityRule {
             }
             if !sameSpot { controls.append(node) }
         }
-        // Some hierarchies list a whole form twice, offset vertically (seen
-        // on a SwiftUI settings screen: every section header, picker and
-        // switch appears again lower down). A control with the same name,
-        // kind, size and column as another, and the same label beside it,
-        // is that one control listed again. Identical buttons in different
-        // rows ("Bookmark article" next to different articles) stay apart.
-        let texts = RuleHelper.allNodes(rootNode).filter {
-            $0.role == .staticText && $0.visible && !RuleHelper.clean($0.label).isEmpty
-        }
-        func rowLabel(_ control: AccessibilityNode) -> String? {
-            texts.filter { text in
-                text.frame.maxX <= control.frame.minX + 1 &&
-                    min(text.frame.maxY, control.frame.maxY) - max(text.frame.minY, control.frame.minY) > 0
-            }
-            .max { $0.frame.maxX < $1.frame.maxX }
-            .map { RuleHelper.clean($0.label) }
-        }
-        var copyKeys = Set<String>()
-        controls = controls.filter { node in
-            guard let label = rowLabel(node) else { return true }
-            let key = [RuleHelper.clean(node.label).lowercased(), node.type, label,
-                       "\(Int(node.frame.minX.rounded()))", "\(Int(node.frame.width.rounded()))x\(Int(node.frame.height.rounded()))"]
-                .joined(separator: "|")
-            return copyKeys.insert(key).inserted
-        }
         let groups = Dictionary(grouping: controls) {
             RuleHelper.clean($0.label).lowercased()
         }
