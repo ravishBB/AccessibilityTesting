@@ -54,6 +54,7 @@ nonisolated struct BBReport {
     var itemCount: Int { groups.reduce(0) { $0 + $1.items.count } }
 
     init(report: AccessibilityScanResult) {
+        let platform = BBCoverage.platform(of: report)
         struct Pending {
             var code: String
             var title: String
@@ -115,7 +116,7 @@ nonisolated struct BBReport {
             if statusOrder[l.status] != statusOrder[r.status] {
                 return (statusOrder[l.status] ?? 9) < (statusOrder[r.status] ?? 9)
             }
-            let lc = Self.category(for: l.code, status: l.status), rc = Self.category(for: r.code, status: r.status)
+            let lc = Self.category(for: l.code, status: l.status, platform: platform), rc = Self.category(for: r.code, status: r.status, platform: platform)
             if lc != rc { return lc < rc }
             return l.code < r.code
         }
@@ -123,7 +124,7 @@ nonisolated struct BBReport {
         var number = 0
         var groups: [Group] = []
         for (key, value) in ordered {
-            let category = Self.category(for: value.code, status: value.status)
+            let category = Self.category(for: value.code, status: value.status, platform: platform)
             let items: [Item] = value.entries.map { entry in
                 number += 1
                 return Item(
@@ -141,7 +142,7 @@ nonisolated struct BBReport {
                 code: value.code,
                 title: value.title,
                 status: value.status,
-                severity: value.status == .pass ? "N/A" : value.code.isEmpty ? "—" : Self.severity(for: value.code, status: value.status),
+                severity: value.status == .pass ? "N/A" : value.code.isEmpty ? "—" : Self.severity(for: value.code, status: value.status, platform: platform),
                 category: category,
                 wcag: value.wcag,
                 ifConfirmed: value.ifConfirmed,
@@ -167,23 +168,23 @@ nonisolated struct BBReport {
 
     // MARK: Sheet lookups
 
-    /// The sheet row for a code; BB40034 is both a Pass and a Fail row.
-    private static func rule(for code: String, status: RuleResultStatus) -> BBRule? {
-        let rows = BBRuleset.rules.filter { $0.id == code }
+    /// The platform sheet's row for a code.
+    private static func rule(for code: String, status: RuleResultStatus, platform: MobilePlatform) -> BBRule? {
+        let rows = BBRuleset.rules(for: platform).filter { $0.id == code }
         let type: BBRuleType = status == .pass ? .pass : status == .validate ? .validate : .fail
         return rows.first { $0.type == type } ?? rows.first
     }
 
     /// The sheet's Element column, tidied ("Text resize" → "Text Resize").
-    static func category(for code: String, status: RuleResultStatus) -> String {
+    static func category(for code: String, status: RuleResultStatus, platform: MobilePlatform) -> String {
         if code.isEmpty { return "Not in BB sheet" }
-        let element = rule(for: code, status: status)?.element.trimmingCharacters(in: .whitespaces) ?? ""
+        let element = rule(for: code, status: status, platform: platform)?.element.trimmingCharacters(in: .whitespaces) ?? ""
         if element.isEmpty { return code == "BB40136" || code == "BB40137" ? "Pointer" : "Other" }
         return element.split(separator: " ").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
     }
 
-    private static func severity(for code: String, status: RuleResultStatus) -> String {
-        let severity = rule(for: code, status: status)?.severity ?? ""
+    private static func severity(for code: String, status: RuleResultStatus, platform: MobilePlatform) -> String {
+        let severity = rule(for: code, status: status, platform: platform)?.severity ?? ""
         return severity.isEmpty ? "—" : severity
     }
 

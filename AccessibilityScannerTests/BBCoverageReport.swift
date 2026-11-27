@@ -28,7 +28,7 @@ struct BBCoverageReport {
         "focus-order": [.pass, .warning],
         "form-border-contrast": [.fail, .pass, .validate],
         "form-visual-label": [.pass, .validate, .fail],
-        "heading-quality": [.fail, .pass, .validate],
+        "heading-quality": [.pass, .validate],
         "heading-candidate": [.validate],
         "missing-role": [.fail],
         "name-via-hint": [.fail],
@@ -42,7 +42,7 @@ struct BBCoverageReport {
         "image-accessible-label": [.fail, .pass],
         "image-button-name": [.fail],
         "image-name-descriptive": [.fail, .validate],
-        "interactive-name-descriptive": [.fail, .pass],
+        "interactive-name-descriptive": [.fail, .pass, .validate],
         "interactive-screen-reader-hidden": [.fail, .pass, .validate],
         "keyboard-activation": [.pass, .fail, .validate],
         "keyboard-focus": [.pass, .fail],
@@ -61,11 +61,10 @@ struct BBCoverageReport {
         "role-trait-consistency": [.fail, .pass, .warning],
         "screen-reader-content": [.fail, .pass, .validate],
         "screen-reader-focus-order": [.validate, .pass],
-        "screen-title": [.fail, .pass],
+        "screen-title": [.pass],
         "form-autocomplete": [.pass, .warning],
         "segmented-control-interactive": [.validate],
-        "state-trait-consistency": [.fail, .pass, .warning],
-        "state-updates-after-interaction": [.pass, .fail],
+        "state-updates-after-interaction": [.pass, .fail, .validate],
         "tab-accessibility": [.validate],
         "text-button-role": [.pass, .warning],
         "text-clipping": [.fail, .pass],
@@ -85,8 +84,27 @@ struct BBCoverageReport {
         "touch-target-size-24": [.fail, .pass]
     ]
 
-    @Test func producibleIDs() throws {
-        let nodes: [AccessibilityNode] = [
+    static func nodes(for platform: MobilePlatform) -> [AccessibilityNode] {
+        if platform == .android {
+            return [
+                makeNode(type: "android.widget.Button", label: ""),
+                makeNode(type: "android.widget.Button", label: "Save"),
+                makeNode(type: "android.widget.ImageButton", label: ""),
+                makeNode(type: "com.google.android.material.chip.Chip", label: ""),
+                makeNode(type: "com.google.android.material.tabs.TabLayout$TabView", label: ""),
+                makeNode(type: "android.widget.ToggleButton", label: ""),
+                makeNode(type: "android.widget.Switch", label: "Wi-Fi"),
+                makeNode(type: "android.widget.CheckBox", label: ""),
+                makeNode(type: "android.widget.RadioButton", label: ""),
+                makeNode(type: "android.widget.SeekBar", label: ""),
+                makeNode(type: "android.widget.Spinner", label: ""),
+                makeNode(type: "android.widget.EditText", label: ""),
+                makeNode(type: "android.widget.ImageView", label: ""),
+                makeNode(type: "android.widget.TextView", label: "Body", frame: CGRect(x: 0, y: 0, width: 120, height: 15)),
+                makeNode(type: "android.widget.TextView", label: "Title", frame: CGRect(x: 0, y: 0, width: 300, height: 34))
+            ]
+        }
+        return [
             makeNode(type: "XCUIElementTypeButton", label: ""),
             makeNode(type: "XCUIElementTypeButton", label: "Save"),
             makeNode(type: "XCUIElementTypeLink", label: "Terms"),
@@ -96,17 +114,28 @@ struct BBCoverageReport {
             makeNode(type: "XCUIElementTypeStaticText", label: "Body", frame: CGRect(x: 0, y: 0, width: 120, height: 15)),
             makeNode(type: "XCUIElementTypeStaticText", label: "Title", frame: CGRect(x: 0, y: 0, width: 300, height: 34))
         ]
+    }
+
+    static let messages = [
+        "",
+        "The app refused to rotate from portrait to landscape. The screen is locked in one orientation.",
+        "The screen stayed in portrait when the device was rotated to landscape.",
+        "A visible label (\"Email\") is shown next to the field.",
+        "Image segmented control has no accessible name.",
+        "The modal has no keyboard-focusable interactive controls, so keyboard users cannot act on it or close it."
+    ]
+
+    /// Every BB ID a platform's sheet says the scanner checks is produced
+    /// by some rule result on that platform.
+    @Test(arguments: MobilePlatform.allCases)
+    func producibleIDs(platform: MobilePlatform) throws {
         var produced: [String: Set<String>] = [:]
         for (rule, statuses) in Self.producible {
             for status in statuses {
-                for node in nodes {
-                    for message in [
-                        "",
-                        "The screen is locked in one orientation.",
-                        "Image segmented control has no accessible name.",
-                        "The modal has no keyboard-focusable interactive controls, so keyboard users cannot act on it or close it."
-                    ] {
+                for node in Self.nodes(for: platform) {
+                    for message in Self.messages {
                         let evaluation = makeEvaluation(ruleID: rule, status: status, node: node, message: message)
+                        #expect(evaluation.platform == platform)
                         if let id = BBIssueCatalog.issue(for: evaluation)?.id {
                             produced[id, default: []].insert("\(rule):\(status.rawValue)")
                         }
@@ -119,45 +148,41 @@ struct BBCoverageReport {
         }
         #expect(!produced.isEmpty)
 
-        // Every BB ID the ruleset says the scanner checks must be producible.
-        for rule in BBRuleset.rules {
-            let claimed: Set<BBCapability> = [.automated, .runtime, .partial]
-            guard claimed.contains(rule.ios) || claimed.contains(rule.android),
-                  rule.level.uppercased() != "AAA" else { continue }
+        let sheetIDs = Set(BBRuleset.rules(for: platform).map(\.id))
+        #expect(Set(produced.keys).subtracting(sheetIDs).isEmpty, "\(platform): codes not in the sheet: \(Set(produced.keys).subtracting(sheetIDs).sorted())")
+
+        let claimed: Set<BBCapability> = [.automated, .runtime, .partial]
+        for rule in BBRuleset.rules(for: platform) {
+            guard claimed.contains(rule.capability(on: platform)), rule.level.uppercased() != "AAA" else { continue }
             let producedHere = produced[rule.id] != nil || rule.coveredBy.contains { produced[$0] != nil }
-            #expect(producedHere, "\(rule.id) is marked as checked but no rule produces it")
+            #expect(producedHere, "\(platform): \(rule.id) is marked as checked but no rule produces it")
         }
 
         if let path = ProcessInfo.processInfo.environment["BB_COVERAGE_OUT"] {
             let lines = produced.keys.sorted().map { "\($0)\t\(produced[$0]!.sorted().joined(separator: ","))" }
-            try lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+            try lines.joined(separator: "\n").write(toFile: path + "." + platform.rawValue, atomically: true, encoding: .utf8)
         }
     }
 
     /// Every result carries a BB code whose sheet Type is the result's own
     /// status: a Fail result never shows a Validate code, a Validate result
     /// never shows a Fail code.
-    @Test func resultStatusMatchesSheetType() {
-        let types = Dictionary(BBRuleset.rules.map { ($0.id, $0.type) }, uniquingKeysWith: { first, _ in first })
-        let nodes = [makeNode(label: ""), makeNode(label: "Name"), makeNode(type: "XCUIElementTypeLink", label: "x"),
-                     makeNode(type: "XCUIElementTypeStaticText", label: "Body", frame: CGRect(x: 0, y: 0, width: 300, height: 40)),
-                     makeNode(type: "XCUIElementTypeSegmentedControl", label: "")]
-        let messages = ["", "The screen is locked in one orientation.", "Image segmented control has no accessible name.",
-                        "The modal has no keyboard-focusable interactive controls, so keyboard users cannot act on it or close it."]
+    @Test(arguments: MobilePlatform.allCases)
+    func resultStatusMatchesSheetType(platform: MobilePlatform) {
+        let types = Dictionary(BBRuleset.rules(for: platform).map { ($0.id, $0.type) }, uniquingKeysWith: { first, _ in first })
         var mismatches: [String] = []
         for (rule, statuses) in Self.producible {
             for status in statuses where status != .notTested {
-                for node in nodes {
-                    for message in messages {
+                for node in Self.nodes(for: platform) {
+                    for message in Self.messages {
                         let evaluation = makeEvaluation(ruleID: rule, status: status, node: node, message: message)
-                        // BB40034 is both a Pass row and a Fail row in the sheet.
-                        guard let id = BBIssueCatalog.issue(for: evaluation)?.id, id != "BB40034", let type = types[id] else { continue }
+                        guard let id = BBIssueCatalog.issue(for: evaluation)?.id, let type = types[id] else { continue }
                         let expected: BBRuleType = evaluation.status == .pass ? .pass : evaluation.status == .validate ? .validate : .fail
                         if type != expected { mismatches.append("\(rule):\(evaluation.status.rawValue) -> \(id) (\(type.rawValue))") }
                     }
                 }
             }
         }
-        #expect(Set(mismatches).isEmpty, "\(Set(mismatches).sorted())")
+        #expect(Set(mismatches).isEmpty, "\(platform): \(Set(mismatches).sorted())")
     }
 }

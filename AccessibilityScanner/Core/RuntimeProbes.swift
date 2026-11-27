@@ -177,6 +177,7 @@ final class OrientationProbe {
 
     private let appium: AppiumClient
     private let ruleID = "orientation-support"
+    private static let maxScrolls = 8
 
     init(appium: AppiumClient) {
         self.appium = appium
@@ -208,12 +209,32 @@ final class OrientationProbe {
 
         var rotated = original
         var rotatedSource: String?
+        // Labels exposed in the rotated layout, collected while scrolling:
+        // a shorter viewport puts content below the fold, which is still
+        // available to users who scroll.
+        var rotatedLabels: Set<String> = []
+        let before = ProbeNodes.contentLabels(in: rootNode)
 
         do {
             try await Task.sleep(nanoseconds: 800_000_000)
             rotated = (try? await appium.getOrientation()) ?? original
             if rotated != original {
                 rotatedSource = try? await appium.getSource()
+                if let rotatedSource, let root = try? appium.makeParser().parse(rotatedSource) {
+                    rotatedLabels = ProbeNodes.contentLabels(in: root)
+                    var scrolls = 0
+                    while !before.subtracting(rotatedLabels).isEmpty, scrolls < Self.maxScrolls {
+                        guard (try? await appium.scrollDown()) != nil else { break }
+                        scrolls += 1
+                        try await Task.sleep(nanoseconds: 500_000_000)
+                        guard let source = try? await appium.getSource(),
+                              let next = try? appium.makeParser().parse(source) else { break }
+                        let labels = ProbeNodes.contentLabels(in: next)
+                        if labels.isSubset(of: rotatedLabels) { break }
+                        rotatedLabels.formUnion(labels)
+                    }
+                    for _ in 0..<scrolls { try? await appium.scrollUp() }
+                }
             }
         } catch {
             await restore(original)
@@ -233,14 +254,11 @@ final class OrientationProbe {
             ]
         }
 
-        guard let rotatedSource,
-              let rotatedRoot = try? appium.makeParser().parse(rotatedSource)
-        else {
+        guard rotatedSource != nil, !rotatedLabels.isEmpty else {
             return [notTested(rootNode, "The rotated hierarchy could not be read.")]
         }
 
-        let before = ProbeNodes.contentLabels(in: rootNode)
-        let after = ProbeNodes.contentLabels(in: rotatedRoot)
+        let after = rotatedLabels
         guard !before.isEmpty else { return [] }
 
         let missing = before.subtracting(after)
@@ -263,7 +281,7 @@ final class OrientationProbe {
             ProbeEvaluation.make(
                 ruleID: ruleID,
                 status: status,
-                message: "\(missing.count) of \(before.count) text and control labels are not exposed in \(target.lowercased()) (for example: \(sample)). Some may only be scrolled off-screen.",
+                message: "\(missing.count) of \(before.count) text and control labels could not be found in \(target.lowercased()), even after scrolling (for example: \(sample)).",
                 remediation: "Make sure all content and controls remain available, or reachable by scrolling, in both orientations.",
                 node: rootNode
             )
@@ -417,10 +435,15 @@ final class StateUpdateProbe {
                     )
                 )
             } else {
+                // The Android sheet has a Fail for this only on radio buttons
+                // and tabs (BB30051, BB30049); for checkboxes, switches, chips
+                // and toggle buttons it asks to verify the state update.
+                let androidReviewOnly = control.platform == .android && control.role != .radioButton &&
+                    !control.type.contains("TabView")
                 results.append(
                     ProbeEvaluation.make(
                         ruleID: ruleID,
-                        status: .fail,
+                        status: androidReviewOnly ? .validate : .fail,
                         message: "\"\(name)\" changed on screen when activated, but its state in the accessibility hierarchy did not change, so screen readers announce the old state.",
                         remediation: "Update the control's value/selected/checked state when the user activates it.",
                         node: control
@@ -618,12 +641,16 @@ final class TextSizeProbe {
         let largeTexts = texts(large)
 
         var pairs: [String] = []
+        // The same two texts can appear as more than one node pair (a label
+        // and its container); each pair of texts counts once.
+        var seenPairs: Set<String> = []
         for i in largeTexts.indices {
             for j in largeTexts.indices where j > i {
                 let a = largeTexts[i], b = largeTexts[j]
                 let labelA = ProbeNodes.clean(a.label), labelB = ProbeNodes.clean(b.label)
                 guard labelA != labelB, overlapping(a.frame, b.frame) else { continue }
                 if let na = normalFrames[labelA], let nb = normalFrames[labelB], overlapping(na, nb) { continue }
+                guard seenPairs.insert([labelA, labelB].sorted().joined(separator: "\u{1F}")).inserted else { continue }
                 pairs.append("\"\(labelA)\" and \"\(labelB)\"")
             }
         }
@@ -679,6 +706,7 @@ final class TextSizeProbe {
                 for (label, normalHeight) in before {
                     guard let largeHeight = after[label], normalHeight > 0,
                           largeHeight / normalHeight < 1.1,
+                          Self.hasReadableText(label),
                           let node = normalNodes[ProbeNodes.clean(label)] else { continue }
                     results.append(ProbeEvaluation.make(
                         ruleID: "text-resize",
@@ -725,8 +753,8 @@ final class TextSizeProbe {
             }
         }
 
-        let clipped = scanner.evaluateForReport(rootNode: large)
-            .filter { $0.ruleID == "text-clipping" && $0.status == .fail }
+        let clipped = TextClippingRule.evaluations(in: large)
+            .filter { $0.status == .fail }
 
         if clipped.isEmpty {
             results.append(
@@ -751,6 +779,12 @@ final class TextSizeProbe {
         }
 
         return results
+    }
+
+    /// Whether a label has letters or digits to read. A label of only
+    /// emoji or symbols (a flag) is a picture, not text that must resize.
+    static func hasReadableText(_ label: String) -> Bool {
+        label.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) }
     }
 
     private func textHeights(in root: AccessibilityNode) -> [String: CGFloat] {

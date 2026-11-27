@@ -29,14 +29,15 @@ struct BBIssueCatalogTests {
     @Test func contrastOverImageUsesLargeTextCodesForLargeText() {
         let standard = makeNode(type: "XCUIElementTypeStaticText", label: "Body copy", frame: CGRect(x: 0, y: 0, width: 120, height: 20))
         let large = makeNode(type: "XCUIElementTypeStaticText", label: "Title", frame: CGRect(x: 0, y: 0, width: 300, height: 34))
-        #expect(bb("contrast-text-over-image", .fail, standard) == "BB40018")
-        #expect(bb("contrast-text-over-image", .fail, large) == "BB40020")
+        #expect(bb("contrast-text-over-image", .fail, standard) == "BB41028")
+        #expect(bb("contrast-text-over-image", .fail, large) == "BB41029")
         #expect(bb("contrast-text-over-image", .validate, large) == "BB40014")
     }
 
     @Test func orientationLockedVersusMissingContent() {
         let root = makeNode(type: "XCUIElementTypeApplication")
-        #expect(bb("orientation-support", .fail, root, message: "The screen is locked in one orientation.") == "BB40056")
+        #expect(bb("orientation-support", .fail, root, message: "The app refused to rotate from portrait to landscape. The screen is locked in one orientation.") == "BB40056")
+        #expect(bb("orientation-support", .fail, root, message: "The screen stayed in portrait when the device was rotated to landscape. The screen is locked in one orientation.") == "BB41001")
         // Missing labels in landscape are a Validate result (BB40055), never a Fail.
         #expect(bb("orientation-support", .validate, root, message: "3 of 10 labels are not exposed") == "BB40055")
     }
@@ -51,15 +52,14 @@ struct BBIssueCatalogTests {
         #expect(BBIssueCatalog.ifConfirmed(for: evaluation)?.id == "BB40042")
     }
 
-    @Test func placeholderAndTextDisplayShareBB40034() {
+    @Test func placeholderOnlyFieldSplitsByVisibleLabel() {
         let field = makeNode(type: "XCUIElementTypeTextField")
+        #expect(bb("placeholder-only-name", .fail, field, message: "A visible label (\"Email\") is shown next to the field") == "BB41053")
+        #expect(bb("placeholder-only-name", .fail, field, message: "The field has no visible label") == "BB40093")
         let text = makeNode(type: "XCUIElementTypeStaticText", label: "Hello")
-        let placeholder = BBIssueCatalog.issue(for: makeEvaluation(ruleID: "placeholder-only-name", status: .fail, node: field))
         let displays = BBIssueCatalog.issue(for: makeEvaluation(ruleID: "text-clipping", status: .pass, node: text))
-        #expect(placeholder?.wcag == "3.3.2")
-        #expect(placeholder?.title.hasPrefix("Placeholder") == true)
-        #expect(displays?.wcag == "1.4.10")
-        #expect(displays?.title == "Text displays correctly")
+        #expect(displays?.id == "BB40034")
+        #expect(displays?.wcag == "1.4.4")
     }
 
     @Test func notTestedNeverMaps() {
@@ -72,10 +72,8 @@ struct BBIssueCatalogTests {
         // codes were renumbered, missing names on other controls got BB30548.
         #expect(bb("state-updates-after-interaction", .fail, makeNode()) == "BB40280")
         #expect(bb("role-trait-consistency", .fail, makeNode()) == "BB40281")
-        #expect(bb("state-trait-consistency", .fail, makeNode()) == "BB40069")
         #expect(bb("accessible-name", .fail, makeNode(type: "XCUIElementTypeSwitch")) == "BB30548")
         #expect(bb("keyboard-activation", .fail, makeNode(type: "XCUIElementTypeSwitch")) == "BB40283")
-        #expect(bb("placeholder-only-name", .fail, makeNode(type: "XCUIElementTypeTextField")) == "BB40034")
         #expect(bb("time-limited-ui", .validate, makeNode()) == nil)
     }
 
@@ -88,7 +86,7 @@ struct BBIssueCatalogTests {
                 for node in nodes {
                     if let issue = BBIssueCatalog.issue(for: makeEvaluation(ruleID: rule, status: status, node: node)) {
                         #expect(issue.title != issue.id, "\(issue.id) has no title")
-                        #expect(issue.wcag != nil || issue.id == "BB40307", "\(issue.id) has no WCAG criterion")
+                        #expect(issue.wcag != nil, "\(issue.id) has no WCAG criterion")
                     }
                 }
             }

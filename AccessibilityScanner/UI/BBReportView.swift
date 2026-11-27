@@ -1,9 +1,7 @@
 //
 //  BBReportView.swift
 //  AccessibilityScanner
-//
-//  The scan grouped the way the BB sheet and A11yInspect present it: an
-//  overview by category and a list of BB issues with numbered items.
+
 
 import SwiftUI
 

@@ -41,7 +41,8 @@ nonisolated struct ScreenshotAnnotation: Identifiable, Codable {
     /// The BB sheet's issue text, else the rule name. Codes are not shown.
     var displayTitle: String {
         if let bbIssueTitle { return bbIssueTitle }
-        if let id = bbIfConfirmedID, let title = BBIssueCatalog.title(for: id) { return title }
+        if let id = bbIfConfirmedID,
+           let title = BBIssueCatalog.title(for: id, platform: MobilePlatform.infer(fromElementType: elementType)) { return title }
         return ruleName
     }
 

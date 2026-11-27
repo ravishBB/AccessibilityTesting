@@ -16,6 +16,9 @@ nonisolated struct BBCoverageEntry: Codable, Hashable {
         /// Reported under a sibling code (a verdict instead of a review).
         case coveredBySibling
         case nothingApplicable
+        /// The check exists but could not run on this scan (Full Keyboard
+        /// Access off, nothing to interact with).
+        case notTested
         case manual, unavailable, onHold
         /// AAA: not part of the audit scope.
         case outOfScope
@@ -27,6 +30,7 @@ nonisolated struct BBCoverageEntry: Codable, Hashable {
             case .review: return "Review"
             case .coveredBySibling: return "Covered"
             case .nothingApplicable: return "Checked"
+            case .notTested: return "Not tested"
             case .manual: return "Manual check"
             case .unavailable: return "Not testable"
             case .onHold: return "On hold"
@@ -41,7 +45,7 @@ nonisolated struct BBCoverageEntry: Codable, Hashable {
             case .review: return "validate"
             case .coveredBySibling: return "pass"
             case .nothingApplicable: return "neutral"
-            case .manual: return "nottested"
+            case .manual, .notTested: return "nottested"
             case .unavailable, .onHold, .outOfScope: return "norule"
             }
         }
@@ -66,7 +70,16 @@ nonisolated enum BBCoverage {
         // Results per BB ID, by outcome.
         var fails: [String: Int] = [:], passes: [String: Int] = [:], reviews: [String: Int] = [:]
         var toConfirm: [String: Int] = [:]
+        // Codes whose check ran on some screen, and why the others could not.
+        var ran = Set<String>()
+        var notRunReason: [String: String] = [:]
         for evaluation in report.allEvaluations {
+            let candidates = BBIssueCatalog.candidateIDs(for: evaluation)
+            if evaluation.status == .notTested {
+                for id in candidates where notRunReason[id] == nil { notRunReason[id] = evaluation.message }
+            } else {
+                ran.formUnion(candidates)
+            }
             if let pending = BBIssueCatalog.ifConfirmed(for: evaluation) {
                 toConfirm[pending.id, default: 0] += 1
             }
@@ -79,7 +92,7 @@ nonisolated enum BBCoverage {
             }
         }
 
-        return BBRuleset.rules.map { rule in
+        return BBRuleset.rules(for: platform).map { rule in
             // The audit covers Level A and AA only.
             if rule.level.uppercased() == "AAA" {
                 return entry(rule, .outOfScope, 0, "Level AAA is not part of the audit scope, so the scanner does not check it.")
@@ -115,7 +128,16 @@ nonisolated enum BBCoverage {
             }
 
             let note = rule.note.isEmpty ? "" : " \(rule.note)"
-            switch rule.capability(on: platform) {
+            let capability = rule.capability(on: platform)
+            if capability == .automated || capability == .partial || capability == .runtime {
+                if ran.contains(rule.id) {
+                    return entry(rule, .nothingApplicable, 0, "Checked; nothing applicable on the scanned screens.")
+                }
+                if let reason = notRunReason[rule.id] {
+                    return entry(rule, .notTested, 0, "Not tested on this scan: \(reason)")
+                }
+            }
+            switch capability {
             case .automated, .partial:
                 return entry(rule, .nothingApplicable, 0, "Checked; nothing applicable on the scanned screens.")
             case .runtime:

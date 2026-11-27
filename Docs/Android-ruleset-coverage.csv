@@ -1,0 +1,195 @@
+BB ID,Element,Issue,Type,WCAG,Level,Severity,Android scanner coverage,Notes
+BB30001,Button,Verify if Button is hidden from assistive technology users correctly,Validate,4.1.2,A,Critical,Automated,Button not exposed to TalkBack (importantForAccessibility) whose intent is unclear.
+BB30002,Button,Hidden Button identified by Assistive technology,Fail,4.1.2,A,Major,Manual check,
+BB30003,Button,Missing accessible name for Button,Fail,4.1.2,A,Critical,Automated,
+BB30004,Images,Missing accessible name for ImageButton,Fail,1.1.1,A,Critical,Automated,ImageButton/FAB with no content description.
+BB30005,Button,Verify if accessible name for ImageButton is descriptive,Validate,1.1.1,A,Major,Automated,"Generic call-to-action names (""See all"") are listed for review."
+BB30006,Button,Verify if accessible name for Button is descriptive,Validate,2.4.6,AA,Major,Automated,"Generic names (""Button"") and calls to action (""See all"") are listed for review."
+BB30007,Target Size,Check if the target size of interactive element is sufficient,Validate,2.5.8,AA,Major,Covered by BB30058/BB30056,Verdict given as BB30058/BB30056.
+BB30008,Tabs,Check if the tab control need to be hidden from screen reader users,Validate,4.1.2,A,Major,Automated,"Buttons named ""tab"" are listed for review."
+BB30009,Tabs,Check if Hidden tab content announced for screen reader user,Validate,4.1.2,A,Major,Manual check,
+BB30010,Tabs,Missing accessible name for tab control,Fail,4.1.2,A,Critical,Automated,TabLayout tab with no name.
+BB30011,Tabs,Check if tab name is descriptive,Validate,2.4.6,A,Major,Automated,Generic tab names are listed for review.
+BB30012,Forms,Verify if CheckBox is hidden from assistive technology users correctly,Validate,4.1.2,A,Major,Automated,
+BB30013,Forms,Hidden CheckBox identified by Assistive technology,Fail,4.1.2,A,Major,Manual check,
+BB30014,Forms,Missing accessible name for CheckBox,Fail,1.3.1,A,Critical,Automated,
+BB30015,Forms,Verify if accessible name for CheckBox is descriptive,Validate,2.4.6,A,Major,Automated,
+BB30016,Forms,Verify if RadioButton is hidden from assistive technology users correctly,Validate,4.1.2,A,Critical,Automated,
+BB30017,Forms,Hidden RadioButton identified by Assistive technology,Fail,4.1.2,A,Major,Manual check,
+BB30018,Forms,Missing accessible name for RadioButton,Fail,4.1.2,A,Critical,Automated,
+BB30019,Forms,Verify if accessible name for RadioButton is descriptive,Validate,2.4.6,AA,Major,Automated,
+BB30020,Forms,Verify if Switch is hidden from assistive technology users correctly,Validate,4.1.2,A,Critical,Automated,
+BB30021,Forms,Hidden Switch identified by Assistive technology,Fail,4.1.2,A,Major,Manual check,
+BB30022,Forms,Missing accessible name for Switch,Fail,4.1.2,A,Critical,Automated,
+BB30023,Forms,Verify if accessible name for Switch is descriptive,Validate,2.4.6,AA,Major,Automated,
+BB30024,Keyboard,Tab controls are reachable with keyboard,Pass,2.4.3,A,,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30025,Keyboard,Tab not keyboard operable,Fail,2.1.1,A,Blocker,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30026,Keyboard,checkbox is reachable with keyboard,Pass,2.4.3,A,,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30027,Keyboard,Missing keyboard support for checkbox control,Fail,2.1.1,A,Blocker,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30028,Keyboard,radio is reachable with keyboard,Pass,2.4.3,A,,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30029,Keyboard,radio control not keyboard operable,Fail,2.1.1,A,Blocker,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30030,Keyboard,Switch control are reachable with keyboard,Pass,2.4.3,A,,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30031,Keyboard,Switch fails to receive keyboard focus,Fail,2.1.1,A,Blocker,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30032,Images,Check if image need to be hidden from screen reader users,Validate,1.1.1,A,Critical,Automated,
+BB30033,Images,Hidden image content announced for screen reader user,Validate,1.1.1,A,Major,Manual check,
+BB30034,Images,Missing image description,Fail,1.1.1,A,Critical,Automated,ImageView exposed to TalkBack with no content description.
+BB30035,Images,Check if image has correct description,Validate,1.1.1,A,Major,Automated,
+BB30036,Keyboard,Button is reachable with keyboard,Pass,2.4.3,A,,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30037,Keyboard,Button not operable with keyboard,Fail,2.1.1,A,Blocker,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30052,Forms,Controls are hidden for screen reader users,Fail,4.1.2,A,Blocker,Automated,"A visible, tappable button that TalkBack does not reach."
+BB30053,Forms,Hidden chip button announced for screen reader user,Fail,4.1.2,A,Major,Manual check,
+BB30054,Forms,Missing accessible name for chip button,Fail,4.1.2,A,Critical,Automated,
+BB30038,forms,Check if chip button name is descriptive,Validate,4.1.2,A,Major,Automated,
+BB30039,Forms,Hidden slider announced for screen reader user,Fail,4.1.2,A,Major,Manual check,
+BB30040,Forms,Missing accessible name for slider,Fail,4.1.2,A,Critical,Automated,
+BB30041,forms,Check if slider name is descriptive,Validate,4.1.2,A,Major,Automated,
+BB30042,Forms,Hidden dropdown announced for screen reader user,Fail,4.1.2,A,Major,Manual check,
+BB30043,Forms,Missing accessible name for dropdown,Fail,4.1.2,A,Critical,Automated,Spinner with no name.
+BB30044,forms,Check if dropdown name is descriptive,Validate,4.1.2,A,Major,Automated,
+BB30048,forms,Check if state of the tab gets updated on user interaction,Validate,4.1.2,A,Major,Automated (runtime probe),Tapped once; listed for review when the hierarchy state does not change.
+BB30049,Forms,Missing state information for tab controls,Fail,4.1.2,A,Major,Manual check,
+BB30050,forms,Check if state of the radio button gets updated on user interaction,Validate,4.1.2,A,Major,Automated (runtime probe),
+BB30051,Forms,Missing state information for radio button,Fail,4.1.2,A,Major,Automated (runtime probe),Radio button that changes on screen but not in its checked state.
+BB30055,Target Size,Interactive controls meet the enhanced target size (44dp) requirement,Pass,2.5.5,AAA,,Out of scope (AAA),"AAA: outside the A/AA audit scope, so the scanner does not check it."
+BB30056,Target Size,Interactive controls meet the minimum target size (24dp) requirement,Pass,2.5.8,AA,,Automated,Sizes in dp.
+BB30057,Target Size,Interactive control doesn't meet enhanced target size requirements,Fail,2.5.5,AAA,Major,Out of scope (AAA),"AAA: outside the A/AA audit scope, so the scanner does not check it."
+BB30058,Target Size,Interactive control doesn't meet minimum target size requirements,Fail,2.5.8,AA,Major,Automated,Under 24×24 dp with a neighbour inside the 24 dp spacing circle.
+BB30059,forms,Check if state of the checkbox gets updated on user interaction,Validate,4.1.2,A,Major,Automated (runtime probe),
+BB30060,forms,Check if state of the switch gets updated on user interaction,Validate,4.1.2,A,Major,Automated (runtime probe),
+BB30061,forms,Slider is reachable with keyboard,Pass,4.1.2,A,,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30062,Forms,Missing keyboard support for slider,Fail,4.1.2,A,Blocker,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30063,forms,Spinner is reachable with keyboard,Pass,4.1.2,A,,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30064,Forms,Missing keyboard support for Spinner,Fail,4.1.2,A,Blocker,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30065,,Missing class name (role),Fail,4.1.2,A,Major,Automated,"Clickable or checkable generic view (Compose, Flutter, React Native) with no role."
+BB30066,,Inappropriate class name (role),Fail,4.1.2,A,Major,Manual check,
+BB30067,,Check if class name (role) is correct,Validate,4.1.2,A,Major,Manual check,
+BB30068,,Incorrect class name (role) is provided,Fail,4.1.2,A,Major,Manual check,
+BB30069,forms,Identical name is provided for mentioned controls,Fail,2.4.6,A,Major,Automated,Controls other than buttons and switches sharing a name.
+BB30070,Forms,Redundant label provided for interactive controls,Fail,3.3.2,A,Minor,Manual check,
+BB30071,Images,Redundant label provided for image,Fail,3.3.2,A,Minor,Automated,"Image named only ""image"", ""icon"" or similar."
+BB30072,,Interactive controls gets overlapped,Fail,2.4.3,A,Major,Manual check,
+BB30073,forms,Check if the accessible name provided for text field is correct,Validate,3.3.2,A,Major,Automated,
+BB30074,Forms,Incorrect method used to provide accessible name for text field,Fail,4.1.2,A,Major,Manual check,
+BB30075,Forms,Missing accessible name for text field,Fail,1.3.1,A,Critical,Automated,
+BB30076,Forms,The text field label is hidden for all users,Fail,4.1.2,A,Major,Manual check,
+BB30077,Keyboard,Edit text field not keyboard operable,Fail,2.4.3,A,Blocker,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30078,Keyboard,edit text field is reachable with keyboard,Pass,2.4.3,A,,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30079,Heading,Check whether the text should be a heading or if any headings are incorrect or missing,Validate,1.3.1,A,Major,Automated,"Heading text that reads like body text, and large text not marked as heading."
+BB30080,Orientation,Check if content is available in portrait and landscape orientations,Validate,1.3.4,AA,Blocker,Automated (runtime probe),Labels missing after rotation.
+BB30081,Forms,Hidden Toggle button announced for screen reader user,Fail,4.1.2,A,Major,Manual check,
+BB30082,Forms,Missing accessible name for Toggle button,Fail,4.1.2,A,Critical,Automated,
+BB30083,forms,Check if Toggle button name is descriptive,Validate,3.3.2,A,Major,Automated,
+BB30084,Forms,Hidden checkbox announced for screen reader user,Fail,4.1.2,A,Major,Manual check,
+BB30085,Forms,Missing accessible name for checkbox,Fail,1.3.1,A,Major,Covered by BB30014,Duplicate of BB30014.
+BB30086,forms,Check if checkbox name is descriptive,Validate,3.3.2,A,Major,Covered by BB30015,Duplicate of BB30015.
+BB30087,forms,Check if state of the chip gets updated on user interaction,Validate,4.1.2,A,Major,Automated (runtime probe),
+BB30088,forms,Check if state of the toggle button gets updated on user interaction,Validate,3.3.2,A,Major,Automated (runtime probe),
+BB30089,Content,Check if the reading order on the screen is correct,Validate,2.4.3,A,Major,Automated,Hierarchy order compared with the visual order.
+BB30090,Forms,Interactive controls are overlapped,Fail,2.5.8,AA,Major,Manual check,
+BB30091,Links,Missing accessible name for link,Fail,2.4.4,A,Critical,Manual check,
+BB30092,Links,The link has an incorrect textual description,Fail,2.4.4,A,Major,Manual check,
+BB30093,Links,Check whether the link name is descriptive,Validate,2.4.4,A,Major,Manual check,
+BB30094,Color,Insufficient color contrast for standard text,Fail,1.4.3,AA,Major,Automated,Screenshot pixels; Android reports the real text size.
+BB30095,Color,Check if color contrast for standard text with its background is sufficient,Validate,1.4.3,AA,Major,Automated,
+BB30096,Color,Standard text has sufficient contrast with its background,Pass,1.4.3,AA,,Automated,
+BB30097,Forms,Missing error message for invalid input field,Fail,3.3.1,AA,Critical,Manual check,
+BB30098,Forms,Verify if error message for input field is descriptive,Validate,3.3.3,AA,Major,Automated (runtime probe),Errors shown after submitting an empty form.
+BB30099,Dynamic Content,Missing live region for dynamic content container,Fail,4.1.3,AA,Critical,Covered by BB30100,Status views that are not live regions are listed for review (BB30100).
+BB30100,Dynamic Content,Verify if live region is defined correctly,Validate,4.1.3,AA,Major,Automated,Snackbar/banner/status views that are not live regions.
+BB30101,Content,Reading order does not match visual layout order,Fail,1.3.2,A,Critical,Automated (runtime probe),Guided: TalkBack swipe followed in screenshots.
+BB30102,Lists,Missing collection information for list or grid container,Fail,1.3.1,A,Major,Not possible with scanner,UiAutomator2 does not expose CollectionInfo.
+BB30103,Lists,Verify if collection information is defined correctly,Validate,2.4.6,AA,Minor,Not possible with scanner,UiAutomator2 does not expose CollectionInfo.
+BB30104,Lists,Missing descriptive title for major container,Fail,2.4.6,AA,Minor,Manual check,
+BB30105,Keyboard,Dismissible overlay is missing dismiss action,Fail,2.1.2,A,Blocker,Manual check,
+BB30106,Keyboard,Verify if dismiss action is defined for dismissible overlay,Validate,2.1.1,A,Critical,Automated,"Dialog with no close, cancel or done control is listed for review."
+BB30109,content,Interactive controls are placed too close together,Fail,2.5.8,AA,Major,Covered by BB30058,Reported as BB30058.
+BB30111,Forms,Verify if state description is defined correctly for custom interactive control,Validate,4.1.2,A,Major,Automated,"Adjustable controls: RangeInfo/stateDescription are not in the dump, so the value is listed for review."
+BB30112,Forms,Control relies solely on tooltip for accessible name,Fail,2.5.3,A,Major,Automated,Control whose only name is its tooltip or hint.
+BB30116,Forms,Visual text content is not exposed to assistive technologies,Fail,1.3.1,A,Blocker,Automated,Visible text not exposed to TalkBack and not read through a parent.
+BB30117,color,Insufficient color contrast for Non-text element,Fail,1.4.11,AA,Major,Automated,
+BB30118,color,Check if color contrast for Non-text element with its background is sufficient,Validate,1.4.11,AA,Major,Automated,
+BB30119,color,Non-text elementhas sufficient contrast with its background,Pass,1.4.11,AA,,Automated,
+BB30121,Forms,Verify if nested interactive control is accessible independently,Validate,4.1.2,A,Major,Manual check,
+BB30122,content,Text content is clipped at larger font sizes,Fail,1.4.4,AA,Major,Automated (runtime probe),"Text cut off, shortened or overlapping at font scale 2.0."
+BB30123,content,Verify if text can be resized,Validate,1.4.4,AA,Major,Automated (runtime probe),Font scale 2.0 applied; inconclusive results are listed for review.
+BB30124,Keyboard,Toggle button is reachable with keyboard,Pass,2.4.3,A,,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30125,Keyboard,Missing keyboard support for Toggle button,Fail,2.1.1,A,Blocker,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB30126,color,Insufficient color contrast for large text,Fail,1.4.11,AA,Major,Automated,
+BB30127,color,Large text has sufficient contrast with its background,Pass,1.4.11,AA,,Automated,
+BB40000,Orientation,Content not available in portrait orientation,Fail,1.3.4,AA,Critical,Covered by BB30080,Labels missing after rotation are listed for review (BB30080).
+BB40001,Orientation,Screen orientation does not change,Fail,1.3.4,AA,Critical,Automated (runtime probe),The device rotated but the screen stayed in the same orientation.
+BB40002,Orientation,Screen orientation is locked at portrait or landscape mode,Fail,1.3.4,AA,Critical,Automated (runtime probe),The app refused to rotate.
+BB40003,Images,Missing textual description for informative image,Fail,1.1.1,A,Blocker,Covered by BB30034,Reported as BB30034.
+BB40004,Button,Element type button not defined,Fail,4.1.2,A,Critical,Automated,Clickable view announced without the button role.
+BB40005,Keyboard,Non-interactive element receives keyboard focus,Fail,2.4.3,A,Major,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB40006,Tabs,Tabs not determined programmatically,Fail,4.1.2,A,Critical,Manual check,
+BB40007,Color,Color alone used to indicate selected state,Fail,1.4.1,A,Major,Manual check,
+BB40008,Heading,Headings not defined,Fail,1.3.1,A,Major,Manual check,
+BB40009,Keyboard,Carousel controls not operable with a keyboard,Fail,2.1.1,A,Blocker,Manual check,
+BB40010,Content,Content not available for screen reader users,Fail,4.1.2,A,Blocker,Automated,Visible control not exposed to TalkBack and not read through a parent.
+BB40011,Keyboard,Focus indicator is not clearly visible,Fail,2.4.6,AA,Major,Covered by BB40024,Reported as BB40024.
+BB40012,Keyboard,Focus indicator is not visible,Fail,2.4.6,AA,Major,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB40013,Dynamic Content,Functionality requires path-based gestures,Fail,2.5.1,A,Critical,Manual check,
+BB40014,Text Resize,Content not available with text resize,Fail,1.4.4,AA,Major,Manual check,
+BB40015,Keyboard,Hidden content receives keyboard focus,Fail,2.4.3,A,Minor,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB40016,Content,Hidden content read by screen reader,Fail,4.1.2,A,Major,Manual check,
+BB40017,Text Resize,Text fails to resize,Fail,1.4.4,AA,Major,Automated (runtime probe),Text that stays the same size at font scale 2.0.
+BB40018,Color,Color alone is used to distinguish link,Fail,1.4.1,A,Major,Automated,Inline link with no underline whose colour differs from the surrounding text by less than 3:1.
+BB40019,Color,Color alone is used to distinguish link with sufficient contrast,Validate,1.4.1,A,Best Practice,Manual check,
+BB40020,Dynamic Content,Focus fails to move to field with error,Fail,2.4.3,A,Major,Not possible with scanner,TalkBack focus cannot be observed through Appium.
+BB40021,Dynamic Content,Focus fails to move to updated content,Fail,2.4.3,A,Major,Not possible with scanner,TalkBack focus cannot be observed through Appium.
+BB40022,Dialog,Missing role and accessible name for modal dialog,Fail,4.1.2,A,Critical,Manual check,
+BB40023,Content,Content is partially available by default,Validate,1.4.4,AA,Best Practice,Manual check,
+BB40024,Color,Insufficient color contrast for focus indicator,Fail,1.4.11,AA,Major,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB40025,Color,Insufficient color contrast for informative image,Fail,1.4.11,AA,Major,Manual check,
+BB40026,Color,Insufficient color contrast for border of form controls,Fail,1.4.11,AA,Major,Automated,
+BB40027,Color,Insufficient color contrast for standard text displayed on background image,Fail,1.4.3,AA,Major,Automated,Text over an image is listed for review; log this code when confirmed.
+BB40028,Color,Insufficient color contrast for large text displayed on background image,Fail,1.4.3,AA,Major,Automated,Text over an image is listed for review; log this code when confirmed.
+BB40029,Color,Insufficient color contrast for standard text and its background with opacity,Fail,1.4.3,AA,Major,Not possible with scanner,Opacity is not exposed; the measured screenshot colours already include it (BB30094/BB30126).
+BB40030,Color,Insufficient color contrast for large text and its background with opacity,Fail,1.4.3,AA,Major,Not possible with scanner,Opacity is not exposed; the measured screenshot colours already include it (BB30094/BB30126).
+BB40031,Color,Standard text with background image or background with opacity does not have sufficient contrast,Fail,1.4.3,AA,Major,Not possible with scanner,Opacity is not exposed; the measured screenshot colours already include it (BB30094/BB30126).
+BB40032,Color,Large text with background image or background with opacity does not have sufficient contrast,Fail,1.4.3,AA,Major,Not possible with scanner,Opacity is not exposed; the measured screenshot colours already include it (BB30094/BB30126).
+BB40033,Color,Insufficient color contrast for standard text,Fail,1.4.3,AA,Major,Covered by BB30094,Duplicate of BB30094.
+BB40034,Color,Insufficient color contrast for large text,Fail,1.4.3,AA,Major,Covered by BB30126,Duplicate of BB30126.
+BB40035,Images,Incomplete textual description for image button,Fail,1.1.1,A,Major,Manual check,
+BB40036,Forms,Buttons have identical accessible name,Fail,2.4.6,AA,Major,Automated,Buttons sharing a name.
+BB40037,Dynamic Content,No means to control moving content,Fail,2.2.2,A,Blocker,Manual check,
+BB40038,Dynamic Content,Missing expanded state for button,Fail,4.1.2,A,Critical,Manual check,
+BB40039,Dynamic Content,Missing expanded state for link,Fail,4.1.2,A,Critical,Manual check,
+BB40040,Dynamic Content,Missing element type and state for accordion,Fail,4.1.2,A,Critical,Manual check,
+BB40041,Dynamic Content,Accordion not operable with keyboard,Fail,2.1.1,A,Blocker,Manual check,
+BB40042,Dynamic Content,Expanded state for button doesn't update accurately,Fail,4.1.2,A,Major,Manual check,
+BB40043,Dynamic Content,Expanded state for link doesn't update accurately,Fail,4.1.2,A,Major,Manual check,
+BB40044,Dynamic Content,Expanded state for accordion doesn't update accurately,Fail,4.1.2,A,Major,Manual check,
+BB40045,Dynamic Content,Dynamically updating content not announced for screen reader users,Fail,4.1.3,AA,Major,Not possible with scanner,TalkBack announcements cannot be observed through Appium.
+BB40046,Lists,Lis not defined,Fail,1.3.1,A,Major,Manual check,
+BB40047,Content,Inaccurate reading order,Fail,1.3.2,A,Major,Covered by BB30101,Duplicate of BB30101.
+BB40048,Dialog,Focus fails to move on modal dialog,Fail,2.4.3,A,Major,Not possible with scanner,TalkBack focus cannot be observed through Appium.
+BB40049,Images,Incomplete textual description for image link,Fail,1.1.1,A,Major,Manual check,
+BB40050,Images,Inaccurate textual description for image link,Fail,1.1.1,A,Major,Manual check,
+BB40051,Forms,Missing explicit association of label with the form controls,Fail,1.3.1,A,Major,Automated,EditText named by its hint while a visible label is shown next to it (no labelFor).
+BB40053,Forms,Missing role and state for switch,Fail,4.1.2,A,Critical,Manual check,
+BB40054,Forms,Identical accessible name specified for switch,Fail,2.4.6,AA,Major,Automated,Switches sharing a name.
+BB40055,Lists,List defined incorrectly,Fail,1.3.1,A,Major,Manual check,
+BB40056,Dynamic Content,Tab defined incorrectly,Fail,4.1.2,A,Critical,Manual check,
+BB40057,Links,Link not defined programmatically,Fail,4.1.2,A,Critical,Automated,Link-like text without the link role is listed for review.
+BB40058,Keyboard,Radio button not keyboard operable,Fail,2.1.1,A,Blocker,Automated (runtime probe),Keyboard probe: Tab traversal with screenshots.
+BB40059,Color,Color alone used to convey information,Fail,1.4.1,A,Critical,Manual check,
+BB40060,Dynamic Content,Selected state defined incorrectly,Fail,4.1.2,A,Major,Manual check,
+BB40061,Images,Images of text used,Fail,1.4.5,AA,Major,Manual check,
+BB40062,Audio - Video,Inaccurate transcript for audio-only or video-only media,Fail,1.2.1,A,Major,Manual check,
+BB40063,Audio - Video,Missing transcript for audio only media,Fail,1.2.1,A,Critical,Manual check,
+BB40064,Audio - Video,Missing transcript for video only media,Fail,1.2.1,A,Critical,Manual check,
+BB40065,Audio - Video,Audio only media is hidden incorrectly,Fail,1.2.1,A,Blocker,Manual check,
+BB40066,Audio - Video,Video only media is hidden incorrectly,Fail,1.2.1,A,Blocker,Manual check,
+BB40067,Audio - Video,Missing captions for video,Fail,1.2.2,A,Critical,Manual check,
+BB40068,Audio - Video,Inaccurate captions for video,Fail,1.2.2,A,Major,Manual check,
+BB40069,Audio - Video,Missing audio description for video,Fail,1.2.5,A,Critical,Manual check,
+BB40070,Audio - Video,Inaccurate audio description for video,Fail,1.2.5,A,Major,Manual check,
+BB40071,Audio - Video,Audio plays automatically,Fail,1.4.2,A,Blocker,Manual check,
+BB40072,Audio - Video,Missing transcript for video,Fail,1.2.3,A,Blocker,Manual check,
+BB40073,Content,Content announced by screen reader as a single block,Fail,2.4.3,A,Minor,Manual check,
+BB40074,Table,Table not defined,Fail,1.3.1,A,Major,Manual check,
+BB40075,Images,Inaccurate textual description for image button,Fail,1.1.1,A,Major,Manual check,
+BB40076,Tab Order,Illogical tabbing order,Fail,2.4.3,A,Major,Automated (runtime probe),Keyboard focus out of visual order is listed for review.
+BB40077,forms,Error messages difficult to locate,Fail,3.3.1,A,Critical,Manual check,

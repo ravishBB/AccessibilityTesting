@@ -264,14 +264,25 @@ nonisolated enum PixelAnalyzer {
         }
         guard background.count >= 8 else { return nil }
 
+        let interior = sampler.gridSamples(in: rect, maxSamples: 4000, excluding: excludedRect)
+        guard interior.count >= 8 else { return nil }
+
+        // A badge or pill: the text's frame is mostly one solid fill that
+        // differs from what surrounds it ("NEW" in white on a green pill
+        // on a pale card). The text sits on the fill, so the fill is its
+        // background, not the card outside the frame.
+        let outsideMedian = PixelMath.median(background.map(\.luminance))
+        let interiorMedian = PixelMath.median(interior.map(\.luminance))
+        let fill = interior.filter { abs($0.luminance - interiorMedian) < 0.03 }
+        if abs(interiorMedian - outsideMedian) >= 0.1, Double(fill.count) >= Double(interior.count) * 0.5 {
+            background = fill
+        }
+
         let backgroundLuminances = background.map(\.luminance)
         let backgroundMedian = PixelMath.median(backgroundLuminances)
         let spread = PixelMath.percentile(backgroundLuminances, 0.9) -
             PixelMath.percentile(backgroundLuminances, 0.1)
         let varied = spread > 0.08
-
-        let interior = sampler.gridSamples(in: rect, maxSamples: 4000, excluding: excludedRect)
-        guard interior.count >= 8 else { return nil }
 
         let deltas = interior.map { abs($0.luminance - backgroundMedian) }
         guard let maxDelta = deltas.max(), maxDelta >= 0.02 else { return nil }

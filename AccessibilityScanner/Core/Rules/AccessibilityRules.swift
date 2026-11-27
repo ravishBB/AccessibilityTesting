@@ -53,7 +53,6 @@ nonisolated struct AccessibilityRules {
             AdjustableValueRule(),
             DisabledButtonStateRule(),
             RoleTraitConsistencyRule(),
-            StateTraitConsistencyRule(),
             TextClippingRule(),
             HeadingQualityRule(),
             SegmentControlRule(),
@@ -146,7 +145,10 @@ nonisolated struct CommonAccessibleNameRule: AccessibilityRule {
             // common rule off buttons prevents duplicate PASS/FAIL records.
             node.role != .button &&
             // A name given only as a hint is reported by name-via-hint.
-            !RuleHelper.isNamedOnlyByHint(node)
+            !RuleHelper.isNamedOnlyByHint(node) &&
+            // Screen readers read a field's placeholder when it has no
+            // label, so it is not nameless; placeholder-only-name reports it.
+            !(RuleHelper.textInputs.contains(node.role) && !RuleHelper.clean(node.placeholderValue).isEmpty)
     }
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
@@ -576,6 +578,13 @@ nonisolated struct DescriptiveButtonNameRule: AccessibilityRule {
         guard !RuleHelper.isImageLikeButton(node) else { return nil }
         guard !RuleHelper.isNamedOnlyByHint(node) else { return nil }
         if RuleHelper.isGenericName(node.label) {
+            // The Android sheet has no Fail for a generic button name, only
+            // BB30006 (verify the name is descriptive).
+            if node.platform == .android, !RuleHelper.clean(node.label).isEmpty {
+                return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                             message: "The button's name \"\(RuleHelper.clean(node.label))\" is generic. Check it says what the button does.",
+                                             remediation: "Provide a concise name describing the button's action or purpose.")
+            }
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Button accessible name is missing or generic.",
                                    remediation: "Provide a concise name describing the button's action or purpose.")
@@ -583,7 +592,9 @@ nonisolated struct DescriptiveButtonNameRule: AccessibilityRule {
         // "See all Trending": a generic call to action, maybe with context.
         // Whether the rest makes it clear out of context needs a person.
         let name = RuleHelper.clean(node.label)
-        if let phrase = Self.genericStart(of: name) {
+        // "See all Trending" names its destination; only a bare "See all"
+        // (or one followed by symbols alone) leaves the purpose to context.
+        if let phrase = Self.genericStart(of: name), !Self.hasContext(after: phrase, in: name) {
             return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                          message: "The button's name \"\(name)\" starts with the generic \"\(phrase)\". Check it says what the button opens when heard out of context, for example in a list of buttons.",
                                          remediation: "Name the destination or result (\"See all trending topics\") rather than relying on nearby text.")
@@ -597,6 +608,11 @@ nonisolated struct DescriptiveButtonNameRule: AccessibilityRule {
         "read more", "learn more", "more", "details",
         "もっと見る", "すべて見る", "查看更多", "查看全部", "更多"
     ]
+
+    /// Whether words follow the generic phrase ("See all Trending").
+    private static func hasContext(after phrase: String, in name: String) -> Bool {
+        name.dropFirst(phrase.count).unicodeScalars.contains { CharacterSet.letters.contains($0) }
+    }
 
     /// The generic phrase the name starts with, as a whole word.
     private static func genericStart(of name: String) -> String? {
@@ -624,18 +640,37 @@ nonisolated struct ImageButtonNameRule: AccessibilityRule {
     }
 }
 
-nonisolated struct PlaceholderOnlyNameRule: AccessibilityRule {
+/// BB41053 / BB40093. A field named only by its placeholder: with a visible
+/// label next to it, the label is not associated with the field; with none,
+/// nothing labels the field once the user starts typing.
+nonisolated struct PlaceholderOnlyNameRule: ScreenAccessibilityRule {
     let id = "placeholder-only-name"
-    let title = "Placeholder text used as the only accessible name — no visible label present"
+    let title = "Placeholder text used as the only accessible name"
     let description = "A placeholder should not be the only accessible name for a form control."
 
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.textInputs.contains(node.role), node.visible else { return nil }
-        guard RuleHelper.clean(node.label).isEmpty,
-              !RuleHelper.clean(node.placeholderValue).isEmpty else { return nil }
-        return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                               message: "The form control has a placeholder but no visible/accessibility label.",
-                               remediation: "Provide a persistent visible label and an accessible name independent of placeholder text.")
+    /// Message prefix of the result for a field with a visible label next to it.
+    static let unassociatedPrefix = "A visible label"
+
+    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
+
+    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        RuleHelper.allNodes(rootNode).compactMap { node in
+            guard RuleHelper.textInputs.contains(node.role), node.visible,
+                  RuleHelper.clean(node.label).isEmpty,
+                  !RuleHelper.clean(node.placeholderValue).isEmpty else { return nil }
+            let placeholder = RuleHelper.clean(node.placeholderValue)
+            if let visualLabel = RuleHelper.nearbyVisualLabel(for: node, in: rootNode) {
+                return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                                       message: "\(Self.unassociatedPrefix) (\"\(RuleHelper.clean(visualLabel.label))\") is shown next to the field, but the field's accessible name is only its placeholder (\"\(placeholder)\"), so the label is not associated with it.",
+                                       remediation: "Use the visible label as the field's accessibility label (accessibilityLabel / .accessibilityLabel; labelFor on Android).")
+            }
+            // Android: android:hint is an accepted name for an EditText, and
+            // the Android sheet has no visible-label Fail.
+            if node.platform == .android { return nil }
+            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
+                                   message: "The field has no visible label; only its placeholder (\"\(placeholder)\") says what to enter, and it disappears once the user types.",
+                                   remediation: "Add a persistent visible label next to the field and use it as the accessible name.")
+        }
     }
 }
 
@@ -651,6 +686,12 @@ nonisolated struct DescriptiveInteractiveNameRule: AccessibilityRule {
         // A missing name is reported once, by accessible-name.
         guard !RuleHelper.clean(node.label).isEmpty else { return nil }
         if RuleHelper.isGenericName(node.label) {
+            // Android sheet: only "verify the name is descriptive" codes.
+            if node.platform == .android {
+                return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                             message: "The control's name \"\(RuleHelper.clean(node.label))\" is generic. Check it says what the control is for.",
+                                             remediation: "Use a name that communicates the control's purpose.")
+            }
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "Interactive element has a generic accessible name.",
                                    remediation: "Use a name that communicates the control's purpose.")
@@ -800,15 +841,12 @@ nonisolated struct RoleTraitConsistencyRule: AccessibilityRule {
         guard node.visible else { return nil }
         let traits = node.traits.lowercased()
 
-        if node.role == .button && traits.contains("statictext") {
-            return RuleHelper.fail(
-                ruleID: id, name: title, description: description, node: node,
-                message: "Button exposes a conflicting static-text trait.",
-                remediation: "Expose the correct accessibility role and remove conflicting traits."
-            )
-        }
-
-        if node.role == .image && (traits.contains("button") || traits.contains("clickable")) {
+        // iOS: a button that also has the static-text trait (Text with
+        // .isButton added) or an image with the button trait is still
+        // announced as "button" by VoiceOver, so neither is a wrong role.
+        // Android: a clickable ImageView is announced without any role.
+        if node.platform == .android, node.role == .image,
+           traits.contains("button") || traits.contains("clickable") {
             return RuleHelper.fail(
                 ruleID: id, name: title, description: description, node: node,
                 message: "Image exposes button/clickable semantics while its exposed role is image.",
@@ -835,42 +873,6 @@ nonisolated struct RoleTraitConsistencyRule: AccessibilityRule {
     }
 }
 
-nonisolated struct StateTraitConsistencyRule: AccessibilityRule {
-    let id = "state-trait-consistency"
-    let title = "Accessibility state is consistent with the current control state"
-    let description = "Exposed state information should agree with the control's current state."
-
-    func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
-        guard RuleHelper.controls.contains(node.role), node.visible else { return nil }
-        let traits = node.traits.lowercased()
-
-        if !node.enabled && node.hittable {
-            return RuleHelper.fail(
-                ruleID: id, name: title, description: description, node: node,
-                message: "Control is reported disabled but remains hittable.",
-                remediation: "Synchronize the disabled state with the control's interaction behavior."
-            )
-        }
-
-        if traits.contains("selected") &&
-            ![AccessibilityRole.button, .segmentedControl, .picker].contains(node.role) {
-            return RuleHelper.warning(
-                ruleID: id, name: title, description: description, node: node,
-                message: "Selected state is exposed on a control type where selection semantics are not obvious.",
-                remediation: "Verify that the selected state represents a real current state and is announced correctly."
-            )
-        }
-
-        // A missing value on an adjustable control is reported once, by
-        // adjustable-accessibility-value.
-
-        return RuleHelper.pass(
-            ruleID: id, name: title, description: description, node: node,
-            message: "Current enabled, hittable, and exposed state information is internally consistent."
-        )
-    }
-}
-
 nonisolated struct TextClippingRule: ScreenAccessibilityRule {
     let id = "text-clipping"
     let title = "Text is not clipped by layout bounds"
@@ -880,7 +882,14 @@ nonisolated struct TextClippingRule: ScreenAccessibilityRule {
         nil
     }
 
-    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+    /// BB40033 is about text cut off when it is resized, so this runs only
+    /// on the 200% text-size layout (TextSizeProbe), not on every screen.
+    func evaluate(rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] { [] }
+
+    static func evaluations(in rootNode: AccessibilityNode) -> [AccessibilityRuleEvaluation] {
+        let id = "text-clipping"
+        let title = "Text is not clipped by layout bounds"
+        let description = "Visible text should remain within the screen and its accessible layout bounds."
         let rootBounds = rootNode.frame
 
         // Text inside a scrolling container (carousel, list) that runs past
@@ -960,10 +969,12 @@ nonisolated struct HeadingQualityRule: AccessibilityRule {
                                          message: "This text is marked as a heading but reads like body text (\(RuleHelper.wordList(label).count) words).",
                                          remediation: "Mark only text that introduces a section as a heading.")
         }
+        // Whether the heading text identifies its section is a judgement:
+        // BB40040, verify the heading is defined correctly.
         if RuleHelper.isGenericName(label) {
-            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "Heading text is missing or generic.",
-                                   remediation: "Use concise text that identifies the section.")
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                         message: "Heading text is missing or generic (\"\(label)\"). Check it identifies the section.",
+                                         remediation: "Use concise text that identifies the section.")
         }
         return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                message: "Heading has a meaningful-looking label.")
@@ -991,8 +1002,8 @@ nonisolated struct TabAccessibilityRule: AccessibilityRule {
 
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? {
         guard node.role == .button, node.visible else { return nil }
-        let text = (node.label + " " + node.identifier).lowercased()
-        guard text.contains("tab") else { return nil }
+        // The word "tab", not "Table" or "Establish".
+        guard RuleHelper.words(node).contains("tab") else { return nil }
         return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                      message: "Possible tab control detected; verify role, selected state, and screen-reader behavior.",
                                      remediation: "Verify tab semantics and selected-state announcements.")
@@ -1022,9 +1033,13 @@ nonisolated struct FormLabelRule: ScreenAccessibilityRule {
                 )
             }
 
+            // Placeholder-only fields are reported by placeholder-only-name.
+            if RuleHelper.clean(node.label).isEmpty, !RuleHelper.clean(node.placeholderValue).isEmpty {
+                return nil
+            }
+
             // No name, no placeholder and no text next to it: nothing tells a
-            // sighted user what to enter. (Placeholder-only fields are
-            // reported by placeholder-only-name.)
+            // sighted user what to enter.
             if RuleHelper.clean(node.label).isEmpty, RuleHelper.clean(node.placeholderValue).isEmpty {
                 return RuleHelper.fail(
                     ruleID: id,
@@ -1072,11 +1087,9 @@ nonisolated struct ScreenTitleRule: AccessibilityRule {
             return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                    message: "Navigation bar exposes the screen title \"\(shownTitle)\".")
         }
-        if RuleHelper.clean(node.label).isEmpty {
-            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "Navigation bar has no accessible title.",
-                                   remediation: "Expose a meaningful screen title.")
-        }
+        // A bar with only a back button (the title shown as a large heading
+        // in the content) is common; the ruleset has no Fail for it.
+        if RuleHelper.clean(node.label).isEmpty { return nil }
         return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                message: "Navigation bar exposes a screen title.")
     }
@@ -1194,6 +1207,17 @@ private nonisolated enum ContrastRuleFactory {
         // About 1:1 means no text is drawn at this position (covered by an
         // overlay or drawn elsewhere): nothing was measured.
         if measurement.ratio < 1.15 {
+            // In the open content area nothing usually covers text, so text
+            // that cannot be told from its background is most likely drawn
+            // that faintly (white on a banner that did not render). Near
+            // the bars at the top and bottom a floating bar or button often
+            // sits over it instead.
+            let height = context.hierarchyHeight
+            if height > 0, node.frame.minY > height * 0.12, node.frame.maxY < height * 0.8 {
+                return RuleHelper.validation(ruleID: ruleID, name: title, description: description, node: node,
+                                             message: "This text cannot be told apart from its background in the screenshot (\(measured)). If it is shown here, its contrast is far below \(requirement); check whether another view covers it.",
+                                             remediation: "Give the text a colour that contrasts with what is behind it, and make sure any background image or colour it relies on always renders.")
+            }
             return RuleHelper.notTested(ruleID: ruleID, name: title, description: description, node: node,
                                         message: "No text could be seen at this element's position in the screenshot, so its contrast was not measured.",
                                         remediation: "Check where this text appears on screen and measure its contrast there.")
@@ -1415,10 +1439,17 @@ nonisolated struct ScreenReaderHiddenInteractiveRule: AccessibilityRule {
               !node.semantics.mergedIntoAncestor else { return nil }
         // An unnamed segmented control is already a Fail (accessible-name).
         if node.role == .segmentedControl, CommonAccessibleNameRule.failsForMissingName(node) { return nil }
-        if node.hittable && !node.accessible {
+        // BB40078 (Fail) is about buttons; for other controls the sheet has
+        // only BB40046, verify the control is hidden correctly.
+        if node.hittable && !node.accessible && node.role == .button {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "Control is hittable but not exposed as accessible.",
+                                   message: "Button is on screen and can be tapped but is not exposed to the screen reader.",
                                    remediation: "Expose the control to assistive technology unless it is intentionally excluded.")
+        }
+        if node.hittable && !node.accessible {
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                         message: "Control is on screen and can be tapped but is not exposed to the screen reader. Check whether hiding it is intended.",
+                                         remediation: "Expose the control to assistive technology unless it is intentionally excluded.")
         }
         if node.accessible {
             return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
@@ -1567,8 +1598,11 @@ nonisolated struct LoadingIndicatorContrastRule: AccessibilityRule, ContextualAc
     func evaluate(node: AccessibilityNode) -> AccessibilityRuleEvaluation? { nil }
 
     func evaluate(node: AccessibilityNode, context: AccessibilityRuleContext) -> AccessibilityRuleEvaluation? {
-        let text = (node.type + " " + node.identifier + " " + node.label).lowercased()
-        guard text.contains("progress") || text.contains("loading") || text.contains("activity"),
+        // A real indicator element (XCUIElementTypeActivityIndicator /
+        // ProgressIndicator, android.widget.ProgressBar), not any element
+        // whose name says "loading" (a "Loading…" text is checked as text).
+        let type = node.type.lowercased()
+        guard type.contains("activityindicator") || type.contains("progress"),
               node.visible else { return nil }
 
         guard let sampler = PixelSampler.make(context: context),
@@ -1579,6 +1613,13 @@ nonisolated struct LoadingIndicatorContrastRule: AccessibilityRule, ContextualAc
                                          remediation: "Check the loading indicator's contrast against its background manually.")
         }
         let ratio = String(format: "%.2f:1", measurement.ratio)
+        // A spinner's thin, anti-aliased spokes read lighter than their
+        // colour: near the threshold the screenshot decides, not the design.
+        if measurement.ratio + 0.001 < 3.0, measurement.ratio >= 3.0 * 0.9 {
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                         message: "The loading indicator has a measured contrast of \(ratio), just under 3:1. Measure the indicator's exact colour against its background.",
+                                         remediation: "Use an indicator colour with at least 3:1 contrast against its background.")
+        }
         if measurement.ratio + 0.001 < 3.0 {
             return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                    message: "The loading indicator has a measured contrast of \(ratio), below the required 3:1.",
@@ -1663,6 +1704,14 @@ nonisolated struct NonTextContrastRule: AccessibilityRule, ContextualAccessibili
                                       message: "The button's boundary or fill has a measured contrast of \(ratio) against its surroundings, below 3:1. This matters if the shape is needed to recognise it as a control.",
                                       remediation: "Give the control a boundary or fill with at least 3:1 contrast, or make sure a clear text label identifies it.")
         }
+        // An iOS UISwitch that is off draws its track in a system grey that
+        // the app cannot restyle: its look is set by the platform, which
+        // WCAG 1.4.11 exempts. The on state uses the app's tint and is
+        // still measured.
+        if node.type == "XCUIElementTypeSwitch", RuleHelper.clean(node.value) == "0" {
+            return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
+                                   message: "The switch is off and uses the standard iOS off-state track (\(ratio) measured), whose appearance is set by iOS, not the app.")
+        }
         // The measurement covers the whole frame. When the frame also holds
         // the label (a checkbox row) or mostly empty track area (a slider),
         // the low reading may be the background, not the control's glyph,
@@ -1672,6 +1721,11 @@ nonisolated struct NonTextContrastRule: AccessibilityRule, ContextualAccessibili
             return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
                                          message: "The control's frame has a measured contrast of \(ratio) against its surroundings, below 3:1, but the frame includes more than the control's \(node.role == .slider ? "track and thumb" : "visual indicator"). Check the indicator itself.",
                                          remediation: "Make sure the parts that identify the control and its state (\(node.role == .slider ? "track and thumb" : "box, circle, switch track or border")) have at least 3:1 contrast.")
+        }
+        if measurement.best >= 3.0 * 0.95 {
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                         message: "The control's boundary or fill has a measured contrast of \(ratio), just under 3:1. Measure the exact colours.",
+                                         remediation: "Give the control a boundary, track or fill with at least 3:1 contrast against its background.")
         }
         return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                message: "The control's boundary or fill has a measured contrast of \(ratio) against its surroundings, below the required 3:1.",
@@ -1699,10 +1753,20 @@ nonisolated struct FormBorderContrastRule: AccessibilityRule, ContextualAccessib
                                          remediation: "Check the field's border contrast manually.")
         }
 
+        // A field drawn with no border, underline or fill (a plain SwiftUI
+        // TextField in a form row) has no boundary for 1.4.11 to apply to.
+        guard measurement.hasBoundary else { return nil }
+
         let ratio = String(format: "%.2f:1", measurement.best)
         if measurement.best + 0.001 >= 3.0 {
             return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                    message: "The field's border or fill has a measured contrast of \(ratio) against its surroundings, meeting 3:1.")
+        }
+        // Within 5% of 3:1 a 1 pt border's anti-aliasing decides the reading.
+        if measurement.best >= 3.0 * 0.95 {
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                         message: "The field's border or fill has a measured contrast of \(ratio), just under 3:1. Measure the exact border colour.",
+                                         remediation: "Give the field a border, underline or fill with at least 3:1 contrast so users can see where to type.")
         }
         return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
                                message: "The field's border or fill has a measured contrast of \(ratio) against its surroundings, below the required 3:1.",
@@ -1886,8 +1950,10 @@ nonisolated struct MapAlternativeRule: AccessibilityRule {
                 return RuleHelper.pass(ruleID: id, name: title, description: description, node: node,
                                        message: "The map exposes text to assistive technology (\(labelledMarkers.count) labelled marker\(labelledMarkers.count == 1 ? "" : "s")\(RuleHelper.clean(node.label).isEmpty ? "" : " and a map label")).")
             }
-            return RuleHelper.fail(ruleID: id, name: title, description: description, node: node,
-                                   message: "The map has no accessible label and no labelled markers, so its content is not available as text.",
+            // BB40140 is a Validate row: the information may be given as
+            // text elsewhere on the screen.
+            return RuleHelper.validation(ruleID: id, name: title, description: description, node: node,
+                                   message: "The map has no accessible label and no labelled markers. Check whether its information is given as text elsewhere on the screen.",
                                    remediation: "Label the map and its markers, or provide the same information as a list.")
         }
 

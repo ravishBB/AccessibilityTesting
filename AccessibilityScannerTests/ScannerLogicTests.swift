@@ -371,7 +371,7 @@ struct RuleAvailabilityTests {
         let nodes = ProbeNodes.all(in: root)
         let silentResult = ScreenReaderContentRule().evaluate(node: nodes.first { $0.frame.minX == 15 }!)
         #expect(silentResult?.status == .fail)
-        #expect(BBIssueCatalog.issue(for: silentResult!)?.id == "BB40057")
+        #expect(BBIssueCatalog.issue(for: silentResult!)?.id == "BB41010")
         #expect(ScreenReaderContentRule().evaluate(node: nodes.first { $0.frame.minX == 200 }!)?.status == .pass)
     }
 

@@ -33,7 +33,20 @@ nonisolated enum ScreenResultBuilder {
         var viewportScreenshots: [ScreenshotViewport] = []
         var viewportEvaluations: [AccessibilityRuleEvaluation] = []
 
+        // Content scrolled into a later viewport is the same element seen
+        // again: it is reported once, where it first appeared. Positions
+        // are compared in page coordinates (frame plus how far the page has
+        // scrolled since the first viewport).
+        var scrolledBy: Double = 0
+        var previousRoot: AccessibilityNode?
+        var seenOnPage = Set<String>()
+
         for (viewportIndex, capture) in crawledScreen.viewportCaptures.enumerated() {
+            if let previousRoot {
+                scrolledBy += verticalShift(from: previousRoot, to: capture.snapshot.rootNode)
+            }
+            previousRoot = capture.snapshot.rootNode
+            let pageOffset = scrolledBy
                                 let viewportContext = AccessibilityRuleContext(
                 screenshotData: capture.snapshot.screenshotData,
                 screenshotWidth: capture.snapshot.screenshotWidth,
@@ -50,7 +63,7 @@ nonisolated enum ScreenResultBuilder {
             let evaluations = settled(mergeEvaluations(
                 capture.evaluations,
                 contextualEvaluations
-            ), crawledScreen)
+            ), crawledScreen).filter { seenOnPage.insert(pageKey($0, offset: pageOffset)).inserted }
             viewportEvaluations.append(contentsOf: evaluations)
 
             let annotations = ScreenshotAnnotation.makeAnnotations(
@@ -268,6 +281,50 @@ nonisolated enum ScreenResultBuilder {
             String(format: "%.1f", evaluation.frameWidth),
             String(format: "%.1f", evaluation.frameHeight)
         ].joined(separator: "|")
+    }
+
+    /// The evaluation's rule and element, placed on the page rather than
+    /// in the viewport. Rounded so a point of layout jitter still matches.
+    static func pageKey(_ evaluation: AccessibilityRuleEvaluation, offset: Double) -> String {
+        func round4(_ value: Double) -> String { String(Int((value / 4).rounded())) }
+        return [
+            evaluation.ruleID,
+            evaluation.elementType,
+            evaluation.identifier,
+            evaluation.elementLabel,
+            round4(evaluation.frameX),
+            round4(evaluation.frameY + offset),
+            round4(evaluation.frameWidth),
+            round4(evaluation.frameHeight)
+        ].joined(separator: "|")
+    }
+
+    /// How far the page scrolled up between two viewports, in points: the
+    /// median move of labelled elements found once in each. Bars fixed to
+    /// the top or bottom do not move and are left out; with fewer than two
+    /// moved elements the page is taken as not scrolled.
+    static func verticalShift(from before: AccessibilityNode, to after: AccessibilityNode) -> Double {
+        func positions(_ root: AccessibilityNode) -> [String: Double] {
+            let height = root.frame.height
+            var counts: [String: Int] = [:]
+            var found: [String: Double] = [:]
+            var stack = [root]
+            while let node = stack.popLast() {
+                stack.append(contentsOf: node.children)
+                let label = node.label.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard node.visible, !label.isEmpty,
+                      node.frame.minY > root.frame.minY + height * 0.1,
+                      node.frame.maxY < root.frame.minY + height * 0.9 else { continue }
+                let key = node.type + "|" + label
+                counts[key, default: 0] += 1
+                found[key] = Double(node.frame.minY)
+            }
+            return found.filter { counts[$0.key] == 1 }
+        }
+        let first = positions(before), second = positions(after)
+        let moves = first.compactMap { key, y in second[key].map { y - $0 } }.filter { abs($0) > 1 }.sorted()
+        guard moves.count >= 2 else { return 0 }
+        return moves[moves.count / 2]
     }
 
     static func countNodes(_ node: AccessibilityNode) -> Int {

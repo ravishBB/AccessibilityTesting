@@ -1109,6 +1109,16 @@ final class AppCrawler {
                 remediation: "Give every motion action an on-screen control, and let users turn motion actions off.",
                 node: before)
         }
+        // Nothing identifiable appeared: no alert, no toast text, no new
+        // labels. An animation or timed update on the screen changes pixels
+        // just the same, so this is not evidence that shaking did anything.
+        if title.isEmpty {
+            return ProbeEvaluation.make(
+                ruleID: "motion-alternative", status: .validate,
+                message: "The screen changed while the scanner watched for a shake, but no alert, message or new text appeared, so the change may be an animation rather than the shake. Check what shaking does here; if it acts with no on-screen control that does the same, record it as a failure.",
+                remediation: "Give every motion action an on-screen control, and let users turn motion actions off.",
+                node: before)
+        }
         return ProbeEvaluation.make(
             ruleID: "motion-alternative", status: .fail,
             message: "Shaking the phone showed \(described). No control on this screen does the same, so people who cannot shake the device (a mounted phone, limited movement) cannot reach it.",
@@ -1517,7 +1527,8 @@ final class AppCrawler {
             // Store only visually unique screenshots. This prevents the same
             // viewport from being shown repeatedly while still preserving
             // screenshots for newly revealed scroll content.
-            if !seenScreenshotData.contains(currentSnapshot.screenshotData) {
+            if !seenScreenshotData.contains(currentSnapshot.screenshotData),
+               !viewportCaptures.contains(where: { Self.looksSame($0.snapshot.screenshotData, currentSnapshot.screenshotData) }) {
                 seenScreenshotData.insert(currentSnapshot.screenshotData)
                 viewportCaptures.append(
                     ScrollableViewportCapture(
@@ -1534,7 +1545,8 @@ final class AppCrawler {
                 for evaluation in capture.evaluations where seenEvaluationKeys.insert(evaluationKey(for: evaluation)).inserted {
                     collectedEvaluations.append(evaluation)
                 }
-                if seenScreenshotData.insert(capture.snapshot.screenshotData).inserted {
+                if !viewportCaptures.contains(where: { Self.looksSame($0.snapshot.screenshotData, capture.snapshot.screenshotData) }),
+                   seenScreenshotData.insert(capture.snapshot.screenshotData).inserted {
                     viewportCaptures.append(capture)
                 }
             }
@@ -1582,8 +1594,12 @@ final class AppCrawler {
                         nextSnapshot.rootNode
                 )
 
+            // The hierarchy can differ (a timer, a row moving under the
+            // navigation bar) while the scroll did not move the page: the
+            // same picture means the bottom was reached.
             if nextViewportSignature ==
-                previousViewportSignature {
+                previousViewportSignature ||
+                Self.looksSame(currentSnapshot.screenshotData, nextSnapshot.screenshotData) {
 
                 statusHandler(
                     "Reached the bottom of the screen."
@@ -1827,6 +1843,15 @@ final class AppCrawler {
         )
     }
     
+    /// Whether two screenshots show the same picture, ignoring the status
+    /// bar (its clock changes between captures).
+    static func looksSame(_ a: Data, _ b: Data) -> Bool {
+        if a == b { return true }
+        guard let first = KeyboardFocusTester.image(a), let second = KeyboardFocusTester.image(b),
+              first.width == second.width, first.height == second.height else { return false }
+        return KeyboardFocusTester.changedRegion(first, second, ignoreTop: Int(Double(first.height) * 0.07)) == nil
+    }
+
     private func evaluationKey(
         for evaluation: AccessibilityRuleEvaluation
     ) -> String {

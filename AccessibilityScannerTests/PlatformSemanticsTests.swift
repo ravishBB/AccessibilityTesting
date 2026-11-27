@@ -78,7 +78,8 @@ struct PlatformSemanticsTests {
         let title = try #require(ProbeNodes.all(in: try parseAndroid()).first { $0.identifier == "title" })
         #expect(TextSizeEstimate.classify(title) == .large)
         let evaluation = makeEvaluation(ruleID: "contrast-text-over-image", status: .fail, node: title)
-        #expect(BBIssueCatalog.issue(for: evaluation)?.id == "BB40020")
+        // Android sheet: large text over an image.
+        #expect(BBIssueCatalog.issue(for: evaluation)?.id == "BB40028")
     }
 
     @Test func iOSCustomActionsAreRead() throws {
@@ -115,7 +116,7 @@ struct PlatformSemanticsTests {
             startedAt: Date(), finishedAt: Date(), screens: [screen], rulesExecuted: 1
         )
         let entries = BBCoverage.entries(for: report)
-        #expect(entries.count == BBRuleset.rules.count)
+        #expect(entries.count == BBRuleset.ios.count)
         #expect(entries.first { $0.id == "BB40003" }?.outcome == .found)
         #expect(entries.first { $0.id == "BB40049" }?.outcome == .unavailable)
         #expect(entries.first { $0.id == "BB40001" }?.outcome == .manual)
@@ -128,7 +129,7 @@ struct PlatformSemanticsTests {
         let cutOff = makeNode(type: "XCUIElementTypeStaticText", label: "Cut off text", frame: CGRect(x: 300, y: 400, width: 200, height: 20))
         let root = makeNode(type: "XCUIElementTypeApplication", frame: CGRect(x: 0, y: 0, width: 393, height: 852), children: [carousel, cutOff])
 
-        let failures = TextClippingRule().evaluate(rootNode: root).filter { $0.status == .fail }.map(\.elementLabel)
+        let failures = TextClippingRule.evaluations(in: root).filter { $0.status == .fail }.map(\.elementLabel)
         #expect(failures == ["Cut off text"])
     }
 
@@ -138,7 +139,7 @@ struct PlatformSemanticsTests {
         #expect(ScreenTitleRule().evaluate(node: bar)?.status == .pass)
 
         let emptyBar = makeNode(type: "XCUIElementTypeNavigationBar", label: "", frame: CGRect(x: 0, y: 59, width: 393, height: 44))
-        #expect(ScreenTitleRule().evaluate(node: emptyBar)?.status == .fail)
+        #expect(ScreenTitleRule().evaluate(node: emptyBar) == nil)
     }
 
     @Test func iOSScrollIndicatorsAreIgnored() throws {
