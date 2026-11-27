@@ -577,6 +577,14 @@ final class TextSizeProbe {
             return notTested(rootNode, "The hierarchy could not be read at the larger text size.")
         }
 
+        // After the relaunch the route back to this screen can fail and leave
+        // the app on another screen (Home). Its text is not this screen's:
+        // checking it would report another screen's problems here.
+        let sharedTexts = Set(textHeights(in: largeRoot).keys).intersection(textHeights(in: rootNode).keys)
+        guard sharedTexts.count >= 3 else {
+            return notTested(rootNode, "At 200% text size the app did not return to this screen (\(sharedTexts.count) of its texts were found), so the larger layout could not be checked.")
+        }
+
         var results = evaluate(normal: rootNode, large: largeRoot)
         lap("resize and clipping rules")
         results += Self.truncation(normal: rootNode, large: largeRoot, screenshot: largeShot)

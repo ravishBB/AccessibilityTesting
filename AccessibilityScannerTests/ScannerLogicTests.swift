@@ -492,6 +492,28 @@ struct DuplicateNameTests {
         #expect(results.count == 2)
         #expect(results.allSatisfy { $0.status == .fail })
     }
+
+    /// BloomApp Settings (27 Nov 2026 scan): the hierarchy listed the form
+    /// twice, 332 pt apart, so the one text-size picker appeared twice.
+    @Test func formListedTwiceInTheHierarchyIsOneControl() {
+        func row(_ y: CGFloat) -> [AccessibilityNode] {
+            [makeNode(type: "XCUIElementTypeStaticText", label: "Preferred Text Size", frame: CGRect(x: 32, y: y - 10, width: 181, height: 53))] +
+                [("S", 221), ("M", 256), ("L", 291), ("XL", 326)].map { label, x in
+                    makeNode(type: "XCUIElementTypeButton", label: label, frame: CGRect(x: CGFloat(x), y: y, width: 35, height: 33))
+                }
+        }
+        #expect(DuplicateInteractiveNameRule().evaluate(rootNode: screen(row(305) + row(637))).isEmpty)
+    }
+
+    /// BloomApp Home (same scan): identical bookmark buttons next to
+    /// different articles are separate controls with one name.
+    @Test func sameButtonNextToDifferentRowsFails() {
+        let rows = [(551.0, "Understanding Your Sleep Cycles"), (660.0, "Plant-Based Cooking for Busy People")].flatMap { y, title in
+            [makeNode(type: "XCUIElementTypeStaticText", label: title, frame: CGRect(x: 104, y: y + 2, width: 221, height: 39)),
+             makeNode(type: "XCUIElementTypeButton", label: "Bookmark article", frame: CGRect(x: 333, y: y, width: 44, height: 45))]
+        }
+        #expect(DuplicateInteractiveNameRule().evaluate(rootNode: screen(rows)).count == 2)
+    }
 }
 
 @MainActor
